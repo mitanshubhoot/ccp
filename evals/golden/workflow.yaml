@@ -31,3 +31,34 @@
     handled_order: [late-role-change, termination, snapshot-after]
   notes: A late-arriving record with an older source timestamp is processed in its correct position.
   tags: [ingest, ordering]
+
+- id: wf-evaluate-tier1-acme-twice
+  level: workflow
+  difficulty: hard
+  source: manual
+  tenant: acme
+  target: evaluate_tier1
+  input: {}
+  expected:
+    enqueued: 11
+    evaluated: 11
+    by_status: {fail: 6, needs_review: 1, partial: 1, pass: 3}
+    verdict_rows: 11
+    second_run: {enqueued: 11, duplicates: 11, new_rows: 0}
+  notes: Every tier 1 (test, subject) pair once; the second full run hits the same evaluation keys and writes nothing.
+  tags: [evaluators, tier1, idempotency]
+
+- id: wf-evaluate-tier1-globex-twice
+  level: workflow
+  difficulty: easy
+  source: manual
+  tenant: globex
+  target: evaluate_tier1
+  input: {}
+  expected:
+    enqueued: 9
+    evaluated: 9
+    by_status: {fail: 3, pass: 6}
+    verdict_rows: 9
+    second_run: {enqueued: 9, duplicates: 9, new_rows: 0}
+  tags: [evaluators, tier1, idempotency]

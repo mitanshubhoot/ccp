@@ -131,7 +131,7 @@ def map_github_event(event: SourceEvent) -> MappingResult:
         out.append(
             Asset(
                 tenant_id=event.tenant_id,
-                entity_id=asset_id(p["node_id"]),
+                entity_id=asset_id(_org_node_from_login(p["login"])),  # same id grants point at
                 source_connector="github",
                 source_event_id=event.source_event_id,
                 observed_at=event.source_ts,

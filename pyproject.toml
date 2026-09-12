@@ -39,6 +39,7 @@ packages = ["ccp"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = [
     "live_github: needs GITHUB_TOKEN and network; skipped otherwise",
     "db: needs a reachable Postgres (docker compose up -d); skipped otherwise",
@@ -72,12 +73,15 @@ type = "layers"
 layers = [
     "ccp.cli",
     "ccp.evals",
+    "ccp.evaluators",
+    "ccp.llm",
     "ccp.knowledge",
     "ccp.identity",
     "ccp.normalize",
     "ccp.ingest",
     "ccp.connectors",
     "ccp.storage",
+    "ccp.security",
     "ccp.observability",
     "ccp.tenancy",
     "ccp.config",

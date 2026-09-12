@@ -98,7 +98,7 @@ def test_github_org_snapshot_yields_org_asset_and_vendor(base_settings: Settings
         _fixture_event(base_settings, "acme", "github", "O_kgDOAcme0001@2026-08-25T09:00:00Z")
     )
     [asset] = result.of(Asset)
-    assert asset.entity_id == "github:asset:O_kgDOAcme0001" and asset.asset_type == "org"
+    assert asset.entity_id == "github:asset:org:acme-example" and asset.asset_type == "org"
     assert asset.settings["two_factor_requirement_enabled"] is True
     [vendor] = result.of(Vendor)
     assert vendor.entity_id == "github:vendor:github" and vendor.name == "GitHub"

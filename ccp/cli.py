@@ -10,6 +10,10 @@ from ccp.config import Settings
 from ccp.connectors.base import parse_ts
 from ccp.connectors.registry import CONNECTOR_NAMES, SOURCE_KINDS, build_connector
 from ccp.evals import runner as eval_runner
+from ccp.evaluators import clock as clock_producer
+from ccp.evaluators import impact as impact_step
+from ccp.evaluators import runner as evaluations
+from ccp.evaluators import verdict as verdicts
 from ccp.identity import resolver
 from ccp.ingest import worker
 from ccp.ingest.landing import ingest_tenant
@@ -34,8 +38,74 @@ evals_app = typer.Typer(no_args_is_help=True, help="Golden-dataset evaluation ha
 normalize_app = typer.Typer(no_args_is_help=True, help="Map raw events into canonical entities")
 identity_app = typer.Typer(no_args_is_help=True, help="Identity resolution and the review queue")
 knowledge_app = typer.Typer(no_args_is_help=True, help="Frameworks, controls, tests")
+evaluate_app = typer.Typer(no_args_is_help=True, help="Trigger and run evaluations")
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(tenants_app, name="tenants")
+app.add_typer(evaluate_app, name="evaluate")
+
+
+@evaluate_app.command("run")
+def evaluate_run(
+    tenant: str | None = typer.Option(None, "--tenant"),
+    test: list[str] = typer.Option([], "--test", help="repeatable; default every tier 1 test"),
+    impact: bool = typer.Option(
+        False, "--impact", help="drain the entities topic through the impact step instead"
+    ),
+) -> None:
+    """Enqueue every (test, subject) pair once (or run the impact step), then drain them."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        scoped = ScopedDB(pool, ctx)
+        if impact:
+            consumer = impact_step.ImpactConsumer(scoped)
+            while consumer.run_once():
+                pass
+            enqueued = consumer.enqueued
+        else:
+            enqueued = evaluations.enqueue_all(scoped, settings, tests=tuple(test) or None)
+        summary = evaluations.drain(scoped, settings)
+        parked = evaluations.parked_count(scoped)
+    finally:
+        pool.close()
+    typer.echo(f"enqueued {enqueued}, evaluated {summary.evaluated}, parked {parked}")
+    for status, n in sorted(summary.by_status.items()):
+        typer.echo(f"{status:<13} {n}")
+
+
+@evaluate_app.command("list")
+def evaluate_list(
+    tenant: str | None = typer.Option(None, "--tenant"),
+    test: str | None = typer.Option(None, "--test"),
+) -> None:
+    """Print the newest verdict per subject."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        rows = verdicts.latest_per_subject(ScopedDB(pool, ctx), test)
+    finally:
+        pool.close()
+    if not rows:
+        typer.echo("no verdicts")
+    for v in rows:
+        typer.echo(f"{v.status.value:<13} {v.subject_key:<52} {v.reasoning}")
+
+
+@evaluate_app.command("clock")
+def evaluate_clock(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """One clock tick: enqueue subjects whose verdict or evidence has gone stale."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        summary = clock_producer.tick(ScopedDB(pool, ctx))
+    finally:
+        pool.close()
+    typer.echo(f"enqueued {summary.enqueued}")
+    for reason, n in sorted(summary.reasons.items()):
+        typer.echo(f"{reason:<20} {n}")
 
 
 @knowledge_app.command("show")

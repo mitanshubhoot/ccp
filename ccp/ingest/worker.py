@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, Protocol
 
 import psycopg
 
 from ccp.config import Settings
-from ccp.ingest.consumers import OrderedConsumer, ParallelConsumer
+from ccp.ingest.consumers import OrderedConsumer
 from ccp.ingest.event_log import LogRecord
 from ccp.observability import steps
 from ccp.storage.db import app_pool
@@ -19,7 +19,17 @@ from ccp.tenancy import TenantContext
 
 log = logging.getLogger(__name__)
 
-ConsumerFactory = Callable[[ScopedDB, Settings], OrderedConsumer | ParallelConsumer]
+
+class Runnable(Protocol):
+    """Anything the worker loop can drive: consumers and producers alike."""
+
+    name: str
+    topic: str
+
+    def run_once(self) -> int: ...
+
+
+ConsumerFactory = Callable[[ScopedDB, Settings], Runnable]
 CONSUMERS: dict[str, ConsumerFactory] = {}
 
 

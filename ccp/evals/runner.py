@@ -26,7 +26,10 @@ from ccp.evals.schema import CaseResult, GoldenCase, LevelSummary, RunReport
 from ccp.evals.targets import TARGETS, EvalContext
 from ccp.storage.db import scratch_database
 
-DB_TARGETS = {"ingest_land", "ingest_ordering"}
+DB_TARGETS = {"ingest_land", "ingest_ordering", "deterministic_verdict", "evaluate_tier1"}
+# Targets whose expectations describe a fresh database (first landing, no prior rows) get a
+# scratch database of their own; every other database case shares the run's database.
+FRESH_DB_TARGETS = {"ingest_land"}
 
 
 def load_cases(golden_dir: Path) -> tuple[list[GoldenCase], dict[str, str]]:
@@ -114,6 +117,15 @@ def run_case(ctx: EvalContext, case: GoldenCase) -> CaseResult:
     )
 
 
+def _run_in_fresh_database(settings: Settings, case: GoldenCase) -> CaseResult:
+    with scratch_database(settings, prefix="ccp_evalcase") as db_settings:
+        ctx = EvalContext(settings=settings, db_settings=db_settings)
+        try:
+            return run_case(ctx, case)
+        finally:
+            ctx.close()
+
+
 def run(settings: Settings, cases: list[GoldenCase], golden_hashes: dict[str, str]) -> RunReport:
     started = datetime.now(UTC)
     needs_db = any(c.target in DB_TARGETS for c in cases)
@@ -123,7 +135,12 @@ def run(settings: Settings, cases: list[GoldenCase], golden_hashes: dict[str, st
             with scratch_database(settings, prefix="ccp_eval") as db_settings:
                 ctx = EvalContext(settings=settings, db_settings=db_settings)
                 try:
-                    results = [run_case(ctx, c) for c in cases]
+                    results = [
+                        _run_in_fresh_database(settings, c)
+                        if c.target in FRESH_DB_TARGETS
+                        else run_case(ctx, c)
+                        for c in cases
+                    ]
                 finally:
                     ctx.close()
         except psycopg.OperationalError as exc:

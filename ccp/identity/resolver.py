@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from ulid import ULID
@@ -16,6 +16,7 @@ from ulid import ULID
 from ccp.identity.blocking import CandidatePair, candidate_pairs
 from ccp.identity.config import IdentityConfig
 from ccp.identity.scoring import Scored, evaluate
+from ccp.ingest import event_log
 from ccp.normalize import repository
 from ccp.normalize.entities import Person
 from ccp.observability import steps
@@ -104,12 +105,25 @@ def record_decision(
                         decision_id,
                     ),
                 )
+            _announce_link(cur, db, pair.left.entity_id, decision_id)
         elif scored.route == "review":
             cur.execute(
                 "INSERT INTO review_queue (decision_id, tenant_id) VALUES (%s, %s)",
                 (decision_id, db.tenant.tenant_id),
             )
     return decision_id
+
+
+def _announce_link(cur: Any, db: ScopedDB, person_entity_id: str, decision_id: str) -> None:
+    """A new link is an entity change: the impact step re-evaluates the merged person."""
+    event_log.append(
+        cur,
+        tenant_id=db.tenant.tenant_id,
+        topic="entities",
+        partition_key=f"{db.tenant.tenant_id}:{person_entity_id}",
+        source_ts=datetime.now(UTC),
+        ref=f"person_links:{person_entity_id}:{decision_id}",
+    )
 
 
 def resolve_tenant(db: ScopedDB, config: IdentityConfig | None = None) -> ResolutionSummary:
@@ -226,3 +240,4 @@ def resolve_review(
                         decision_id,
                     ),
                 )
+            _announce_link(cur, db, left.entity_id, decision_id)

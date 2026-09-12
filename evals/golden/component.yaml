@@ -315,3 +315,195 @@
               pdf: {$subset: {status: ok, page_count: 2, pages: {$len: 2}}}
   notes: The scope table is split across the page break; page-aware chunking is tested on this.
   tags: [connectors, manual, retrieval]
+
+# -- Phase 7a: tier 1 tabled results, both tenants, no network -------------------------------
+
+- id: cmp-tier1-hr1-acme-jane-fail
+  level: component
+  difficulty: hard
+  source: manual
+  tenant: acme
+  target: deterministic_verdict
+  input: {test_id: HR-1}
+  expected:
+    verdicts:
+      person:hris:person:E1042:
+        status: fail
+        evidence_refs:
+          - github:grant:U_kgDOAcme1042:R_kgDOAcmeP001
+          - github:grant:U_kgDOAcme1042:org:acme-example
+          - hris:person:E1042
+        guardrail_events: []
+        valid_from: "2026-08-21T17:00:00+00:00"
+  notes: Jane Smith terminated 2026-08-20T17:00Z; org membership and platform collaboration still active on 2026-08-25. valid_from is termination + 24 h SLA.
+  tags: [evaluators, tier1, hr-1, acme]
+
+- id: cmp-tier1-hr1-globex-yuki-pass
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: globex
+  target: deterministic_verdict
+  input: {test_id: HR-1}
+  expected:
+    verdicts:
+      person:hris:person:G2005:
+        $subset: {status: pass, guardrail_events: [], valid_from: "2026-07-01T18:00:00+00:00"}
+  notes: Yuki Tanaka's identity was deprovisioned 20 minutes after the termination; GitHub removals landed within two hours.
+  tags: [evaluators, tier1, hr-1, globex]
+
+- id: cmp-tier1-gh1-acme-jane-fail
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: acme
+  target: deterministic_verdict
+  input: {test_id: GH-1}
+  expected:
+    verdicts:
+      person:hris:person:E1042: {$subset: {status: fail}}
+  tags: [evaluators, tier1, gh-1, acme]
+
+- id: cmp-tier1-gh1-globex-yuki-pass
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: globex
+  target: deterministic_verdict
+  input: {test_id: GH-1}
+  expected:
+    verdicts:
+      person:hris:person:G2005: {$subset: {status: pass}}
+  tags: [evaluators, tier1, gh-1, globex]
+
+- id: cmp-tier1-gh2-acme-within-limit
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: acme
+  target: deterministic_verdict
+  input: {test_id: GH-2}
+  expected:
+    verdicts:
+      org:github:asset:org:acme-example: {$subset: {status: pass}}
+  notes: Three admins against acme's limit of three.
+  tags: [evaluators, tier1, gh-2, acme]
+
+- id: cmp-tier1-gh2-globex-over-limit
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: globex
+  target: deterministic_verdict
+  input: {test_id: GH-2}
+  expected:
+    verdicts:
+      org:github:asset:org:globex-example: {$subset: {status: fail}}
+  notes: Three admins against globex's limit of two.
+  tags: [evaluators, tier1, gh-2, globex]
+
+- id: cmp-tier1-gh3-acme-three-repos
+  level: component
+  difficulty: hard
+  source: manual
+  tenant: acme
+  target: deterministic_verdict
+  input: {test_id: GH-3}
+  expected:
+    verdicts:
+      repo:github:asset:R_kgDOAcmeP001: {$subset: {status: pass}}
+      repo:github:asset:R_kgDOAcmeW002: {$subset: {status: partial}}
+      repo:github:asset:R_kgDOAcmeI003: {$subset: {status: fail}}
+  notes: platform requires two reviews with admins included; website exempts admins; infra is unprotected.
+  tags: [evaluators, tier1, gh-3, acme]
+
+- id: cmp-tier1-gh3-globex-two-repos
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: globex
+  target: deterministic_verdict
+  input: {test_id: GH-3}
+  expected:
+    verdicts:
+      repo:github:asset:R_kgDOGlobexP001: {$subset: {status: pass}}
+      repo:github:asset:R_kgDOGlobexM002: {$subset: {status: fail}}
+  tags: [evaluators, tier1, gh-3, globex]
+
+- id: cmp-tier1-gh5-acme-planted-token
+  level: component
+  difficulty: hard
+  source: manual
+  tenant: acme
+  target: deterministic_verdict
+  input: {test_id: GH-5}
+  expected:
+    verdicts:
+      repo:github:asset:R_kgDOAcmeP001: {$subset: {status: fail, guardrail_events: [secret_detected]}}
+      repo:github:asset:R_kgDOAcmeW002: {$subset: {status: pass}}
+      repo:github:asset:R_kgDOAcmeI003: {$subset: {status: needs_review, guardrail_events: [no_file_listing]}}
+  notes: The ghp_ token in platform/.env.example; infra has no file listing observed at all.
+  tags: [evaluators, tier1, gh-5, acme, security]
+
+- id: cmp-tier1-gh5-globex-clean
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: globex
+  target: deterministic_verdict
+  input: {test_id: GH-5}
+  expected:
+    verdicts:
+      repo:github:asset:R_kgDOGlobexP001: {$subset: {status: pass}}
+      repo:github:asset:R_kgDOGlobexM002: {$subset: {status: pass}}
+  tags: [evaluators, tier1, gh-5, globex]
+
+- id: cmp-tier1-hr2-acme-one-without-mfa
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: acme
+  target: deterministic_verdict
+  input: {test_id: HR-2}
+  expected:
+    verdicts:
+      tenant: {$subset: {status: fail}}
+  notes: lpark is active without MFA; Jane's deprovisioned identity does not count.
+  tags: [evaluators, tier1, hr-2, acme]
+
+- id: cmp-tier1-hr2-globex-one-without-mfa
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: globex
+  target: deterministic_verdict
+  input: {test_id: HR-2}
+  expected:
+    verdicts:
+      tenant: {$subset: {status: fail}}
+  tags: [evaluators, tier1, hr-2, globex]
+
+- id: cmp-tier1-hr5-acme-unowned-shared
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: acme
+  target: deterministic_verdict
+  input: {test_id: HR-5}
+  expected:
+    verdicts:
+      tenant: {$subset: {status: fail}}
+  notes: ops-shared has no owner; oncall-shared is owned by an active employee.
+  tags: [evaluators, tier1, hr-5, acme]
+
+- id: cmp-tier1-hr5-globex-all-owned
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: globex
+  target: deterministic_verdict
+  input: {test_id: HR-5}
+  expected:
+    verdicts:
+      tenant: {$subset: {status: pass}}
+  tags: [evaluators, tier1, hr-5, globex]

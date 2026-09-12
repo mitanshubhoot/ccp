@@ -23,7 +23,7 @@ from ccp.connectors.registry import build_connector
 from ccp.ingest import event_log
 from ccp.ingest.consumers import OrderedConsumer
 from ccp.ingest.event_log import LogRecord
-from ccp.ingest.landing import land_events
+from ccp.ingest.landing import ingest_tenant, land_events
 from ccp.ingest.raw_zone import RawZone
 from ccp.storage.db import app_pool
 from ccp.storage.scoped import ScopedDB
@@ -36,6 +36,23 @@ class EvalContext:
     db_settings: Settings | None = None
     _pool: ConnectionPool | None = field(default=None, repr=False)
     _scratch_dir: Path | None = field(default=None, repr=False)
+    _prepared: set[str] = field(default_factory=set, repr=False)
+
+    def prepared(self, tenant_id: str | None) -> ScopedDB:
+        """A scoped handle on a tenant that has been ingested, normalized, and resolved in
+        this run's scratch database (once per tenant per run; the pipeline is idempotent)."""
+        from ccp.identity import resolver
+        from ccp.normalize.consumer import normalize_all
+
+        db = self.scoped(tenant_id)
+        if db.tenant.tenant_id not in self._prepared:
+            assert self.db_settings is not None
+            run_settings = self.db_settings.model_copy(update={"ccp_data_dir": self.scratch_dir})
+            ingest_tenant(run_settings, db, db.tenant)
+            normalize_all(db, run_settings)
+            resolver.resolve_tenant(db)
+            self._prepared.add(db.tenant.tenant_id)
+        return db
 
     @property
     def scratch_dir(self) -> Path:
@@ -260,6 +277,56 @@ def identity_pair(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) 
         "route": scored.route,
         "score": scored.score,
         "features": scored.features,
+    }
+
+
+@target("deterministic_verdict")
+def deterministic_verdict(
+    ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]
+) -> dict[str, Any]:
+    """Run one tier 1 test over the prepared tenant; report every subject's verdict."""
+    from ccp.evaluators import runner as evaluations
+    from ccp.evaluators.verdict import latest_per_subject
+
+    db = ctx.prepared(tenant_id)
+    test_id = str(inp["test_id"])
+    evaluations.enqueue_all(db, ctx.settings, tests=(test_id,))
+    evaluations.drain(db, ctx.settings)
+    return {
+        "verdicts": {
+            v.subject: {
+                "status": v.status.value,
+                "evidence_refs": list(v.evidence_refs),
+                "guardrail_events": list(v.guardrail_events),
+                "valid_from": v.valid_from.isoformat(),
+            }
+            for v in latest_per_subject(db, test_id)
+        }
+    }
+
+
+@target("evaluate_tier1")
+def evaluate_tier1(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
+    """A full tier 1 run twice: status counts, and proof the second run writes nothing."""
+    from ccp.evaluators import runner as evaluations
+    from ccp.evaluators.verdict import count
+
+    db = ctx.prepared(tenant_id)
+    first_enqueued = evaluations.enqueue_all(db, ctx.settings)
+    first = evaluations.drain(db, ctx.settings)
+    verdicts_after_first = count(db)
+    second_enqueued = evaluations.enqueue_all(db, ctx.settings)
+    second = evaluations.drain(db, ctx.settings)
+    return {
+        "enqueued": first_enqueued,
+        "evaluated": first.evaluated,
+        "by_status": dict(sorted(first.by_status.items())),
+        "verdict_rows": verdicts_after_first,
+        "second_run": {
+            "enqueued": second_enqueued,
+            "duplicates": second.duplicates,
+            "new_rows": count(db) - verdicts_after_first,
+        },
     }
 
 
