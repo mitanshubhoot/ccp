@@ -1,0 +1,75 @@
+name: nightly-evals
+
+# The keyed evaluation run (spec.md Layer 11, Phase 17): golden plus adversarial suites with
+# the model, embedding, and judge keys, under a per-run budget and a job-level cost cap, with
+# the report and the calibration file uploaded as artifacts. CI (ci.yml) runs keyless.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ccp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ccp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://ccp_app:ccp@localhost:5432/ccp
+      DATABASE_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/ccp
+      CCP_DATA_DIR: ${{ github.workspace }}/data
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+      LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+      LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+      # Per-run budget enforced inside the model client, and the cap for the whole job below.
+      CCP_RUN_BUDGET_USD: "0.50"
+      NIGHTLY_COST_CAP_USD: "5.00"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --group dev
+      - run: uv run ccp db migrate
+      - name: golden and adversarial suites (keyed)
+        id: evals
+        continue-on-error: true
+        run: uv run ccp evals run --suite all --no-unit
+      - name: cost cap
+        run: |
+          uv run python - <<'EOF'
+          import json, os, sys
+          report = json.load(open("evals/runs/latest.json", encoding="utf-8"))
+          spent = float((report.get("metrics") or {}).get("total_cost_usd") or 0.0)
+          cap = float(os.environ["NIGHTLY_COST_CAP_USD"])
+          print(f"nightly run cost {spent:.4f} USD (cap {cap:.2f})")
+          sys.exit(1 if spent > cap else 0)
+          EOF
+      - name: judge calibration (keyed)
+        continue-on-error: true
+        run: uv run ccp evals calibrate --bootstrap 500
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightly-evals-${{ github.run_id }}
+          path: |
+            evals/runs/latest.json
+            evals/runs/calibration-*.json
+          if-no-files-found: warn
+      - name: fail the job if the suites failed
+        if: steps.evals.outcome == 'failure'
+        run: exit 1

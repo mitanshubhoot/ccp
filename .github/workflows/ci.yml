@@ -1,5 +1,9 @@
 name: ci
 
+# Keyless: no model, embedding, or tracing keys here, so AI-tier tests, keyed golden cases,
+# and the adversarial suite skip cleanly and everything else must pass (spec.md Phase 17).
+# The keyed run is nightly-evals.yml.
+
 on:
   push:
   pull_request:
@@ -7,6 +11,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -21,13 +26,27 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+    env:
+      DATABASE_URL: postgresql://ccp_app:ccp@localhost:5432/ccp
+      DATABASE_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/ccp
+      CCP_DATA_DIR: ${{ github.workspace }}/data
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
       - run: uv sync --group dev
+      - run: uv run ruff format --check .
       - run: uv run ruff check .
       - run: uv run mypy ccp
-      # No model or embedding keys in CI: AI-tier tests skip; everything else must pass.
-      - run: uv run pytest -m "not live_github" -q
+      - run: uv run lint-imports
+      - run: uv run ccp db migrate
+      - run: uv run pytest -q -m "not live_github"
+      - name: golden evals (keyless; keyed cases skip)
+        run: uv run ccp evals run --no-unit
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-evals-latest
+          path: evals/runs/latest.json
+          if-no-files-found: warn

@@ -322,6 +322,10 @@ def make_tool_loop(
                     updates["guardrail_events"].append(f"tool_not_permitted:{call.name}")
                 else:
                     result = tools[call.name].call(call.arguments)
+                    if result.get("redactions"):
+                        updates["guardrail_events"].append(
+                            f"secret_redacted_in_tool_result:{call.name}:{result['redactions']}"
+                        )
                     if result.get("fixed_argument"):
                         updates["guardrail_events"].append(
                             f"tool_argument_fixed:{call.name}:{result['fixed_argument']}"

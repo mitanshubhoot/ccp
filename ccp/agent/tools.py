@@ -24,6 +24,7 @@ from ccp.retrieval import hybrid
 from ccp.retrieval.config import RetrievalConfig
 from ccp.retrieval.embeddings import EmbeddingClient
 from ccp.retrieval.rerank import Reranker
+from ccp.security.secrets_patterns import redact
 from ccp.storage import bitemporal
 from ccp.storage.scoped import ScopedDB
 from ccp.types import EvidenceType
@@ -188,17 +189,37 @@ class ToolContext:
 ToolFn = Callable[[ToolContext, BaseModel], Any]
 
 
+def _redacted_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Chunk text never leaves a tool unredacted: S6 applies to tool results as it does
+    to the evidence fence, so a secret cannot reach a model through a tool loop."""
+    text, hits = redact(str(row.get("text") or ""))
+    return {**row, "text": text, "redactions": hits}
+
+
+def _redaction_count(result: Any) -> int:
+    if not isinstance(result, dict):
+        return 0
+    own = result.get("redactions")
+    total = len(own) if isinstance(own, list) else 0
+    for chunk in result.get("chunks") or []:
+        if isinstance(chunk, dict) and isinstance(chunk.get("redactions"), list):
+            total += len(chunk["redactions"])
+    return total
+
+
 def _chunk_dict(c: hybrid.RetrievedChunk) -> dict[str, Any]:
-    return {
-        "chunk_id": c.chunk_id,
-        "evidence_entity_id": c.evidence_entity_id,
-        "evidence_type": c.evidence_type,
-        "subject_entity_id": c.subject_entity_id,
-        "page": c.page,
-        "source_ref": c.source_ref,
-        "text": c.text,
-        "scores": c.scores(),
-    }
+    return _redacted_row(
+        {
+            "chunk_id": c.chunk_id,
+            "evidence_entity_id": c.evidence_entity_id,
+            "evidence_type": c.evidence_type,
+            "subject_entity_id": c.subject_entity_id,
+            "page": c.page,
+            "source_ref": c.source_ref,
+            "text": c.text,
+            "scores": c.scores(),
+        }
+    )
 
 
 def search_evidence(ctx: ToolContext, args: BaseModel) -> Any:
@@ -233,7 +254,7 @@ def get_chunk(ctx: ToolContext, args: BaseModel) -> Any:
         "source_ref",
         "text",
     )
-    return dict(zip(keys, row, strict=True))
+    return _redacted_row(dict(zip(keys, row, strict=True)))
 
 
 def list_evidence(ctx: ToolContext, args: BaseModel) -> Any:
@@ -270,7 +291,7 @@ def get_evidence_chunks(ctx: ToolContext, args: BaseModel) -> Any:
         "source_ref",
         "text",
     )
-    return {"chunks": [dict(zip(keys, r, strict=True)) for r in rows]}
+    return {"chunks": [_redacted_row(dict(zip(keys, r, strict=True))) for r in rows]}
 
 
 def list_assets(ctx: ToolContext, args: BaseModel) -> Any:
@@ -505,7 +526,11 @@ class BoundTool:
         result = self._fn(self._ctx, args)
         if isinstance(result, dict) and result.get("error"):
             return {"is_error": True, **result}
-        return {"is_error": False, "result": result}
+        wrapped: dict[str, Any] = {"is_error": False, "result": result}
+        redactions = _redaction_count(result)
+        if redactions:
+            wrapped["redactions"] = redactions
+        return wrapped
 
 
 def bind_tools(
