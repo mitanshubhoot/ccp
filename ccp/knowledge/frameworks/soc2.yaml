@@ -1,0 +1,59 @@
+# A slice of SOC 2 (Trust Services Criteria). Requirement text is our own paraphrase of
+# the intent, with the sub-clauses a gap analysis checks; it is not the licensed text.
+framework_id: soc2
+name: SOC 2 Trust Services Criteria (slice)
+requirements:
+  - requirement_id: CC1.4
+    title: Attract, develop, and retain competent individuals
+    intent: >-
+      The organization ensures its people have the competence their responsibilities
+      require, including security awareness.
+    clauses:
+      - Personnel complete security awareness training when they join and on a recurring basis.
+      - Completion is recorded per individual with a date, so currency can be verified.
+      - Training content covers the threats the organization actually faces (phishing, credential handling, data handling, incident reporting).
+  - requirement_id: CC6.1
+    title: Logical access security software, infrastructure, and architectures
+    intent: >-
+      Access to systems and data is controlled through identification, authentication,
+      and authorization mechanisms that are configured and maintained.
+    clauses:
+      - Every user of a system is uniquely identified; shared or generic accounts have a named individual owner.
+      - Authentication for human users requires more than a password (multi-factor).
+      - Credentials, keys, and secrets are protected and never stored in plaintext in source or evidence.
+  - requirement_id: CC6.2
+    title: Registration, authorization, and removal of users
+    intent: >-
+      New users are registered and authorized before access is granted, and access is
+      removed when it is no longer needed.
+    clauses:
+      - Access for personnel who leave is removed within a defined time after the termination effective time.
+      - Removal covers every connected system, not only the primary identity provider.
+      - The removal is evidenced, so a reviewer can see that it happened and when.
+  - requirement_id: CC6.3
+    title: Access modification and removal based on roles; periodic review
+    intent: >-
+      Access is granted, changed, and removed according to role, and reviewed periodically
+      so privileges do not accumulate.
+    clauses:
+      - Privileged access (administrators) is limited to a defined, justified set of people.
+      - Access reviews happen on a schedule and cover every system classified as critical.
+      - Review outcomes (confirmations, removals, reductions) are recorded with owner and date.
+  - requirement_id: CC7.1
+    title: Detection and monitoring of vulnerabilities and configuration changes
+    intent: >-
+      The organization identifies vulnerabilities and configuration changes that could
+      affect its objectives and responds to them.
+    clauses:
+      - A documented process exists for receiving vulnerability reports from outside the organization.
+      - The process states a response timeline (acknowledgement and remediation targets).
+      - Confirmed vulnerabilities are tracked to remediation.
+  - requirement_id: CC8.1
+    title: Change management
+    intent: >-
+      Changes to infrastructure, software, and data are authorized, designed, tested,
+      approved, and implemented in a controlled way.
+    clauses:
+      - Changes to production code require review by someone other than the author before merge.
+      - The review requirement applies to administrators as well as ordinary contributors.
+      - Changes land through a controlled path (protected default branch, required checks).

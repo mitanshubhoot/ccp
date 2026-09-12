@@ -1,0 +1,76 @@
+# A slice of ISO/IEC 27001:2022 Annex A. Requirement text is our own paraphrase of the
+# intent, with the sub-clauses a gap analysis checks; it is not the licensed text.
+framework_id: iso27001
+name: ISO/IEC 27001:2022 Annex A (slice)
+requirements:
+  - requirement_id: A.5.16
+    title: Identity management
+    intent: >-
+      The full life cycle of identities is managed so that every identity is attributable
+      to a person or a documented purpose.
+    clauses:
+      - Shared or generic identities exist only where necessary and have a named individual owner recorded.
+      - Identities are created, changed, and removed through a controlled process.
+      - The registry of identities is kept current.
+  - requirement_id: A.5.17
+    title: Authentication information
+    intent: >-
+      Allocation and management of authentication information (passwords, keys, tokens)
+      is controlled and users are told how to handle it.
+    clauses:
+      - Secrets and API keys are stored in a managed secret store, not in source repositories or documents.
+      - Repositories and evidence are checked for plaintext credentials.
+      - Compromised or exposed credentials are rotated.
+  - requirement_id: A.5.18
+    title: Access rights
+    intent: >-
+      Access rights are provisioned, reviewed, modified, and removed in accordance with
+      the access control policy.
+    clauses:
+      - Access rights are removed promptly when a person leaves or changes role, across all systems.
+      - Access rights are reviewed at planned intervals, covering every critical system.
+      - Reviews and removals are evidenced with owner, date, and outcome.
+  - requirement_id: A.6.3
+    title: Information security awareness, education and training
+    intent: >-
+      Personnel receive security awareness education and training relevant to their role,
+      with regular updates.
+    clauses:
+      - Every active employee has completed security awareness training.
+      - Completion is recent (within the organization's defined period) and recorded per person.
+      - The record is genuinely the individual's own and marks the training as completed, not merely started.
+  - requirement_id: A.8.2
+    title: Privileged access rights
+    intent: >-
+      The allocation and use of privileged access rights is restricted and managed.
+    clauses:
+      - The number of privileged accounts on each system is limited to what the organization defines as acceptable.
+      - Privileged access is assigned to named individuals with a justification.
+      - Privileged access is reviewed more often than ordinary access.
+  - requirement_id: A.8.5
+    title: Secure authentication
+    intent: >-
+      Secure authentication technologies and procedures are implemented based on access
+      restrictions and the access control policy.
+    clauses:
+      - Multi-factor authentication is enforced for every active human identity.
+      - Authentication exceptions are documented and time-bound.
+      - Service identities use scoped, rotated credentials.
+  - requirement_id: A.8.8
+    title: Management of technical vulnerabilities
+    intent: >-
+      Information about technical vulnerabilities is obtained, exposure is evaluated,
+      and appropriate measures are taken.
+    clauses:
+      - A coordinated vulnerability disclosure process exists and is published to reporters.
+      - The process commits to a response timeline for acknowledgement and remediation.
+      - Reported vulnerabilities are assessed and remediated according to severity.
+  - requirement_id: A.8.32
+    title: Change management
+    intent: >-
+      Changes to information processing facilities and information systems are subject
+      to change management procedures.
+    clauses:
+      - Production code changes are peer-reviewed before merge.
+      - Administrators are not exempt from the review requirement.
+      - The default branch is protected so changes cannot bypass the procedure.

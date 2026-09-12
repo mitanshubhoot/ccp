@@ -219,6 +219,25 @@ def mapper(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict
     }
 
 
+@target("knowledge_router")
+def knowledge_router(
+    ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]
+) -> dict[str, Any]:
+    """Tier and control mapping for one test spec."""
+    from ccp.knowledge.graph import load
+
+    graph = load()
+    spec = graph.tests[inp["test_id"]]
+    controls = graph.controls_for_test(spec.test_id)
+    return {
+        "tier": spec.tier,
+        "evaluation": spec.evaluation,
+        "evidence_types": [e.value for e in spec.evidence_types],
+        "controls": [c.control_id for c in controls],
+        "requirements": sorted(r for c in controls for r in c.requirements),
+    }
+
+
 @target("identity_pair")
 def identity_pair(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
     """Gate, score, and route one pair of fixture persons in memory (no database)."""

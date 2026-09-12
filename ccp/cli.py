@@ -13,10 +13,12 @@ from ccp.evals import runner as eval_runner
 from ccp.identity import resolver
 from ccp.ingest import worker
 from ccp.ingest.landing import ingest_tenant
+from ccp.knowledge import graph as knowledge_graph
+from ccp.knowledge import rollup as knowledge_rollup
 from ccp.normalize import consumer as normalize_consumer
 from ccp.normalize import repository
 from ccp.observability import steps
-from ccp.storage import db
+from ccp.storage import bitemporal, db
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
 
@@ -31,7 +33,58 @@ worker_app = typer.Typer(no_args_is_help=True, help="Run consumers over the even
 evals_app = typer.Typer(no_args_is_help=True, help="Golden-dataset evaluation harness")
 normalize_app = typer.Typer(no_args_is_help=True, help="Map raw events into canonical entities")
 identity_app = typer.Typer(no_args_is_help=True, help="Identity resolution and the review queue")
+knowledge_app = typer.Typer(no_args_is_help=True, help="Frameworks, controls, tests")
+app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(tenants_app, name="tenants")
+
+
+@knowledge_app.command("show")
+def knowledge_show() -> None:
+    """Print the graph: each test, its tier, its controls, and the requirements they satisfy."""
+    graph = knowledge_graph.load()
+    for spec in graph.tests.values():
+        controls = graph.controls_for_test(spec.test_id)
+        reqs = sorted(r for c in controls for r in c.requirements)
+        typer.echo(f"{spec.test_id:<5} tier {spec.tier}  {spec.title}")
+        typer.echo(
+            f"      controls={','.join(c.control_id for c in controls)}"
+            f"  requirements={','.join(reqs)}"
+        )
+
+
+@knowledge_app.command("load")
+def knowledge_load(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """Upsert the graph into the reference tables (any tenant context opens the connection)."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant or "acme")
+    pool = db.app_pool(settings)
+    try:
+        counts = knowledge_graph.load_into_db(ScopedDB(pool, ctx), knowledge_graph.load())
+    finally:
+        pool.close()
+    for name, n in counts.items():
+        typer.echo(f"{name:<13} {n}")
+
+
+@app.command("report")
+def report(
+    framework: str = typer.Option(..., "--framework", help="soc2 | iso27001"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Roll current compliance state up to a framework's requirements."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    graph = knowledge_graph.load()
+    if framework not in graph.frameworks:
+        raise typer.BadParameter(f"framework must be one of {', '.join(graph.frameworks)}")
+    pool = db.app_pool(settings)
+    try:
+        heads = bitemporal.heads(ScopedDB(pool, ctx))
+    finally:
+        pool.close()
+    typer.echo(knowledge_rollup.format_rollup(knowledge_rollup.rollup(graph, heads, framework)))
+
+
 app.add_typer(db_app, name="db")
 app.add_typer(connectors_app, name="connectors")
 app.add_typer(ingest_app, name="ingest")

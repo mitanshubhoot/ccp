@@ -1,0 +1,50 @@
+# Controls: the reusable middle of the graph. A control maps to requirements in both
+# frameworks and to the tests that evidence it (spec.md Layer 6).
+controls:
+  - control_id: CTL-ACCESS-REVOKE
+    title: Access is removed for terminated personnel within the SLA
+    description: >-
+      When a person's employment ends, every access grant they hold on every connected
+      system is revoked within the tenant's termination SLA.
+    requirements: [soc2:CC6.2, soc2:CC6.3, iso27001:A.5.18]
+    tests: [HR-1, GH-1]
+  - control_id: CTL-PRIV-LIMIT
+    title: Privileged (org admin) access is limited to a defined maximum
+    description: The number of organization administrators does not exceed the configured limit.
+    requirements: [soc2:CC6.3, iso27001:A.8.2]
+    tests: [GH-2]
+  - control_id: CTL-CHANGE-REVIEW
+    title: Changes to production code require peer review
+    description: Every repository's default branch requires an approving review before merge, with administrators included.
+    requirements: [soc2:CC8.1, iso27001:A.8.32]
+    tests: [GH-3]
+  - control_id: CTL-VULN-DISCLOSURE
+    title: A vulnerability disclosure process exists with a response timeline
+    description: A published security policy tells reporters how to report and commits to a response timeline.
+    requirements: [soc2:CC7.1, iso27001:A.8.8]
+    tests: [GH-4]
+  - control_id: CTL-SECRETS
+    title: Secrets are not stored in plaintext in source or evidence
+    description: No API key, token, or private key appears in tracked files or collected evidence.
+    requirements: [soc2:CC6.1, iso27001:A.5.17]
+    tests: [GH-5]
+  - control_id: CTL-MFA
+    title: All active identities use multi-factor authentication
+    description: Every active human identity in the identity provider has MFA enabled.
+    requirements: [soc2:CC6.1, iso27001:A.8.5]
+    tests: [HR-2]
+  - control_id: CTL-AWARENESS
+    title: Personnel complete security awareness training
+    description: Every active employee has a completed, current, individually attributable training record.
+    requirements: [soc2:CC1.4, iso27001:A.6.3]
+    tests: [HR-3]
+  - control_id: CTL-ACCESS-REVIEW
+    title: Access is periodically reviewed across all critical systems
+    description: The most recent access review's documented scope covers every system tagged critical.
+    requirements: [soc2:CC6.3, iso27001:A.5.18]
+    tests: [HR-4]
+  - control_id: CTL-ACCOUNT-OWNER
+    title: Every shared or generic account has a named individual owner
+    description: The account registry records an active individual owner for every shared account.
+    requirements: [soc2:CC6.1, iso27001:A.5.16]
+    tests: [HR-5]

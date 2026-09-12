@@ -267,6 +267,34 @@
     features: {}
   tags: [identity, hr-5]
 
+- id: cmp-router-hr4-is-tier-3
+  level: component
+  difficulty: easy
+  source: manual
+  target: knowledge_router
+  input: {test_id: HR-4}
+  expected:
+    tier: 3
+    evaluation: interpretive
+    evidence_types: [access_review_report, critical_systems_list]
+    controls: [CTL-ACCESS-REVIEW]
+    requirements: ["iso27001:A.5.18", "soc2:CC6.3"]
+  tags: [knowledge, router]
+
+- id: cmp-router-hr1-reuses-one-control-under-both-frameworks
+  level: component
+  difficulty: easy
+  source: manual
+  target: knowledge_router
+  input: {test_id: HR-1}
+  expected:
+    tier: 1
+    evaluation: deterministic
+    evidence_types: [hr_roster, org_membership, identity_mfa_status]
+    controls: [CTL-ACCESS-REVOKE]
+    requirements: ["iso27001:A.5.18", "soc2:CC6.2", "soc2:CC6.3"]
+  tags: [knowledge, router, hr-1]
+
 - id: cmp-connector-manual-globex-page-split
   level: component
   difficulty: hard

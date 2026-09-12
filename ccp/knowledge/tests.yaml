@@ -1,0 +1,116 @@
+# Test specs (spec.md Layer 6). Everything the router and the evaluators need is declared
+# here at authoring time: how the test is evaluated, which evidence it consumes, which
+# rule decides, where valid time comes from, and when evidence goes stale.
+tests:
+  - test_id: GH-1
+    title: A terminated person still holds an active GitHub org membership or repo collaboration
+    connector_scope: [github, hris]
+    evaluation: deterministic
+    evidence_types: [org_membership, hr_roster]
+    subject_kind: person
+    controls: [CTL-ACCESS-REVOKE]
+    rule: gh1_terminated_github_access
+    valid_from_strategy: event_time_plus_sla
+    parameters: {sla_hours_key: termination_revocation_sla_hours}
+    revalidate_every_days: 30
+  - test_id: GH-2
+    title: Org admin count is within the tenant's configured limit
+    connector_scope: [github]
+    evaluation: deterministic
+    evidence_types: [org_membership]
+    subject_kind: org
+    controls: [CTL-PRIV-LIMIT]
+    rule: gh2_admin_limit
+    valid_from_strategy: evidence_observed
+    parameters: {limit_key: org_admin_limit}
+    revalidate_every_days: 30
+  - test_id: GH-3
+    title: The default branch of every repo requires review before merge
+    connector_scope: [github]
+    evaluation: deterministic
+    evidence_types: [repo_settings]
+    subject_kind: repo
+    controls: [CTL-CHANGE-REVIEW]
+    rule: gh3_branch_review
+    valid_from_strategy: evidence_observed
+    revalidate_every_days: 30
+  - test_id: GH-4
+    title: A security or vulnerability disclosure policy exists and states a response timeline
+    connector_scope: [github]
+    evaluation: interpretive
+    evidence_types: [policy_document]
+    subject_kind: repo
+    controls: [CTL-VULN-DISCLOSURE]
+    prompt_version: gh4_extract_v1
+    extraction_schema: DisclosurePolicyFields
+    rule: gh4_disclosure_timeline
+    valid_from_strategy: evidence_observed
+    evidence_max_age_days: 365
+    revalidate_every_days: 90
+  - test_id: GH-5
+    title: No API keys or secrets appear in plaintext in tracked evidence
+    connector_scope: [github]
+    evaluation: deterministic
+    evidence_types: [repo_file_listing]
+    subject_kind: repo
+    controls: [CTL-SECRETS]
+    rule: gh5_no_plaintext_secrets
+    valid_from_strategy: evidence_observed
+    revalidate_every_days: 7
+  - test_id: HR-1
+    title: A terminated person has zero active access grants across every connected system within the SLA
+    connector_scope: [hris, github]
+    evaluation: deterministic
+    evidence_types: [hr_roster, org_membership, identity_mfa_status]
+    subject_kind: person
+    controls: [CTL-ACCESS-REVOKE]
+    rule: hr1_offboarding_sla
+    valid_from_strategy: event_time_plus_sla
+    parameters: {sla_hours_key: termination_revocation_sla_hours}
+    revalidate_every_days: 30
+  - test_id: HR-2
+    title: All active identities have MFA enabled
+    connector_scope: [hris]
+    evaluation: deterministic
+    evidence_types: [identity_mfa_status]
+    subject_kind: tenant
+    controls: [CTL-MFA]
+    rule: hr2_mfa_everywhere
+    valid_from_strategy: evidence_observed
+    revalidate_every_days: 30
+  - test_id: HR-3
+    title: Every active employee has a completed security-awareness training document on file, theirs and completed
+    connector_scope: [hris, manual]
+    evaluation: interpretive
+    evidence_types: [training_record]
+    subject_kind: person
+    controls: [CTL-AWARENESS]
+    prompt_version: hr3_extract_v1
+    extraction_schema: TrainingRecordFields
+    rule: hr3_training_current
+    valid_from_strategy: evidence_observed
+    evidence_max_age_days: 365
+    revalidate_every_days: 30
+  - test_id: HR-4
+    title: The most recent access review is documented and its stated scope covers every critical system
+    connector_scope: [hris, manual]
+    evaluation: interpretive
+    evidence_types: [access_review_report, critical_systems_list]
+    subject_kind: tenant
+    controls: [CTL-ACCESS-REVIEW]
+    prompt_version: hr4_extract_v1
+    extraction_schema: AccessReviewFields
+    rule: hr4_review_covers_critical
+    valid_from_strategy: evidence_observed
+    evidence_max_age_days: 180
+    revalidate_every_days: 90
+  - test_id: HR-5
+    title: No shared or generic account exists without a documented individual owner
+    connector_scope: [hris]
+    evaluation: deterministic
+    evidence_types: [account_registry]
+    subject_kind: tenant
+    controls: [CTL-ACCOUNT-OWNER]
+    rule: hr5_shared_account_owner
+    valid_from_strategy: evidence_observed
+    revalidate_every_days: 30
