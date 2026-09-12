@@ -315,9 +315,11 @@ agentic/
     identity/
       blocking.py, scoring.py, resolver.py, review_queue.py
     storage/
-      schema.sql              # tables, indexes, the vector and tsvector columns
-      rls.sql                 # ENABLE ROW LEVEL SECURITY + one policy per tenant table + REVOKEs
-      db.py                   # connection factory (psycopg 3), migration runner (admin URL only)
+      migrations/             # applied in name order exactly once, never edited after applying
+        0001_schema.sql       # extensions, app_tenant() guard, Layer 2 tables (Phase 0)
+        0002_rls.sql          # grants, ENABLE + FORCE ROW LEVEL SECURITY, one policy per tenant table
+        0003_...              # later phases add files (compliance_state, chunks, verdicts, ...)
+      db.py                   # connection factory (psycopg 3 pool), migration runner (admin URL only)
       scoped.py               # ScopedDB: opens a transaction, SET LOCAL app.tenant_id, the only query surface
       bitemporal.py           # append-only compliance_state writes and as-of reads
     knowledge/
@@ -451,14 +453,16 @@ one produced an event.
 class SourceEvent(BaseModel):
     tenant_id: TenantId
     connector: Literal["github", "hris"]
-    source_event_id: str          # the provider's own id; dedup key component
-    source_ts: datetime           # the provider's own timestamp; ordering key
-    event_type: str               # connector-specific, e.g. "org.member_added", "hris.termination"
-    payload: dict[str, Any]       # the provider's object, untouched
-    schema_version: str           # of the payload shape, e.g. "github.v1"
+    source_event_id: str  # the provider's own id; dedup key component
+    source_ts: datetime  # the provider's own timestamp; ordering key
+    event_type: str  # connector-specific, e.g. "org.member_added", "hris.termination"
+    payload: dict[str, Any]  # the provider's object, untouched
+    schema_version: str  # of the payload shape, e.g. "github.v1"
+
 
 class Connector(Protocol):
     name: str
+
     def pull(self, tenant: TenantContext, since: datetime | None) -> Iterator[SourceEvent]: ...
 ```
 
@@ -698,10 +702,10 @@ All share a base:
 ```python
 class CanonicalBase(BaseModel):
     tenant_id: TenantId
-    entity_id: str              # deterministic: f"{connector}:{kind}:{source_native_id}"
+    entity_id: str  # deterministic: f"{connector}:{kind}:{source_native_id}"
     source_connector: str
-    source_event_id: str        # provenance back to raw_events
-    observed_at: datetime       # = source_ts of the producing event
+    source_event_id: str  # provenance back to raw_events
+    observed_at: datetime  # = source_ts of the producing event
 ```
 
 | Entity | Fields beyond base | Produced from |
@@ -732,7 +736,7 @@ they read entities.
 ```python
 def map_github_event(event: SourceEvent) -> list[CanonicalBase]: ...
 def map_hris_event(event: SourceEvent) -> list[CanonicalBase]: ...
-def map_manual_event(event: SourceEvent) -> list[CanonicalBase]: ...   # always exactly one Evidence
+def map_manual_event(event: SourceEvent) -> list[CanonicalBase]: ...  # always exactly one Evidence
 ```
 
 Each mapper has a table-driven component test: a fixture event in, an exact expected
@@ -926,7 +930,9 @@ has `supersedes_row_id` pointing at it. A row's **effective valid_to** is its ow
 `valid_to` if set, else the `valid_from` of the row that supersedes it, else open.
 
 ```python
-def state_as_of(db: ScopedDB, subject_key: str, valid_at: datetime, known_at: datetime) -> Row | None:
+def state_as_of(
+    db: ScopedDB, subject_key: str, valid_at: datetime, known_at: datetime
+) -> Row | None:
     """
     'What was true at valid_at, according to everything we had recorded by known_at.'
     Rows with recorded_at > known_at do not exist for this query.
@@ -934,8 +940,13 @@ def state_as_of(db: ScopedDB, subject_key: str, valid_at: datetime, known_at: da
     Return the row whose [valid_from, effective_valid_to) contains valid_at.
     """
 
-def current_state(db, subject_key, valid_at):  return state_as_of(db, subject_key, valid_at, known_at=now())
-def believed_state(db, subject_key, at):        return state_as_of(db, subject_key, valid_at=at, known_at=at)
+
+def current_state(db, subject_key, valid_at):
+    return state_as_of(db, subject_key, valid_at, known_at=now())
+
+
+def believed_state(db, subject_key, at):
+    return state_as_of(db, subject_key, valid_at=at, known_at=at)
 ```
 
 Worked example the test suite encodes (`tests/component/test_bitemporal.py`):
@@ -995,20 +1006,22 @@ plain `INSERT OR REPLACE` is allowed).
 
 ```python
 class TestSpec(BaseModel):
-    test_id: str                              # "GH-1"
+    test_id: str  # "GH-1"
     title: str
-    connector_scope: list[str]                # ["github", "hris"] for cross-connector
+    connector_scope: list[str]  # ["github", "hris"] for cross-connector
     evaluation: Literal["deterministic", "interpretive"]
-    evidence_types: list[EvidenceType]        # >= 1; for deterministic, the entity kinds read
-    subject_kind: Literal["tenant", "person", "repo", "org"]   # what one verdict is about
-    controls: list[str]                       # control ids this test provides evidence for
-    parameters: dict[str, Any] = {}           # e.g. {"sla_hours_key": "termination_revocation_sla_hours"}
-    prompt_version: str | None                # interpretive only, e.g. "tier2_policy_v3"
-    extraction_schema: str | None             # interpretive only: the typed-fields schema the model fills
-    rule: str | None                          # interpretive only: the pure decision function name
-    valid_from_strategy: Literal["evidence_observed", "event_time", "event_time_plus_sla", "trigger_time"]
-    evidence_max_age: timedelta | None        # e.g. 365 days for HR-3; None = never stale
-    revalidate_every: timedelta | None        # e.g. 90 days for HR-4; None = only on change
+    evidence_types: list[EvidenceType]  # >= 1; for deterministic, the entity kinds read
+    subject_kind: Literal["tenant", "person", "repo", "org"]  # what one verdict is about
+    controls: list[str]  # control ids this test provides evidence for
+    parameters: dict[str, Any] = {}  # e.g. {"sla_hours_key": "termination_revocation_sla_hours"}
+    prompt_version: str | None  # interpretive only, e.g. "tier2_policy_v3"
+    extraction_schema: str | None  # interpretive only: the typed-fields schema the model fills
+    rule: str | None  # interpretive only: the pure decision function name
+    valid_from_strategy: Literal[
+        "evidence_observed", "event_time", "event_time_plus_sla", "trigger_time"
+    ]
+    evidence_max_age: timedelta | None  # e.g. 365 days for HR-3; None = never stale
+    revalidate_every: timedelta | None  # e.g. 90 days for HR-4; None = only on change
 ```
 
 Router rule, stated here because it is data-driven from this schema:
@@ -1085,33 +1098,40 @@ Every tier, including the deterministic one, returns this:
 
 ```python
 class Citation(BaseModel):
-    chunk_id: str                  # must exist in retrieved_chunk_ids
-    quote: str                     # verbatim span, <= 300 chars
-    supports: str                  # the claim this citation backs, in the model's words
-    verified: bool = False         # set by Layer 7's citation checker, never by the model
+    chunk_id: str  # must exist in retrieved_chunk_ids
+    quote: str  # verbatim span, <= 300 chars
+    supports: str  # the claim this citation backs, in the model's words
+    verified: bool = False  # set by Layer 7's citation checker, never by the model
+
 
 class Verdict(BaseModel):
-    verdict_id: str                # ULID
-    evaluation_key: str            # sha256 of (tenant, test, subject, trigger_observed_at, prompt_version, model); UNIQUE
+    verdict_id: str  # ULID
+    evaluation_key: (
+        str  # sha256 of (tenant, test, subject, trigger_observed_at, prompt_version, model); UNIQUE
+    )
     tenant_id: TenantId
     test_id: str
     subject_key: str
-    extracted_fields: dict[str, Any] | None   # tiers 2 and 3: the typed fields the rule decided on
-    chunker_version: str | None    # so a chunker change cannot orphan retrieved_chunk_ids
-    schema_version: str | None     # the extraction schema version
-    fence_nonce: str | None        # the per-call evidence fence, for byte-exact replay
+    extracted_fields: dict[str, Any] | None  # tiers 2 and 3: the typed fields the rule decided on
+    chunker_version: str | None  # so a chunker change cannot orphan retrieved_chunk_ids
+    schema_version: str | None  # the extraction schema version
+    fence_nonce: str | None  # the per-call evidence fence, for byte-exact replay
     status: Literal["pass", "fail", "partial", "needs_review"]
     reasoning: str
-    citations: list[Citation]      # empty for deterministic; deterministic cites entity ids in `evidence_refs`
-    evidence_refs: list[str]       # entity ids and evidence ids read
-    confidence: float              # in [0,1]; deterministic tier reports 1.0
-    confidence_cap: float          # the retrieval-quality cap that was applied (1.0 for deterministic)
-    model_confidence: float | None # what the model said before capping
+    citations: list[
+        Citation
+    ]  # empty for deterministic; deterministic cites entity ids in `evidence_refs`
+    evidence_refs: list[str]  # entity ids and evidence ids read
+    confidence: float  # in [0,1]; deterministic tier reports 1.0
+    confidence_cap: float  # the retrieval-quality cap that was applied (1.0 for deterministic)
+    model_confidence: float | None  # what the model said before capping
     tier: Literal[1, 2, 3]
     model: str | None
     prompt_version: str | None
     retrieved_chunk_ids: list[str]
-    guardrail_events: list[str]    # e.g. "injection_marker_detected:chunk_0042", "citation_dropped:..."
+    guardrail_events: list[
+        str
+    ]  # e.g. "injection_marker_detected:chunk_0042", "citation_dropped:..."
     created_at: datetime
 ```
 
@@ -1288,14 +1308,18 @@ from typing import Annotated
 from operator import add
 from langgraph.graph.message import add_messages
 
+
 def merge_chunks(left: dict[str, Chunk], right: dict[str, Chunk]) -> dict[str, Chunk]:
-    return {**left, **right}                 # keyed by chunk_id; a re-retrieval is idempotent
+    return {**left, **right}  # keyed by chunk_id; a re-retrieval is idempotent
+
 
 def or_coverage(left: dict[str, bool], right: dict[str, bool]) -> dict[str, bool]:
     return {k: left.get(k, False) or right.get(k, False) for k in set(left) | set(right)}
 
-def keep_last(left, right):                  # explicit even for single-writer fields
+
+def keep_last(left, right):  # explicit even for single-writer fields
     return right if right is not None else left
+
 
 class AgentState(TypedDict):
     # inputs, written once by the wrapper
@@ -1304,11 +1328,13 @@ class AgentState(TypedDict):
     subject_key: str
     required_evidence_types: list[str]
     # multi-writer fields, every one has a reducer
-    messages: Annotated[list[AnyMessage], add_messages]              # plan, gather, synthesize write
-    retrieved_chunks: Annotated[dict[str, Chunk], merge_chunks]     # gather (via tools), verify_citations write
-    evidence_coverage: Annotated[dict[str, bool], or_coverage]      # gather, check_coverage write
-    tool_log: Annotated[list[ToolCallRecord], add]                  # gather, guardrail write
-    guardrail_events: Annotated[list[str], add]                     # gather, verify_citations, gate write
+    messages: Annotated[list[AnyMessage], add_messages]  # plan, gather, synthesize write
+    retrieved_chunks: Annotated[
+        dict[str, Chunk], merge_chunks
+    ]  # gather (via tools), verify_citations write
+    evidence_coverage: Annotated[dict[str, bool], or_coverage]  # gather, check_coverage write
+    tool_log: Annotated[list[ToolCallRecord], add]  # gather, guardrail write
+    guardrail_events: Annotated[list[str], add]  # gather, verify_citations, gate write
     # single-writer fields, still declared with keep_last so a future second writer cannot silently clobber
     plan: Annotated[str | None, keep_last]
     draft_verdict: Annotated[ModelVerdict | None, keep_last]
@@ -1724,10 +1750,13 @@ only way to know whether the judged half of the eval suite means anything.
 `ccp/observability/steps.py` provides a context manager:
 
 ```python
-with step(layer="evaluators", name="tier2.generate", tenant=tenant, parent=parent_step_id,
-          inputs={...}) as s:
+with step(
+    layer="evaluators", name="tier2.generate", tenant=tenant, parent=parent_step_id, inputs={...}
+) as s:
     ...
-    s.output({...}); s.model(model_id, prompt_version, prompt_sha256); s.usage(in_tok, out_tok, cache_read, cache_write)
+    s.output({...})
+    s.model(model_id, prompt_version, prompt_sha256)
+    s.usage(in_tok, out_tok, cache_read, cache_write)
 ```
 
 which, on exit (including on exception, with `error` set), writes one JSON line to
@@ -1848,30 +1877,43 @@ it never acts. Its output feeds Layer 10 through the approval stage.
 class MissingEvidence(BaseModel):
     evidence_type: EvidenceType
     subject_key: str | None
-    why_needed: str                    # tied to a citation or to the verdict's reasoning
+    why_needed: str  # tied to a citation or to the verdict's reasoning
+
 
 class RemediationProposal(BaseModel):
-    action: Literal["remove_repo_collaborator", "remove_org_member", "notify_owner", "request_evidence"]
-    target: dict[str, str]             # e.g. {"repo": "acme-example/platform", "login": "jsmith"}
-                                       # validated by ccp/remediation/targets.py: every value must resolve to a
-                                       # tenant entity AND appear in the originating verdict's evidence_refs;
-                                       # otherwise the proposal is dropped with a guardrail event
+    action: Literal[
+        "remove_repo_collaborator", "remove_org_member", "notify_owner", "request_evidence"
+    ]
+    target: dict[str, str]  # e.g. {"repo": "acme-example/platform", "login": "jsmith"}
+    # validated by ccp/remediation/targets.py: every value must resolve to a
+    # tenant entity AND appear in the originating verdict's evidence_refs;
+    # otherwise the proposal is dropped with a guardrail event
     rationale: str
-    reversible: bool                   # derived from the action catalogue, not model-supplied
-    live_capable: bool                 # same
+    reversible: bool  # derived from the action catalogue, not model-supplied
+    live_capable: bool  # same
+
 
 class Investigation(BaseModel):
     investigation_id: str
     tenant_id: TenantId
     verdict_id: str
     root_cause: str
-    root_cause_category: Literal["offboarding_gap", "missing_evidence", "stale_evidence",
-                                 "configuration", "ownership", "identity_unresolved", "unknown"]
+    root_cause_category: Literal[
+        "offboarding_gap",
+        "missing_evidence",
+        "stale_evidence",
+        "configuration",
+        "ownership",
+        "identity_unresolved",
+        "unknown",
+    ]
     missing_evidence: list[MissingEvidence]
     proposed_actions: list[RemediationProposal]
-    citations: list[Citation]          # verified by the same checker as verdicts
-    confidence: float                  # capped by the same rules as tier 3
-    model: str; prompt_version: str; created_at: datetime
+    citations: list[Citation]  # verified by the same checker as verdicts
+    confidence: float  # capped by the same rules as tier 3
+    model: str
+    prompt_version: str
+    created_at: datetime
 ```
 
 ### Graph
@@ -1931,24 +1973,33 @@ evidence and the knowledge graph:
 
 ```python
 class PolicyGap(BaseModel):
-    requirement_id: str                # e.g. "CC7.1" or "A.8.8"
+    requirement_id: str  # e.g. "CC7.1" or "A.8.8"
     covered: bool
-    covering_citations: list[Citation] # verified; empty when covered is False
+    covering_citations: list[Citation]  # verified; empty when covered is False
     gap_description: str | None
 
+
 class GapReport(BaseModel):
-    report_id: str; tenant_id: TenantId; control_id: str
+    report_id: str
+    tenant_id: TenantId
+    control_id: str
     gaps: list[PolicyGap]
     summary: str
-    confidence: float                  # capped: no policy_document chunks at all -> 0.2 and every gap uncovered
-    model: str; prompt_version: str; created_at: datetime
+    confidence: float  # capped: no policy_document chunks at all -> 0.2 and every gap uncovered
+    model: str
+    prompt_version: str
+    created_at: datetime
+
 
 class PolicyDraft(BaseModel):
-    draft_id: str; tenant_id: TenantId; control_id: str; based_on_report_id: str
+    draft_id: str
+    tenant_id: TenantId
+    control_id: str
+    based_on_report_id: str
     markdown: str
     addressed_requirements: list[str]
-    path: str                          # set by the runner, not the graph
-    approval_id: str                   # set by the runner
+    path: str  # set by the runner, not the graph
+    approval_id: str  # set by the runner
 ```
 
 ### Graph
@@ -2205,7 +2256,7 @@ Numbered so they can be corrected by reference.
 - **A-36** The Copilot has no cross-session memory. One REPL session is one checkpoint thread. The "are we ready" intent is forbidden from using the words "ready" or "compliant" as a summary judgement; a deterministic string test enforces this alongside the judge; the status answer is the computed rollup with its blocking test. At most two requested actions per turn, every target validated, and an explicit REPL confirmation before any approval row is written.
 - **A-37** Investigator, Policy Agent, and Copilot default to the tier 3 model; each has its own env var so one can be moved to a cheaper model without touching the others.
 - **A-38** The fixture GitHub source's `apply_proposal` hook exists only so the remediation-to-re-evaluation loop can be tested without a token. It is not reachable from the CLI, and the unit layering test asserts no non-test module imports it.
-- **A-39** Row-level security is enforced with `FORCE ROW LEVEL SECURITY` and a `NOBYPASSRLS` application role that does not own the tables. Policies read `current_setting('app.tenant_id')` without `missing_ok`, so an unscoped connection raises rather than seeing empty tables; in this domain an empty report reads as a clean one. (Reversed in v1.3 from the earlier silent-empty choice.)
+- **A-39** Row-level security is enforced with `FORCE ROW LEVEL SECURITY` and a `NOBYPASSRLS` application role that does not own the tables. Every policy calls a plpgsql function `app_tenant()` that raises `P0001` when `app.tenant_id` is unset or empty, so an unscoped connection raises rather than seeing empty tables; in this domain an empty report reads as a clean one. The function, not a bare `current_setting`, is required because after any `SET LOCAL` on a pooled session the parameter exists and reads as `''` instead of raising; the Phase 0 test `test_setting_from_a_previous_transaction_does_not_leak` proves the function still raises in that case. `ScopedDB` sets the value with `set_config(..., true)` so it is transaction-local. (Reversed in v1.3 from the earlier silent-empty choice.)
 - **A-40** LangGraph's checkpoint tables live in their own `checkpoints` schema and are under RLS keyed on the `thread_id` tenant prefix, applied by the migration runner after the saver's `setup()`; the saver's pool carries the tenant setting at connect time. Tenant isolation is therefore a database property everywhere. (Reversed in v1.3 from application-level guarding.)
 - **A-41** Tracing is Langfuse Cloud, reached with two keys; nothing tracing-related runs in Docker. Trace payloads (prompts, evidence text, HR fixture PII) leave the laptop and are covered by the README's data-processing note. Self-hosting remains possible by pointing `LANGFUSE_HOST` at a local stack; it is not part of this build.
 - **A-42** Embedding calls are logged as steps with token counts and cost from the same price table as generation, so the eval runner's cost figure includes indexing.

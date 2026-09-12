@@ -1,0 +1,70 @@
+[project]
+name = "ccp"
+version = "0.1.0"
+description = "Compliance companion platform: teaching-scale, production-technology reference build (see spec.md)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "pyyaml>=6.0",
+    "psycopg[binary,pool]>=3.2",
+    "typer>=0.12",
+    "python-ulid>=2.7",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "import-linter>=2.0",
+    "types-PyYAML>=6.0",
+]
+
+[project.scripts]
+ccp = "ccp.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ccp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "live_github: needs GITHUB_TOKEN and network; skipped otherwise",
+    "db: needs a reachable Postgres (docker compose up -d); skipped otherwise",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+plugins = ["pydantic.mypy"]
+
+# Layer contract (spec.md section 2, "No layer imports from a layer above it").
+# Higher entries may import lower entries, never the reverse. Packages are added to the
+# list in the phase that creates them; a package missing from this list fails the
+# layering test on purpose.
+[tool.importlinter]
+root_package = "ccp"
+
+[[tool.importlinter.contracts]]
+name = "Layers: higher may import lower, never the reverse"
+type = "layers"
+layers = [
+    "ccp.cli",
+    "ccp.storage",
+    "ccp.observability",
+    "ccp.tenancy",
+    "ccp.config",
+]

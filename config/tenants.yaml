@@ -1,0 +1,19 @@
+# The two hardcoded tenants (spec.md section 2). Both get complete fixture sets with
+# deliberately colliding names so a cross-tenant leak produces a visibly wrong answer.
+tenants:
+  acme:
+    display_name: Acme Corp
+    github_org: acme-example
+    org_admin_limit: 3
+    critical_asset_tags: [critical, tier0]
+    termination_revocation_sla_hours: 24
+    daily_budget_usd: 5.00
+    max_concurrency: 4
+  globex:
+    display_name: Globex Corporation
+    github_org: globex-example
+    org_admin_limit: 2
+    critical_asset_tags: [critical]
+    termination_revocation_sla_hours: 24
+    daily_budget_usd: 5.00
+    max_concurrency: 4
