@@ -2,9 +2,9 @@
 
     evaluations record ──► budget gate ──► route by tier ──► evaluate ──► persist (idempotent)
                                                                          └► verdicts topic
-Tier 1 runs here. Tiers 2 and 3 are parked until their evaluators arrive (Phases 7b, 8);
-parked records are re-queued with `requeue_parked`. The tenant's `max_concurrency` caps how
-many records one pass claims, so a burst never runs more evaluations at once than allowed.
+Tier 1 and tier 2 run here; tier 3 is parked until Phase 8. A tier 2 record with no model
+client configured parks (AI tier unavailable), never dead-letters. The tenant's
+`max_concurrency` caps how many records one pass claims.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from functools import lru_cache
 
 from ccp.config import Settings
-from ccp.evaluators import deterministic
+from ccp.evaluators import deterministic, tier2
 from ccp.evaluators.budget_gate import check_daily_budget
 from ccp.evaluators.context import load_context
 from ccp.evaluators.impact import EvaluationRequest, enqueue
@@ -27,6 +27,7 @@ from ccp.knowledge import graph as knowledge
 from ccp.knowledge.graph import KnowledgeGraph
 from ccp.normalize import repository
 from ccp.observability import steps
+from ccp.retrieval.hybrid import EmbeddingModelMismatch
 from ccp.storage.scoped import ScopedDB
 
 _REASONS: tuple[TriggerReason, ...] = (
@@ -59,16 +60,30 @@ class RunSummary:
 
 
 def evaluate_request(
-    db: ScopedDB, settings: Settings, request: EvaluationRequest, now: datetime | None = None
+    db: ScopedDB,
+    settings: Settings,
+    request: EvaluationRequest,
+    now: datetime | None = None,
+    providers: tier2.Providers | None = None,
 ) -> Verdict:
-    """Evaluate one (test, subject) pair by tier. Tier 1 only in Phase 7a."""
+    """Evaluate one (test, subject) pair by tier."""
     spec = cached_graph().tests[request.test_id]
-    if spec.tier != 1:
-        raise ParkedError(f"tier {spec.tier} evaluator not available yet for {spec.test_id}")
+    if spec.tier == 3:
+        raise ParkedError(f"tier 3 evaluator not available yet for {spec.test_id}")
     ctx = load_context(
         db, settings, spec, request.trigger_observed_at, now, reason=_reason(request.reason)
     )
-    return deterministic.evaluate(ctx, request.subject)
+    if spec.tier == 1:
+        return deterministic.evaluate(ctx, request.subject)
+    active = providers or tier2.Providers.from_settings(settings)
+    try:
+        return tier2.evaluate(
+            db, settings, ctx, spec, request.subject, active, reason=_reason(request.reason)
+        )
+    except tier2.AITierUnavailable as exc:
+        raise ParkedError(str(exc)) from exc
+    except EmbeddingModelMismatch as exc:
+        raise ParkedError(str(exc)) from exc
 
 
 def commit_verdict(db: ScopedDB, verdict: Verdict) -> bool:
@@ -91,7 +106,13 @@ class EvaluationsConsumer(ParallelConsumer):
     name = "evaluations"
     topic = "evaluations"
 
-    def __init__(self, db: ScopedDB, settings: Settings, now: datetime | None = None) -> None:
+    def __init__(
+        self,
+        db: ScopedDB,
+        settings: Settings,
+        now: datetime | None = None,
+        providers: tier2.Providers | None = None,
+    ) -> None:
         super().__init__(
             db,
             max_attempts=settings.ccp_max_attempts,
@@ -99,7 +120,14 @@ class EvaluationsConsumer(ParallelConsumer):
         )
         self.settings = settings
         self.now = now
+        self._providers = providers
         self.summary = RunSummary()
+
+    @property
+    def providers(self) -> tier2.Providers:
+        if self._providers is None:
+            self._providers = tier2.Providers.from_settings(self.settings)
+        return self._providers
 
     def in_flight(self) -> int:
         row = self._db.fetch_one(
@@ -130,12 +158,15 @@ class EvaluationsConsumer(ParallelConsumer):
                 "reason": request.reason,
             },
         ) as s:
-            verdict = evaluate_request(self._db, self.settings, request, self.now)
+            spec = cached_graph().tests[request.test_id]
+            providers = self.providers if spec.tier == 2 else None
+            verdict = evaluate_request(self._db, self.settings, request, self.now, providers)
             inserted = commit_verdict(self._db, verdict)
             s.set_output(
                 {
                     "verdict_id": verdict.verdict_id,
                     "status": verdict.status.value,
+                    "confidence": verdict.confidence,
                     "inserted": inserted,
                 }
             )
@@ -158,6 +189,7 @@ def enqueue_all(
     now: datetime | None = None,
     coalesce_seconds: int = 0,
     tests: tuple[str, ...] | None = None,
+    tiers: tuple[int, ...] = (1, 2),
 ) -> int:
     """Enqueue every (test, subject) pair once, with the newest entity observation as the
     trigger so a repeated full run is idempotent at the verdict table."""
@@ -166,19 +198,27 @@ def enqueue_all(
     for spec in cached_graph().tests.values():
         if tests is not None and spec.test_id not in tests:
             continue
-        if spec.tier != 1:
-            continue  # tiers 2 and 3 arrive in Phases 7b and 8
+        if spec.tier not in tiers:
+            continue
         ctx = load_context(db, settings, spec, trigger, now, reason="full_run")
+        subjects = (
+            deterministic.subjects_for(ctx) if spec.tier == 1 else tier2.subjects_for(ctx, spec)
+        )
         with db.transaction() as cur:
-            for subject in deterministic.subjects_for(ctx):
+            for subject in subjects:
                 request = EvaluationRequest(spec.test_id, subject, trigger, reason="full_run")
                 if enqueue(cur, db.tenant.tenant_id, request, coalesce_seconds):
                     count += 1
     return count
 
 
-def drain(db: ScopedDB, settings: Settings, now: datetime | None = None) -> RunSummary:
-    consumer = EvaluationsConsumer(db, settings, now)
+def drain(
+    db: ScopedDB,
+    settings: Settings,
+    now: datetime | None = None,
+    providers: tier2.Providers | None = None,
+) -> RunSummary:
+    consumer = EvaluationsConsumer(db, settings, now, providers)
     while consumer.run_once(limit=50):
         pass
     return consumer.summary

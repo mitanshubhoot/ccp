@@ -13,6 +13,7 @@ from ccp.evals import runner as eval_runner
 from ccp.evaluators import clock as clock_producer
 from ccp.evaluators import impact as impact_step
 from ccp.evaluators import runner as evaluations
+from ccp.evaluators import tier2
 from ccp.evaluators import verdict as verdicts
 from ccp.identity import resolver
 from ccp.ingest import worker
@@ -22,6 +23,11 @@ from ccp.knowledge import rollup as knowledge_rollup
 from ccp.normalize import consumer as normalize_consumer
 from ccp.normalize import repository
 from ccp.observability import steps
+from ccp.retrieval import calibration, distractors
+from ccp.retrieval import config as retrieval_cfg
+from ccp.retrieval import index as retrieval_index
+from ccp.retrieval import metrics as retrieval_metrics
+from ccp.retrieval.hybrid import retrieve
 from ccp.storage import bitemporal, db
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
@@ -39,25 +45,38 @@ normalize_app = typer.Typer(no_args_is_help=True, help="Map raw events into cano
 identity_app = typer.Typer(no_args_is_help=True, help="Identity resolution and the review queue")
 knowledge_app = typer.Typer(no_args_is_help=True, help="Frameworks, controls, tests")
 evaluate_app = typer.Typer(no_args_is_help=True, help="Trigger and run evaluations")
+index_app = typer.Typer(no_args_is_help=True, help="The retrieval index over current evidence")
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(tenants_app, name="tenants")
 app.add_typer(evaluate_app, name="evaluate")
+app.add_typer(index_app, name="index")
 
 
 @evaluate_app.command("run")
 def evaluate_run(
     tenant: str | None = typer.Option(None, "--tenant"),
-    test: list[str] = typer.Option([], "--test", help="repeatable; default every tier 1 test"),
+    test: list[str] = typer.Option(
+        [], "--test", help="repeatable; default every tier 1 and 2 test"
+    ),
     impact: bool = typer.Option(
         False, "--impact", help="drain the entities topic through the impact step instead"
     ),
+    no_index: bool = typer.Option(False, "--no-index", help="skip refreshing the retrieval index"),
 ) -> None:
-    """Enqueue every (test, subject) pair once (or run the impact step), then drain them."""
+    """Refresh the index, enqueue every (test, subject) pair once (or run the impact step),
+    then drain them. Tier 2 runs when ANTHROPIC_API_KEY is set and parks otherwise."""
     settings = _settings()
     ctx = _tenant(settings, tenant)
+    providers = tier2.Providers.from_settings(settings)
     pool = db.app_pool(settings)
     try:
         scoped = ScopedDB(pool, ctx)
+        if not no_index:
+            refreshed = retrieval_index.refresh(scoped, settings, providers.embedder, providers.llm)
+            typer.echo(
+                f"index: {refreshed.chunks} chunks ({refreshed.upserted} upserted,"
+                f" {refreshed.unchanged} unchanged) embed_model={refreshed.embed_model}"
+            )
         if impact:
             consumer = impact_step.ImpactConsumer(scoped)
             while consumer.run_once():
@@ -65,13 +84,171 @@ def evaluate_run(
             enqueued = consumer.enqueued
         else:
             enqueued = evaluations.enqueue_all(scoped, settings, tests=tuple(test) or None)
-        summary = evaluations.drain(scoped, settings)
+        summary = evaluations.drain(scoped, settings, providers=providers)
         parked = evaluations.parked_count(scoped)
     finally:
         pool.close()
+    if providers.llm is None:
+        typer.echo("AI tiers parked: ANTHROPIC_API_KEY is not set", err=True)
     typer.echo(f"enqueued {enqueued}, evaluated {summary.evaluated}, parked {parked}")
     for status, n in sorted(summary.by_status.items()):
         typer.echo(f"{status:<13} {n}")
+
+
+@index_app.command("rebuild")
+def index_rebuild(
+    tenant: str | None = typer.Option(None, "--tenant"),
+    contextual: bool | None = typer.Option(
+        None, "--contextual/--no-contextual", help="default: RETRIEVAL_CONTEXTUAL"
+    ),
+) -> None:
+    """Drop and re-chunk, re-enrich (flag), and re-embed every current evidence row."""
+    _index(tenant, rebuild=True, contextual=contextual)
+
+
+@index_app.command("refresh")
+def index_refresh(
+    tenant: str | None = typer.Option(None, "--tenant"),
+    contextual: bool | None = typer.Option(None, "--contextual/--no-contextual"),
+) -> None:
+    """Index new or changed evidence only; unchanged chunks are a no-op."""
+    _index(tenant, rebuild=False, contextual=contextual)
+
+
+def _index(tenant: str | None, *, rebuild: bool, contextual: bool | None) -> None:
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    providers = tier2.Providers.from_settings(settings)
+    pool = db.app_pool(settings)
+    try:
+        summary = retrieval_index.refresh(
+            ScopedDB(pool, ctx),
+            settings,
+            providers.embedder,
+            providers.llm,
+            contextual_enrichment=contextual,
+            rebuild=rebuild,
+        )
+    finally:
+        pool.close()
+    typer.echo(
+        f"embed_model={summary.embed_model} chunker={summary.chunker_version} "
+        f"evidence={summary.evidence_rows} chunks={summary.chunks} upserted={summary.upserted} "
+        f"unchanged={summary.unchanged} deleted={summary.deleted} embedded={summary.embedded} "
+        f"cache_hits={summary.embedding_cache_hits} enriched={summary.enriched} "
+        f"usd={summary.usd:.4f}"
+    )
+    for event in summary.events:
+        typer.echo(f"event {event}", err=True)
+
+
+@index_app.command("stats")
+def index_stats(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """Chunk counts by evidence type, embedding models present, distractors."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        stats = retrieval_index.stats(ScopedDB(pool, ctx))
+    finally:
+        pool.close()
+    for key, value in stats.items():
+        typer.echo(f"{key}: {value}")
+
+
+@index_app.command("distractors")
+def index_distractors(
+    tenant: str | None = typer.Option(None, "--tenant"),
+    count: int = typer.Option(300, "--count"),
+    clear: bool = typer.Option(False, "--clear", help="remove them instead"),
+) -> None:
+    """Install (or clear) generated distractor chunks for retrieval evaluation and calibration."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    providers = tier2.Providers.from_settings(settings)
+    pool = db.app_pool(settings)
+    try:
+        scoped = ScopedDB(pool, ctx)
+        if clear:
+            typer.echo(f"cleared {distractors.clear(scoped)} distractor chunks")
+            return
+        total = distractors.install(scoped, providers.embedder, count)
+    finally:
+        pool.close()
+    typer.echo(f"{total} distractor chunks present")
+
+
+@index_app.command("calibrate")
+def index_calibrate(
+    tenant: str | None = typer.Option(None, "--tenant"),
+    write: bool = typer.Option(True, "--write/--no-write", help="update config/retrieval.yaml"),
+) -> None:
+    """Measure the distractor noise floor for the configured providers; print the metrics."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    providers = tier2.Providers.from_settings(settings)
+    queries = retrieval_metrics.load_queries()
+    pool = db.app_pool(settings)
+    try:
+        scoped = ScopedDB(pool, ctx)
+        if retrieval_index.stats(scoped)["distractors"] == 0:
+            distractors.install(scoped, providers.embedder, 300)
+        report = retrieval_metrics.evaluate_queries(
+            scoped,
+            providers.embedder,
+            queries,
+            reranker=providers.reranker,
+            config=providers.retrieval,
+        )
+        cal = calibration.calibrate(
+            scoped,
+            providers.embedder,
+            queries,
+            reranker=providers.reranker,
+            config=providers.retrieval,
+        )
+    finally:
+        pool.close()
+    for key, value in report.summary().items():
+        typer.echo(f"{key}: {value}")
+    typer.echo(f"noise floor {cal.key} over {cal.samples} queries: {cal.thresholds.percentiles}")
+    if write:
+        retrieval_cfg.save(calibration.record(providers.retrieval, cal))
+        typer.echo(f"wrote {retrieval_cfg.CONFIG_PATH}")
+
+
+@index_app.command("search")
+def index_search(
+    query: str = typer.Argument(..., help="the retrieval query"),
+    evidence_type: str = typer.Option(..., "--type"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+    subject: str | None = typer.Option(None, "--subject"),
+) -> None:
+    """Run the hybrid query and print the candidates with both ranks and the fused score."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    providers = tier2.Providers.from_settings(settings)
+    pool = db.app_pool(settings)
+    try:
+        result = retrieve(
+            ScopedDB(pool, ctx),
+            providers.embedder,
+            query,
+            evidence_type=evidence_type,
+            subject_entity_id=subject,
+            reranker=providers.reranker,
+            config=providers.retrieval,
+        )
+    finally:
+        pool.close()
+    for event in result.events:
+        typer.echo(f"event {event}", err=True)
+    for c in result.chunks:
+        typer.echo(
+            f"{c.chunk_id} fts={c.fts_rank} cos={c.cos_rank} fused={c.fused_score:.4f}"
+            f" rerank={c.rerank_score} page={c.page} {c.evidence_entity_id}"
+        )
+        typer.echo("    " + c.text[:160].replace("\n", " "))
 
 
 @evaluate_app.command("list")

@@ -1,0 +1,8 @@
+# Retrieval knobs and measured thresholds (ccp index calibrate writes the thresholds).
+# percentiles are scores of the best distractor per golden query: the noise floor a
+# real top hit must beat; retrieval quality is the fraction of that floor it exceeds.
+ef_search: 100
+candidates: 20
+top_k: 6
+rrf_k: 60
+thresholds: {}

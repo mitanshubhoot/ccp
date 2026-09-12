@@ -28,6 +28,7 @@ class GoldenCase(BaseModel):
     rubric: str | None = None
     notes: str | None = None
     tags: list[str] = Field(default_factory=list)
+    requires: list[Literal["anthropic", "voyage", "openai"]] = Field(default_factory=list)
 
 
 class CaseResult(BaseModel):
@@ -38,11 +39,13 @@ class CaseResult(BaseModel):
     mismatches: list[str] = Field(default_factory=list)
     latency_ms: float
     error: str | None = None
+    skipped: bool = False  # a required provider key is absent; neither passed nor failed
 
 
 class LevelSummary(BaseModel):
     passed: int
     total: int
+    skipped: int = 0
 
 
 class RunReport(BaseModel):
@@ -56,4 +59,4 @@ class RunReport(BaseModel):
 
     @property
     def all_passed(self) -> bool:
-        return all(c.passed for c in self.cases)
+        return all(c.passed or c.skipped for c in self.cases)

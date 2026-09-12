@@ -9,6 +9,7 @@ from ccp.config import Settings
 from ccp.ingest.consumers import RetryableError, TerminalError
 from ccp.llm import client as llm_client
 from ccp.llm.budget import BudgetTracker, RunBudget
+from ccp.llm.client import SystemBlock
 from ccp.llm.errors import (
     BudgetExceeded,
     RetryableModelError,
@@ -73,13 +74,23 @@ def test_stub_client_charges_the_tracker_and_records_the_request() -> None:
     stub = llm_client.StubLLMClient(handler=lambda schema, system, user: _Fields(answer="x"))
     tracker = BudgetTracker(RunBudget(max_tokens=10_000, max_usd=1, max_seconds=10))
     result = stub.extract(
-        schema=_Fields, system="sys", user="usr", model="claude-haiku-4-5", tracker=tracker
+        schema=_Fields,
+        system=[SystemBlock("sys", cache=True)],
+        user="usr",
+        model="claude-haiku-4-5",
+        tracker=tracker,
     )
     assert isinstance(result.parsed, _Fields) and result.parsed.answer == "x"
     assert result.model == "stub:claude-haiku-4-5"
     assert tracker.tokens == 600 and tracker.usd == pytest.approx(0.001)
     assert stub.calls == [
-        {"model": "claude-haiku-4-5", "system": "sys", "user": "usr", "schema": "_Fields"}
+        {
+            "model": "claude-haiku-4-5",
+            "system": [{"text": "sys", "cache": True}],
+            "user": "usr",
+            "schema": "_Fields",
+            "max_tokens": 2048,
+        }
     ]
 
 

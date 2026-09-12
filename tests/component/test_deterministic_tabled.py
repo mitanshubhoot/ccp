@@ -47,7 +47,7 @@ TABLE: dict[tuple[str, str], dict[str, str]] = {
 def world(base_settings: Settings) -> Iterator[tuple[Settings, dict[str, ScopedDB]]]:
     with prepared_tenants(base_settings, "ccp_tier1") as (settings, dbs):
         for db in dbs.values():
-            runner.enqueue_all(db, settings)
+            runner.enqueue_all(db, settings, tiers=(1,))
             runner.drain(db, settings)
         yield settings, dbs
 
@@ -122,7 +122,7 @@ def test_a_second_full_run_writes_nothing_new(
     settings, dbs = world
     acme = dbs["acme"]
     before = acme.fetch_one("SELECT count(*) FROM verdicts")
-    enqueued = runner.enqueue_all(acme, settings)
+    enqueued = runner.enqueue_all(acme, settings, tiers=(1,))
     summary = runner.drain(acme, settings)
     assert enqueued == summary.evaluated == summary.duplicates
     assert acme.fetch_one("SELECT count(*) FROM verdicts") == before

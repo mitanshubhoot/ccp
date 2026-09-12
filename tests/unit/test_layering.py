@@ -74,6 +74,32 @@ def test_admin_url_referenced_only_by_config_and_migration_runner() -> None:
     assert offenders == [], f"admin URL referenced outside the migration runner: {offenders}"
 
 
+def test_embedding_and_rerank_providers_live_in_the_retrieval_seam() -> None:
+    allowed = {"ccp/retrieval/embeddings.py", "ccp/retrieval/rerank.py"}
+    offenders = [
+        _rel(p)
+        for p in _python_files()
+        if any(
+            name in ("voyageai", "openai") or name.startswith(("voyageai.", "openai."))
+            for name in _imports(p)
+        )
+        and _rel(p) not in allowed
+    ]
+    assert offenders == [], f"embedding provider imported outside the seam: {offenders}"
+
+
+def test_evidence_enters_prompts_only_through_prompt_guard() -> None:
+    """The framing sentence is emitted by prompt_guard and the prompt files; no other module
+    hand-rolls an evidence fence."""
+    offenders = [
+        _rel(p)
+        for p in _python_files()
+        if "<<EVIDENCE-" in p.read_text(encoding="utf-8")
+        and _rel(p) != "ccp/security/prompt_guard.py"
+    ]
+    assert offenders == [], f"evidence fence built outside prompt_guard: {offenders}"
+
+
 def test_deterministic_evaluators_never_import_a_model_client() -> None:
     forbidden = ("ccp.llm", "anthropic", "langgraph", "httpx", "voyageai", "openai")
     offenders = [

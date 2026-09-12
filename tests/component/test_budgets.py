@@ -16,7 +16,7 @@ from ccp.evaluators.impact import EvaluationRequest, enqueue
 from ccp.ingest import event_log
 from ccp.ingest.event_log import LogRecord
 from ccp.llm.budget import BudgetTracker, RunBudget
-from ccp.llm.client import StubLLMClient
+from ccp.llm.client import StubLLMClient, SystemBlock
 from ccp.llm.errors import BudgetExceeded
 from ccp.storage.scoped import ScopedDB
 from tests.support.pipeline import prepared_tenants
@@ -35,7 +35,9 @@ def _stub() -> StubLLMClient:
 def _loop(tracker: BudgetTracker, client: StubLLMClient, limit: int = 1000) -> int:
     calls = 0
     for _ in range(limit):
-        client.extract(schema=_Answer, system="s", user="u", model="m", tracker=tracker)
+        client.extract(
+            schema=_Answer, system=[SystemBlock("s")], user="u", model="m", tracker=tracker
+        )
         calls += 1
     return calls
 

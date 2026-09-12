@@ -26,7 +26,15 @@ from ccp.evals.schema import CaseResult, GoldenCase, LevelSummary, RunReport
 from ccp.evals.targets import TARGETS, EvalContext
 from ccp.storage.db import scratch_database
 
-DB_TARGETS = {"ingest_land", "ingest_ordering", "deterministic_verdict", "evaluate_tier1"}
+DB_TARGETS = {
+    "ingest_land",
+    "ingest_ordering",
+    "deterministic_verdict",
+    "evaluate_tier1",
+    "chunker_pages",
+    "retrieval_metrics",
+    "tier2_verdict",
+}
 # Targets whose expectations describe a fresh database (first landing, no prior rows) get a
 # scratch database of their own; every other database case shares the run's database.
 FRESH_DB_TARGETS = {"ingest_land"}
@@ -38,7 +46,10 @@ def load_cases(golden_dir: Path) -> tuple[list[GoldenCase], dict[str, str]]:
     for path in sorted(golden_dir.glob("*.yaml")):
         raw = path.read_bytes()
         hashes[path.name] = hashlib.sha256(raw).hexdigest()
-        for item in yaml.safe_load(raw) or []:
+        loaded = yaml.safe_load(raw) or []
+        if not isinstance(loaded, list):  # retrieval.yaml is a query set, not a case list
+            continue
+        for item in loaded:
             cases.append(GoldenCase.model_validate(item))
     ids = [c.id for c in cases]
     if len(ids) != len(set(ids)):
@@ -74,9 +85,29 @@ def _git_commit() -> str | None:
     return out.stdout.strip() or None
 
 
+def missing_providers(settings: Settings, case: GoldenCase) -> list[str]:
+    keys = {
+        "anthropic": settings.anthropic_api_key,
+        "voyage": settings.voyage_api_key,
+        "openai": settings.openai_api_key,
+    }
+    return [name for name in case.requires if keys.get(name) is None]
+
+
 def run_case(ctx: EvalContext, case: GoldenCase) -> CaseResult:
     fn = TARGETS.get(case.target)
     t0 = time.perf_counter()
+    missing = missing_providers(ctx.settings, case)
+    if missing:
+        return CaseResult(
+            id=case.id,
+            level=case.level,
+            target=case.target,
+            passed=False,
+            skipped=True,
+            latency_ms=0.0,
+            error=f"skipped: requires {', '.join(missing)} (key not set)",
+        )
     if fn is None:
         return CaseResult(
             id=case.id,
@@ -164,7 +195,11 @@ def run(settings: Settings, cases: list[GoldenCase], golden_hashes: dict[str, st
     summary: dict[str, LevelSummary] = {}
     for level in ("component", "workflow", "e2e"):
         at_level = [r for r in results if r.level == level]
-        summary[level] = LevelSummary(passed=sum(r.passed for r in at_level), total=len(at_level))
+        summary[level] = LevelSummary(
+            passed=sum(r.passed for r in at_level),
+            total=len(at_level),
+            skipped=sum(r.skipped for r in at_level),
+        )
     return RunReport(
         run_id=str(ULID()),
         started_at=started,
@@ -188,9 +223,8 @@ def write_report(report: RunReport, runs_dir: Path) -> Path:
 def format_table(report: RunReport) -> str:
     lines = [f"{'case':<44} {'level':<10} {'result':<7} {'ms':>8}"]
     for r in report.cases:
-        lines.append(
-            f"{r.id:<44} {r.level:<10} {'PASS' if r.passed else 'FAIL':<7} {r.latency_ms:>8.1f}"
-        )
+        verdict = "SKIP" if r.skipped else "PASS" if r.passed else "FAIL"
+        lines.append(f"{r.id:<44} {r.level:<10} {verdict:<7} {r.latency_ms:>8.1f}")
         for m in r.mismatches:
             lines.append(f"    - {m}")
         if r.error:
@@ -199,5 +233,6 @@ def format_table(report: RunReport) -> str:
     lines.append("unit       pytest tests/unit (run separately; not golden-cased)")
     for level in ("component", "workflow", "e2e"):
         s = report.summary[level]
-        lines.append(f"{level:<10} {s.passed}/{s.total} passed")
+        skipped = f", {s.skipped} skipped (no key)" if s.skipped else ""
+        lines.append(f"{level:<10} {s.passed}/{s.total - s.skipped} passed{skipped}")
     return "\n".join(lines)

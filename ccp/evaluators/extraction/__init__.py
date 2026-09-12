@@ -1,0 +1,51 @@
+"""Extraction schemas (spec.md R5): what the model fills. Every cited field `x` has a
+sibling `x_citation`; the model never returns a status or a confidence."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from pydantic import BaseModel
+
+from ccp.evaluators.extraction import gh4, hr3
+from ccp.evaluators.extraction.base import Cited
+
+
+@dataclass(frozen=True)
+class SchemaMeta:
+    name: str
+    model: type[BaseModel]
+    version: str
+    required: tuple[str, ...]  # coverage denominator
+    cited: tuple[str, ...]  # fields that carry a citation sibling
+    value_in_quote: tuple[str, ...]  # fields whose value must appear in the quote
+
+
+SCHEMAS: dict[str, SchemaMeta] = {
+    "DisclosurePolicyFields": SchemaMeta(
+        name="DisclosurePolicyFields",
+        model=gh4.DisclosurePolicyFields,
+        version=gh4.SCHEMA_VERSION,
+        required=("policy_exists", "timeline_stated"),
+        cited=("policy_exists", "timeline_stated", "timeline_text"),
+        value_in_quote=("timeline_text",),
+    ),
+    "TrainingRecordFields": SchemaMeta(
+        name="TrainingRecordFields",
+        model=hr3.TrainingRecordFields,
+        version=hr3.SCHEMA_VERSION,
+        required=("subject_name_in_document", "completion_status", "completion_date"),
+        cited=("subject_name_in_document", "completion_status", "completion_date", "provider"),
+        value_in_quote=("completion_date", "provider"),
+    ),
+}
+
+
+def schema_for(name: str) -> SchemaMeta:
+    try:
+        return SCHEMAS[name]
+    except KeyError:
+        raise KeyError(f"unknown extraction schema {name!r}; known: {sorted(SCHEMAS)}") from None
+
+
+__all__ = ["SCHEMAS", "Cited", "SchemaMeta", "schema_for"]

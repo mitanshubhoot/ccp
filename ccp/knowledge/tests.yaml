@@ -45,6 +45,8 @@ tests:
     extraction_schema: DisclosurePolicyFields
     rule: gh4_disclosure_timeline
     valid_from_strategy: evidence_observed
+    parameters:
+      retrieval_query: security vulnerability disclosure policy report response timeline acknowledge within business days
     evidence_max_age_days: 365
     revalidate_every_days: 90
   - test_id: GH-5
@@ -89,6 +91,8 @@ tests:
     extraction_schema: TrainingRecordFields
     rule: hr3_training_current
     valid_from_strategy: evidence_observed
+    parameters:
+      retrieval_query: security awareness training certificate completed {display_name} employee {employee_id} completion date provider
     evidence_max_age_days: 365
     revalidate_every_days: 30
   - test_id: HR-4

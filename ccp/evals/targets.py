@@ -312,10 +312,10 @@ def evaluate_tier1(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any])
     from ccp.evaluators.verdict import count
 
     db = ctx.prepared(tenant_id)
-    first_enqueued = evaluations.enqueue_all(db, ctx.settings)
+    first_enqueued = evaluations.enqueue_all(db, ctx.settings, tiers=(1,))
     first = evaluations.drain(db, ctx.settings)
     verdicts_after_first = count(db)
-    second_enqueued = evaluations.enqueue_all(db, ctx.settings)
+    second_enqueued = evaluations.enqueue_all(db, ctx.settings, tiers=(1,))
     second = evaluations.drain(db, ctx.settings)
     return {
         "enqueued": first_enqueued,
@@ -327,6 +327,111 @@ def evaluate_tier1(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any])
             "duplicates": second.duplicates,
             "new_rows": count(db) - verdicts_after_first,
         },
+    }
+
+
+@dataclass
+class _Indexed:
+    """Per-run memo: which tenants have been indexed with which embedder."""
+
+    tenants: set[str] = field(default_factory=set)
+    distractors: set[str] = field(default_factory=set)
+
+
+_INDEXED: dict[int, _Indexed] = {}
+
+
+def _indexed_db(
+    ctx: EvalContext, tenant_id: str | None, providers: Any, distractor_count: int
+) -> ScopedDB:
+    from ccp.retrieval import distractors as distractor_gen
+    from ccp.retrieval import index
+
+    db = ctx.prepared(tenant_id)
+    memo = _INDEXED.setdefault(id(ctx), _Indexed())
+    if db.tenant.tenant_id not in memo.tenants:
+        index.refresh(
+            db, ctx.settings, providers.embedder, providers.llm, contextual_enrichment=False
+        )
+        memo.tenants.add(db.tenant.tenant_id)
+    if distractor_count and db.tenant.tenant_id not in memo.distractors:
+        distractor_gen.install(db, providers.embedder, distractor_count)
+        memo.distractors.add(db.tenant.tenant_id)
+    return db
+
+
+@target("chunker_pages")
+def chunker_pages(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
+    """Chunks of one evidence row (by entity id prefix): page per chunk and where snippets land."""
+    from ccp.evaluators import tier2
+
+    providers = tier2.Providers.from_settings(ctx.settings)
+    db = _indexed_db(ctx, tenant_id, providers, 0)
+    rows = db.fetch_all(
+        "SELECT page, ordinal, text FROM chunks WHERE strpos(evidence_entity_id, %s) = 1"
+        " ORDER BY ordinal",
+        (str(inp["evidence_prefix"]),),
+    )
+    snippets = {
+        str(s): sorted(
+            {int(r[0]) for r in rows if r[0] is not None and str(s).lower() in str(r[2]).lower()}
+        )
+        for s in inp.get("snippets", [])
+    }
+    return {
+        "chunks": len(rows),
+        "pages": sorted({int(r[0]) for r in rows if r[0] is not None}),
+        "snippet_pages": snippets,
+    }
+
+
+@target("retrieval_metrics")
+def retrieval_metrics(
+    ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]
+) -> dict[str, Any]:
+    """Recall@5, MRR, nDCG@10 over the golden query set for one tenant, with ablation flags."""
+    from ccp.evaluators import tier2
+    from ccp.retrieval import metrics
+
+    providers = tier2.Providers.from_settings(ctx.settings)
+    db = _indexed_db(ctx, tenant_id, providers, int(inp.get("distractors", 300)))
+    queries = metrics.load_queries()
+    report = metrics.evaluate_queries(
+        db,
+        providers.embedder,
+        queries,
+        reranker=providers.reranker if inp.get("rerank", True) else None,
+        config=providers.retrieval,
+        include_distractors=bool(inp.get("include_distractors", True)),
+        iterative_scan=bool(inp.get("iterative_scan", True)),
+    )
+    return report.summary()
+
+
+@target("tier2_verdict")
+def tier2_verdict(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
+    """One tier 2 evaluation with the configured providers (requires: anthropic)."""
+    from datetime import UTC
+
+    from ccp.evaluators import tier2
+    from ccp.evaluators.context import load_context
+    from ccp.knowledge.graph import load
+
+    providers = tier2.Providers.from_settings(ctx.settings)
+    db = _indexed_db(ctx, tenant_id, providers, 0)
+    spec = load().tests[str(inp["test_id"])]
+    now = datetime.now(UTC)
+    context = load_context(db, ctx.settings, spec, now, now)
+    verdict = tier2.evaluate(db, ctx.settings, context, spec, str(inp["subject"]), providers)
+    return {
+        "status": verdict.status.value,
+        "confidence": verdict.confidence,
+        "verified_citations": sum(1 for c in verdict.citations if c.verified),
+        "cited_evidence": sorted(
+            {c.chunk_id for c in verdict.citations if c.verified} and set(verdict.evidence_refs)
+        ),
+        "guardrail_events": sorted({e.split(":")[0] for e in verdict.guardrail_events}),
+        "extracted_fields": verdict.extracted_fields or {},
     }
 
 

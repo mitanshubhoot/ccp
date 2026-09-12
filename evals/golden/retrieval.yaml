@@ -1,0 +1,200 @@
+# Retrieval golden set (spec.md Layer 11): query -> relevant chunks, scored by Recall@5,
+# MRR, nDCG@10 against the fixture corpus plus generated distractors. Relevant chunks are
+# named by evidence id (or prefix, for content-hashed upload ids) and a substring, and
+# resolved against the index at run time; chunk ids are content hashes nobody types.
+queries:
+  # -- acme: policies (GH-4 scope) ------------------------------------------------------
+  - id: ret-acme-disclosure-timeline
+    tenant: acme
+    query: vulnerability disclosure response timeline acknowledge report business days
+    evidence_type: policy_document
+    subject_entity_id: github:asset:R_kgDOAcmeP001
+    relevant:
+      - {evidence: "github:evidence:R_kgDOAcmeP001:security", contains: "5 business days"}
+    tags: [gh-4]
+  - id: ret-acme-disclosure-reporting-channel
+    tenant: acme
+    query: how to report a vulnerability email security tracking number
+    evidence_type: policy_document
+    relevant:
+      - {evidence: "github:evidence:R_kgDOAcmeP001:security", contains: "security@acme.example"}
+  - id: ret-acme-safe-harbour
+    tenant: acme
+    query: safe harbour good-faith research legal action
+    evidence_type: policy_document
+    relevant:
+      - {evidence: "github:evidence:R_kgDOAcmeP001:security", contains: "Safe harbour"}
+  - id: ret-acme-infosec-mfa
+    tenant: acme
+    query: multi-factor authentication required for every human identity
+    evidence_type: policy_document
+    relevant:
+      - {evidence_prefix: "manual:evidence:information-security-policy-v4.md", contains: "Multi-factor authentication"}
+  - id: ret-acme-infosec-leavers
+    tenant: acme
+    query: access for leavers removed within 24 hours termination least privilege
+    evidence_type: policy_document
+    relevant:
+      - {evidence_prefix: "manual:evidence:information-security-policy-v4.md", contains: "24 hours"}
+  - id: ret-acme-infosec-remediation-severity
+    tenant: acme
+    query: remediated according to severity critical within 7 days
+    evidence_type: policy_document
+    relevant:
+      - {evidence_prefix: "manual:evidence:information-security-policy-v4.md", contains: "critical within 7 days"}
+  - id: ret-acme-infosec-secrets
+    tenant: acme
+    query: credentials API keys secrets manager never committed to source control
+    evidence_type: policy_document
+    relevant:
+      - {evidence_prefix: "manual:evidence:information-security-policy-v4.md", contains: "secrets manager"}
+  # -- acme: training records (HR-3 scope) ---------------------------------------------
+  - id: ret-acme-training-atorres-pdf
+    tenant: acme
+    query: Ana Torres security awareness training certificate completed
+    evidence_type: training_record
+    subject_entity_id: hris:person:E1058
+    relevant:
+      - {evidence_prefix: "manual:evidence:security-awareness-2026-atorres.pdf", contains: "Ana Torres"}
+    tags: [hr-3, pdf]
+  - id: ret-acme-training-lee-park-in-progress
+    tenant: acme
+    query: Lee Park training progress modules remaining
+    evidence_type: training_record
+    subject_entity_id: hris:person:E1044
+    relevant:
+      - {evidence: "hris:evidence:doc:training-E1044.md", contains: "In progress"}
+  - id: ret-acme-training-marco-2025
+    tenant: acme
+    query: Marco Ribeiro security awareness training 2025 completion date
+    evidence_type: training_record
+    relevant:
+      - {evidence: "hris:evidence:doc:training-E1031.md", contains: "2025-06-30"}
+  - id: ret-acme-training-sam-patil-mismatch
+    tenant: acme
+    query: Sam Patil employee E1049 certificate
+    evidence_type: training_record
+    relevant:
+      - {evidence: "hris:evidence:doc:training-E1050.md", contains: "Sam Patil"}
+  - id: ret-acme-training-dana
+    tenant: acme
+    query: Dana Okafor KnowBe4 certificate 100%
+    evidence_type: training_record
+    relevant:
+      - {evidence: "hris:evidence:doc:training-E1017.md", contains: "Dana Okafor"}
+  # -- acme: access reviews and critical systems (HR-4 scope) --------------------------
+  - id: ret-acme-critical-systems-payroll
+    tenant: acme
+    query: critical systems inventory Payroll-SaaS business owner
+    evidence_type: critical_systems_list
+    relevant:
+      - {evidence: "hris:evidence:doc:critical-systems-list.md", contains: "Payroll-SaaS"}
+    tags: [hr-4]
+  - id: ret-acme-review-q2-scope
+    tenant: acme
+    query: Q2 2026 user access review scope systems reviewed
+    evidence_type: access_review_report
+    relevant:
+      - {evidence: "hris:evidence:doc:access-review-2026-q2.md", contains: "Datadog"}
+  - id: ret-acme-review-q2-findings-bkim
+    tenant: acme
+    query: dormant GitHub account removed bkim findings
+    evidence_type: access_review_report
+    relevant:
+      - {evidence: "hris:evidence:doc:access-review-2026-q2.md", contains: "bkim"}
+  - id: ret-acme-review-q1
+    tenant: acme
+    query: Q1 2026 access review
+    evidence_type: access_review_report
+    relevant:
+      - {evidence: "hris:evidence:doc:access-review-2026-q1.md", contains: "Q1 2026"}
+  # -- acme: repo settings and listings ------------------------------------------------
+  - id: ret-acme-branch-protection-platform
+    tenant: acme
+    query: branch protection main required approving reviews enforce admins platform
+    evidence_type: repo_settings
+    relevant:
+      - {evidence: "github:evidence:R_kgDOAcmeP001:protection", contains: "required approving reviews=2"}
+  - id: ret-acme-file-listing-env-example
+    tenant: acme
+    query: .env.example tracked files platform
+    evidence_type: repo_file_listing
+    relevant:
+      - {evidence: "github:evidence:R_kgDOAcmeP001:files", contains: ".env.example"}
+  # -- globex ---------------------------------------------------------------------------
+  - id: ret-globex-disclosure-no-timeline
+    tenant: globex
+    query: vulnerability disclosure response timeline acknowledge report business days
+    evidence_type: policy_document
+    subject_entity_id: github:asset:R_kgDOGlobexP001
+    relevant:
+      - {evidence: "github:evidence:R_kgDOGlobexP001:security", contains: "Reporting a vulnerability"}
+    tags: [gh-4, injection]
+  - id: ret-globex-disclosure-scope
+    tenant: globex
+    query: policy scope third-party dependencies upstream project
+    evidence_type: policy_document
+    relevant:
+      - {evidence: "github:evidence:R_kgDOGlobexP001:security", contains: "third-party"}
+  - id: ret-globex-infosec-passwords
+    tenant: globex
+    query: password length requirement eight characters
+    evidence_type: policy_document
+    relevant:
+      - {evidence_prefix: "manual:evidence:information-security-policy-v2.md", contains: "eight characters"}
+  - id: ret-globex-infosec-incidents
+    tenant: globex
+    query: report suspected incidents helpdesk
+    evidence_type: policy_document
+    relevant:
+      - {evidence_prefix: "manual:evidence:information-security-policy-v2.md", contains: "helpdesk"}
+  - id: ret-globex-training-jane
+    tenant: globex
+    query: Jane Smith Globex security awareness programme completed
+    evidence_type: training_record
+    subject_entity_id: hris:person:G2001
+    relevant:
+      - {evidence: "hris:evidence:doc:training-G2001.md", contains: "Jane Smith"}
+  - id: ret-globex-training-kofi
+    tenant: globex
+    query: Kofi Mensah SANS Security Awareness certificate
+    evidence_type: training_record
+    relevant:
+      - {evidence: "hris:evidence:doc:training-G2004.md", contains: "Kofi Mensah"}
+  - id: ret-globex-training-nadia-date
+    tenant: globex
+    query: Nadia Hassan completion date 2026-07-07
+    evidence_type: training_record
+    relevant:
+      - {evidence: "hris:evidence:doc:training-G2006.md", contains: "2026-07-07"}
+  - id: ret-globex-review-h1-pdf-scope-table
+    tenant: globex
+    query: H1 2026 user access review scope Payroll-GX role reductions
+    evidence_type: access_review_report
+    relevant:
+      - {evidence_prefix: "manual:evidence:access-review-2026-h1.pdf", contains: "Payroll-GX"}
+    tags: [hr-4, pdf, page-split]
+  - id: ret-globex-review-h1-pdf-purpose
+    tenant: globex
+    query: review verifies access to every system tagged critical leavers deprovisioned
+    evidence_type: access_review_report
+    relevant:
+      - {evidence_prefix: "manual:evidence:access-review-2026-h1.pdf", contains: "tagged critical"}
+  - id: ret-globex-review-h1-conclusion
+    tenant: globex
+    query: all three systems tagged critical were reviewed next review due
+    evidence_type: access_review_report
+    relevant:
+      - {evidence_prefix: "manual:evidence:access-review-2026-h1.pdf", contains: "next review is due"}
+  - id: ret-globex-critical-systems
+    tenant: globex
+    query: critical systems inventory Globex
+    evidence_type: critical_systems_list
+    relevant:
+      - {evidence: "hris:evidence:doc:critical-systems-list.md", contains: "critical"}
+  - id: ret-globex-branch-protection-mobile
+    tenant: globex
+    query: branch protection mobile repository protected
+    evidence_type: repo_settings
+    relevant:
+      - {evidence: "github:evidence:R_kgDOGlobexM002:protection", contains: "protected=False"}
