@@ -157,6 +157,59 @@
     matches: []
   tags: [connectors, manual]
 
+- id: cmp-mapper-hris-termination-jane-smith
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: acme
+  target: mapper
+  input: {connector: hris, source_event_id: acme-hr-evt-0388}
+  expected:
+    event_type: hris.termination
+    entities:
+      - $subset:
+          kind: person
+          entity_id: hris:person:E1042
+          employment_status: terminated
+          status_effective_at: "2026-08-20T17:00:00Z"
+    guardrail_events: []
+  tags: [normalize, hris, hr-1]
+
+- id: cmp-mapper-github-collaborator-removed
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: acme
+  target: mapper
+  input: {connector: github, source_event_id: acme-d-000512}
+  expected:
+    event_type: repo.collaborator_removed
+    entities:
+      - $subset: {kind: person, entity_id: github:person:U_kgDOAcme1039}
+      - $subset:
+          kind: access_grant
+          entity_id: github:grant:U_kgDOAcme1039:R_kgDOAcmeW002
+          state: revoked
+          state_effective_at: "2026-07-01T15:30:00Z"
+    guardrail_events: []
+  tags: [normalize, github]
+
+- id: cmp-mapper-hris-shared-account-without-owner
+  level: component
+  difficulty: edge
+  source: manual
+  tenant: acme
+  target: mapper
+  input: {connector: hris, source_event_id: acme-acct-0007@2026-08-25T08:00:00Z}
+  expected:
+    event_type: hris.account.snapshot
+    entities:
+      - $subset: {kind: person, entity_id: hris:account:ops-shared, account_kind: shared, owner_employee_id: null}
+      - $subset: {kind: evidence, evidence_type: account_registry}
+    guardrail_events: []
+  notes: HR-5 fails on this account; identity resolution must refuse to merge it (Layer 4).
+  tags: [normalize, hris, hr-5]
+
 - id: cmp-connector-manual-globex-page-split
   level: component
   difficulty: hard

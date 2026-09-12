@@ -70,6 +70,7 @@ type = "layers"
 layers = [
     "ccp.cli",
     "ccp.evals",
+    "ccp.normalize",
     "ccp.ingest",
     "ccp.connectors",
     "ccp.storage",

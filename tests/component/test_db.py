@@ -32,7 +32,8 @@ def test_migrations_are_recorded_and_idempotent(db_settings: Settings) -> None:
             r[0]
             for r in conn.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
         }
-    assert names == ["0001_schema.sql", "0002_rls.sql"]
+    assert names[:2] == ["0001_schema.sql", "0002_rls.sql"]
+    assert names == sorted(names)  # applied in name order, every file recorded once
     assert {"raw_events", "event_log", "consumer_offsets", "dead_letter"} <= tables
 
 

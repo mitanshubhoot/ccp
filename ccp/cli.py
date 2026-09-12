@@ -12,6 +12,8 @@ from ccp.connectors.registry import CONNECTOR_NAMES, SOURCE_KINDS, build_connect
 from ccp.evals import runner as eval_runner
 from ccp.ingest import worker
 from ccp.ingest.landing import ingest_tenant
+from ccp.normalize import consumer as normalize_consumer
+from ccp.normalize import repository
 from ccp.observability import steps
 from ccp.storage import db
 from ccp.storage.scoped import ScopedDB
@@ -26,12 +28,37 @@ connectors_app = typer.Typer(no_args_is_help=True, help="Pull provider data as S
 ingest_app = typer.Typer(no_args_is_help=True, help="Land events in the raw zone and event log")
 worker_app = typer.Typer(no_args_is_help=True, help="Run consumers over the event log")
 evals_app = typer.Typer(no_args_is_help=True, help="Golden-dataset evaluation harness")
+normalize_app = typer.Typer(no_args_is_help=True, help="Map raw events into canonical entities")
 app.add_typer(tenants_app, name="tenants")
 app.add_typer(db_app, name="db")
 app.add_typer(connectors_app, name="connectors")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(worker_app, name="worker")
 app.add_typer(evals_app, name="evals")
+app.add_typer(normalize_app, name="normalize")
+
+
+@normalize_app.command("run")
+def normalize_run(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """Drain every raw topic for a tenant into the entity tables."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        scoped = ScopedDB(pool, ctx)
+        processed = normalize_consumer.normalize_all(scoped, settings)
+        counts = {
+            "persons": len(repository.current_persons(scoped)),
+            "access_grants": len(repository.current_grants(scoped)),
+            "assets": len(repository.current_assets(scoped)),
+            "evidence": len(repository.current_evidence(scoped)),
+            "vendors": len(repository.current_vendors(scoped)),
+        }
+    finally:
+        pool.close()
+    typer.echo(f"processed {processed} raw records")
+    for name, n in counts.items():
+        typer.echo(f"{name:<14} {n}")
 
 
 @ingest_app.command("run")

@@ -166,6 +166,45 @@ def ingest_ordering(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]
     return {"handled_order": [ref for ref in consumer.handled if ref in mine]}
 
 
+@target("mapper")
+def mapper(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
+    """Map one fixture event (by connector and source_event_id) and report the entities produced."""
+    from ccp.normalize.consumer import map_event
+
+    connector = build_connector(_connector_name(inp["connector"]), ctx.settings, "fixture")
+    wanted = inp["source_event_id"]
+    event = next(
+        (e for e in connector.pull(ctx.tenant(tenant_id)) if e.source_event_id == wanted), None
+    )
+    if event is None:
+        raise LookupError(f"no fixture event {wanted!r}")
+    result = map_event(event)
+    entities = [
+        {
+            "kind": e.kind,
+            "entity_id": e.entity_id,
+            **{
+                k: v
+                for k, v in e.model_dump(mode="json").items()
+                if k
+                not in {
+                    "tenant_id",
+                    "source_connector",
+                    "source_event_id",
+                    "observed_at",
+                    "entity_id",
+                }
+            },
+        }
+        for e in result.entities
+    ]
+    return {
+        "event_type": event.event_type,
+        "entities": entities,
+        "guardrail_events": list(result.guardrail_events),
+    }
+
+
 def make_event(
     tenant: TenantContext, connector: ConnectorName, source_event_id: str, ts: datetime
 ) -> SourceEvent:

@@ -1,0 +1,107 @@
+"""The normalize consumers: raw.<connector> topic -> mapper -> entity tables -> entities topic.
+
+One ordered consumer per raw topic. Each record's raw file is read back from the raw zone,
+mapped by the connector's pure mapper, persisted (idempotently), and announced on the
+``entities`` topic with the entity id as the partition key. Guardrail events raised by a
+mapper are recorded on the step.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+import psycopg
+
+from ccp.config import Settings
+from ccp.connectors.base import SourceEvent
+from ccp.ingest import event_log
+from ccp.ingest.consumers import OrderedConsumer
+from ccp.ingest.event_log import LogRecord
+from ccp.ingest.raw_zone import RawZone
+from ccp.ingest.worker import register
+from ccp.normalize import repository
+from ccp.normalize.entities import MappingResult
+from ccp.normalize.github_mapper import map_github_event
+from ccp.normalize.hris_mapper import map_hris_event
+from ccp.normalize.manual_mapper import map_manual_event
+from ccp.observability import steps
+from ccp.storage.scoped import ScopedDB
+
+Mapper = Callable[[SourceEvent], MappingResult]
+MAPPERS: dict[str, Mapper] = {
+    "github": map_github_event,
+    "hris": map_hris_event,
+    "manual": map_manual_event,
+}
+
+
+def map_event(event: SourceEvent) -> MappingResult:
+    return MAPPERS[event.connector](event)
+
+
+class NormalizeConsumer(OrderedConsumer):
+    name = "normalize"
+
+    def __init__(self, db: ScopedDB, connector: str) -> None:
+        self.topic = f"raw.{connector}"
+        self.connector = connector
+        super().__init__(db)
+        self.zone = RawZone(Path("."))  # refs are absolute paths; the root is unused for reads
+
+    def handle(self, cur: psycopg.Cursor[Any], record: LogRecord) -> None:
+        path = Path(record.ref)
+        if not path.is_file():
+            # An ordered consumer must never be wedged by one bad record: log and move on.
+            with steps.step(
+                "normalize.map",
+                layer="normalize",
+                tenant=self._db.tenant,
+                inputs={"offset": record.offset, "ref": record.ref},
+            ) as s:
+                s.event(f"raw_file_missing:{record.offset}")
+                s.set_output({"entities": 0, "inserted": 0})
+            return
+        event = self.zone.read(path)
+        with steps.step(
+            "normalize.map",
+            layer="normalize",
+            tenant=self._db.tenant,
+            inputs={"offset": record.offset, "event_type": event.event_type},
+        ) as s:
+            result = map_event(event)
+            inserted = 0
+            for entity in result.entities:
+                if repository.insert(cur, entity):
+                    inserted += 1
+                    event_log.append(
+                        cur,
+                        tenant_id=entity.tenant_id,
+                        topic="entities",
+                        partition_key=f"{entity.tenant_id}:{entity.entity_id}",
+                        source_ts=entity.observed_at,
+                        ref=f"{repository.table_for(entity)}:{entity.entity_id}:{entity.source_event_id}",
+                    )
+            for guardrail in result.guardrail_events:
+                s.event(guardrail)
+            s.set_output({"entities": len(result.entities), "inserted": inserted})
+
+
+for _connector in ("github", "hris", "manual"):
+    register(f"normalize:{_connector}")(
+        lambda db, settings, c=_connector: NormalizeConsumer(db, c)  # type: ignore[misc]
+    )
+
+
+def normalize_all(db: ScopedDB, settings: Settings) -> int:
+    """Drain all three raw topics for one tenant. Returns records processed."""
+    total = 0
+    for connector in ("github", "hris", "manual"):
+        consumer = NormalizeConsumer(db, connector)
+        while True:
+            n = consumer.run_once()
+            total += n
+            if n == 0:
+                break
+    return total
