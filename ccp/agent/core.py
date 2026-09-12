@@ -318,6 +318,10 @@ def make_tool_loop(
                     updates["guardrail_events"].append(f"tool_not_permitted:{call.name}")
                 else:
                     result = tools[call.name].call(call.arguments)
+                    if result.get("fixed_argument"):
+                        updates["guardrail_events"].append(
+                            f"tool_argument_fixed:{call.name}:{result['fixed_argument']}"
+                        )
                     merged = on_result(state, call.name, result)
                     updates["retrieved_chunks"].update(merged.get("retrieved_chunks", {}))
                     for k, v in merged.get("evidence_coverage", {}).items():

@@ -56,5 +56,6 @@ class AgentState(TypedDict, total=False):
     confidence_cap: Annotated[float | None, keep_last]
     human_decision: Annotated[dict[str, Any] | None, keep_last]
     context: Annotated[dict[str, Any] | None, keep_last]  # investigator: what is known
+    mode: Annotated[str | None, keep_last]  # policy: gap | draft
     final: Annotated[dict[str, Any] | None, keep_last]  # non-verdict graphs' output
     final_verdict: Annotated[dict[str, Any] | None, keep_last]

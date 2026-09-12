@@ -77,6 +77,7 @@ layers = [
     "ccp.cli",
     "ccp.evals",
     "ccp.investigation",
+    "ccp.policy",
     "ccp.remediation",
     "ccp.approvals.cli",
     "ccp.approvals.actions",

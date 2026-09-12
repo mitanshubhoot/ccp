@@ -500,6 +500,45 @@ def investigation(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) 
     }
 
 
+@target("policy_gap")
+def policy_gap(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
+    """The Policy Agent for one control: gap analysis, or a draft (requires: anthropic)."""
+    from datetime import UTC
+    from pathlib import Path
+
+    from ccp.approvals import store as approvals
+    from ccp.evaluators.tier2 import Providers
+    from ccp.policy import runner as policy_runner
+
+    providers = Providers.from_settings(ctx.settings)
+    db = _indexed_db(ctx, tenant_id, providers, 0)
+    settings = ctx.settings.model_copy(update={"ccp_data_dir": ctx.scratch_dir})
+    control_id = str(inp["control_id"])
+    now = datetime.now(UTC)
+    extra: dict[str, Any] = {}
+    if inp.get("mode", "gap") == "draft":
+        report, draft = policy_runner.draft(db, settings, control_id, providers, now=now)
+        text = Path(draft.path).read_text(encoding="utf-8").lower()
+        tokens = policy_runner.other_tenant_tokens(settings, db.tenant.tenant_id)
+        item = approvals.get(db, draft.approval_id)
+        extra = {
+            "draft_written": Path(draft.path).is_file(),
+            "other_tenant_tokens_present": any(t.lower() in text for t in tokens),
+            "approval_kind": item.kind if item else None,
+            "scrub_event_kinds": sorted({e.split(":")[0] for e in draft.scrub_events}),
+        }
+    else:
+        report = policy_runner.gap(db, settings, control_id, providers, now=now)
+    return {
+        "requirement_ids": [g.requirement_id for g in report.gaps],
+        "uncovered": list(report.uncovered),
+        "verified_citations": all(c.verified for g in report.gaps for c in g.covering_citations),
+        "confidence": report.confidence,
+        "guardrail_events": sorted({e.split(":")[0] for e in report.guardrail_events}),
+        **extra,
+    }
+
+
 @target("pipeline")
 def pipeline(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
     """The full run for one tenant in the scratch database; exact on compliance state."""

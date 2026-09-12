@@ -30,6 +30,7 @@ from ccp.knowledge import rollup as knowledge_rollup
 from ccp.normalize import consumer as normalize_consumer
 from ccp.normalize import repository
 from ccp.observability import steps
+from ccp.policy import cli as policy_cli
 from ccp.remediation import cli as remediate_cli
 from ccp.retrieval import calibration, distractors
 from ccp.retrieval import config as retrieval_cfg
@@ -61,6 +62,7 @@ app.add_typer(index_app, name="index")
 app.add_typer(agent_cli.app, name="agent")
 app.add_typer(approvals_cli.app, name="approvals")
 app.add_typer(investigate_cli.app, name="investigate")
+app.add_typer(policy_cli.app, name="policy")
 app.add_typer(remediate_cli.app, name="remediate")
 state_app = typer.Typer(no_args_is_help=True, help="The bitemporal compliance state")
 app.add_typer(state_app, name="state")

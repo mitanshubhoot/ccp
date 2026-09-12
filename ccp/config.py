@@ -115,6 +115,11 @@ class Settings(BaseSettings):
         return self.ccp_data_dir / "logs"
 
     @property
+    def drafts_dir(self) -> Path:
+        """Policy drafts (Layer 15); never read as evidence."""
+        return self.ccp_data_dir / "drafts"
+
+    @property
     def uploads_dir(self) -> Path:
         """Runtime uploads root; one subdirectory per tenant."""
         return self.ccp_data_dir / "uploads"

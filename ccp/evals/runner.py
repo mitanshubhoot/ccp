@@ -36,6 +36,7 @@ DB_TARGETS = {
     "tier2_verdict",
     "tier3_verdict",
     "investigation",
+    "policy_gap",
     "pipeline",
 }
 # Targets whose expectations describe a fresh database (first landing, no prior rows) get a

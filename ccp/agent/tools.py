@@ -459,11 +459,21 @@ class BoundTool:
     spec: ToolSpec
     _fn: ToolFn
     _ctx: ToolContext
+    fixed_args: dict[str, Any] | None = None  # a graph may pin an argument (policy_document)
 
     def call(self, raw_args: dict[str, Any]) -> dict[str, Any]:
         """Validate the model's arguments (extra fields forbidden), run, wrap the result."""
+        merged = dict(raw_args)
+        for key, value in (self.fixed_args or {}).items():
+            if key in merged and merged[key] != value:
+                return {
+                    "is_error": True,
+                    "error": f"argument {key} is fixed to {value!r} in this graph",
+                    "fixed_argument": key,
+                }
+            merged[key] = value
         try:
-            args = self.spec.args.model_validate(raw_args)
+            args = self.spec.args.model_validate(merged)
         except ValidationError as exc:
             return {
                 "is_error": True,
@@ -475,8 +485,15 @@ class BoundTool:
         return {"is_error": False, "result": result}
 
 
-def bind_tools(ctx: ToolContext, names: tuple[str, ...]) -> dict[str, BoundTool]:
+def bind_tools(
+    ctx: ToolContext,
+    names: tuple[str, ...],
+    fixed: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, BoundTool]:
     unknown = sorted(set(names) - set(TOOL_SPECS))
     if unknown:
         raise KeyError(f"unknown tools {unknown}")
-    return {name: BoundTool(TOOL_SPECS[name], TOOL_FNS[name], ctx) for name in names}
+    return {
+        name: BoundTool(TOOL_SPECS[name], TOOL_FNS[name], ctx, (fixed or {}).get(name))
+        for name in names
+    }
