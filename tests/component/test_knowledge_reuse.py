@@ -25,7 +25,8 @@ def test_loader_upserts_reference_tables(db_settings: Settings, pool: Connection
     assert first == second
     assert db.fetch_one("SELECT count(*) FROM tests") == (10,)
     assert db.fetch_one("SELECT count(*) FROM requirements") == (14,)
-    assert db.fetch_one("SELECT count(*) FROM requirement_controls") == (18,)
+    assert db.fetch_one("SELECT count(*) FROM requirement_controls") == (19,)
+    assert db.fetch_one("SELECT count(*) FROM control_tests") == (10,)
     assert db.fetch_one("SELECT tier FROM tests WHERE test_id = 'HR-4'") == (3,)
 
 
