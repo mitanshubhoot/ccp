@@ -17,6 +17,7 @@ dependencies = [
     "anthropic>=1.5.0",
     "langgraph>=1.2.11",
     "langgraph-checkpoint-postgres>=3.1.2",
+    "langfuse>=3.0",
 ]
 
 [dependency-groups]
@@ -76,6 +77,7 @@ type = "layers"
 layers = [
     "ccp.cli",
     "ccp.evals",
+    "ccp.replay",
     "ccp.copilot",
     "ccp.investigation",
     "ccp.policy",

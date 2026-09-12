@@ -39,6 +39,7 @@ from ccp.normalize import repository
 from ccp.observability import steps
 from ccp.policy import cli as policy_cli
 from ccp.remediation import cli as remediate_cli
+from ccp.replay import rebuild as replay
 from ccp.retrieval import calibration, distractors
 from ccp.retrieval import config as retrieval_cfg
 from ccp.retrieval import index as retrieval_index
@@ -690,6 +691,44 @@ def evals_threshold(
     if apply:
         path = eval_runner.write_threshold(thresholds.CONFIG_PATH, suggested)
         typer.echo(f"written to {path}")
+
+
+@app.command("replay")
+def replay_record(
+    record_id: str = typer.Argument(
+        ..., help="a verdict, investigation, gap report, or copilot answer id"
+    ),
+    tenant: str | None = typer.Option(None, "--tenant"),
+    execute: bool = typer.Option(
+        False, "--execute", help="re-send the stored request and diff the response"
+    ),
+) -> None:
+    """Rebuild a stored model request from its references and diff it against what was sent.
+    The request diff must be empty; a re-executed response is exact for the stub client and
+    only approximate for a live model."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        scoped = ScopedDB(pool, ctx)
+        try:
+            report = replay.rebuild(scoped, settings, record_id)
+        except LookupError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2) from exc
+        typer.echo(report.format())
+        if execute:
+            llm = try_build_client(settings)
+            if llm is None:
+                typer.echo("--execute needs ANTHROPIC_API_KEY", err=True)
+                raise typer.Exit(code=2)
+            for name, diff in replay.execute(scoped, settings, record_id, llm):
+                outcome = "response identical" if not diff else "; ".join(diff)
+                typer.echo(f"  re-executed {name}: {outcome}")
+        if report.diff:
+            raise typer.Exit(code=1)
+    finally:
+        pool.close()
 
 
 def _settings() -> Settings:

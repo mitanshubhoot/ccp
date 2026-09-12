@@ -298,15 +298,22 @@ def build_spec(
             " concrete targets, and carry the verdict_id they fix."
         )
 
-    inner_answer = core.make_structured_node(
-        "answer",
-        deps=deps,
-        prompt_version=ANSWER_PROMPT_VERSION,
-        meta=ANSWER_META,
-        select_chunks=turn_chunks,
-        describe=describe_answer,
-        require_chunks=False,
-    )
+    def _answer_node(stream: bool) -> core.NodeFn:
+        return core.make_structured_node(
+            "answer",
+            deps=deps,
+            prompt_version=ANSWER_PROMPT_VERSION,
+            meta=ANSWER_META,
+            select_chunks=turn_chunks,
+            describe=describe_answer,
+            require_chunks=False,
+            stream=stream,
+        )
+
+    # The status contract may drop sentences after generation, so a status answer is never
+    # streamed to the terminal; every other intent streams its prose as it is generated.
+    inner_answer_streamed = _answer_node(True)
+    inner_answer_plain = _answer_node(False)
 
     def answer(state: AgentState) -> dict[str, Any]:
         # The explain contract quotes a verdict's verified citations. Their chunks are fetched
@@ -339,7 +346,8 @@ def build_spec(
                 if not res.get("is_error") and isinstance(got, dict) and "chunk_id" in got:
                     fetched[chunk_id] = {**got, "turn": turn}
         view: Any = {**state, "retrieved_chunks": {**known, **fetched}} if fetched else state
-        out = inner_answer(view)
+        inner = inner_answer_plain if state.get("intent") == "status" else inner_answer_streamed
+        out = inner(view)
         if fetched:
             out["retrieved_chunks"] = fetched
         if log:

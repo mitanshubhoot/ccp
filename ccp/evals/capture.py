@@ -16,6 +16,7 @@ from typing import Any
 import yaml
 
 from ccp.evals.schema import GoldenCase
+from ccp.observability import steps
 
 CAPTURED_FILE = "captured.yaml"
 VOLATILE_KEYS = frozenset(
@@ -42,6 +43,7 @@ def find_step(log_path: Path, trace_id: str) -> dict[str, Any] | None:
                 line = json.loads(raw)
             except json.JSONDecodeError:
                 continue
+            line = steps.resolve_blobs(line, log_path)
             name = str(line.get("gen_ai.operation.name") or "")
             if not name.startswith("eval."):
                 continue

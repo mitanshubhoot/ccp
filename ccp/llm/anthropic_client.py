@@ -130,6 +130,16 @@ class AnthropicClient:
 
     # -- online -----------------------------------------------------------------------
 
+    def _stream_parse(
+        self, params: dict[str, Any], schema: type[Any], on_token: Callable[[str], None]
+    ) -> Any:
+        """Structured output streamed token by token (spec.md Layer 12); the final message
+        carries parsed_output exactly as the non-streamed call does."""
+        with self._client.messages.stream(**params, output_format=schema) as stream:
+            for text in stream.text_stream:
+                on_token(text)
+            return stream.get_final_message()
+
     def extract(
         self,
         *,
@@ -140,6 +150,7 @@ class AnthropicClient:
         tracker: BudgetTracker,
         max_tokens: int = 2048,
         reasoning: bool = False,
+        on_token: Callable[[str], None] | None = None,
     ) -> Extraction:
         params: dict[str, Any] = {
             "model": model,
@@ -149,9 +160,12 @@ class AnthropicClient:
             **sampling_params(model, reasoning=reasoning),
         }
         request = {**params, "output_format": schema.__name__}
-        response = self._with_retry(
-            lambda: self._client.messages.parse(**params, output_format=schema)
-        )
+        if on_token is not None:
+            response = self._with_retry(lambda: self._stream_parse(params, schema, on_token))
+        else:
+            response = self._with_retry(
+                lambda: self._client.messages.parse(**params, output_format=schema)
+            )
         usage = _usage(model, response.usage)
         tracker.charge(
             input_tokens=usage.input_tokens + usage.cache_read_input_tokens,

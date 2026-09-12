@@ -123,3 +123,27 @@ def frame_evidence(chunks: list[FramedChunk], nonce: str) -> Framed:
         framed.shown_chunk_ids.append(chunk.chunk_id)
     framed.text = "\n".join(parts).rstrip() + "\n"
     return framed
+
+
+_FENCE_RE = re.compile(
+    r"<<EVIDENCE-(?P<nonce>[0-9a-f]+) chunk_id=(?P<chunk_id>\S+) type=(?P<type>\S+)"
+    r" subject=\S+ page=\S+>>\n(?P<body>.*?)\n<<END-(?P=nonce)>>",
+    re.DOTALL,
+)
+
+
+@dataclass(frozen=True)
+class FencedBlock:
+    nonce: str
+    chunk_id: str
+    evidence_type: str
+    body: str
+
+
+def parse_fences(text: str) -> list[FencedBlock]:
+    """The fenced evidence blocks in a prompt, exactly as frame_evidence laid them out. Replay
+    reads them back through this; no other module builds or parses the fence grammar."""
+    return [
+        FencedBlock(m.group("nonce"), m.group("chunk_id"), m.group("type"), m.group("body"))
+        for m in _FENCE_RE.finditer(text)
+    ]

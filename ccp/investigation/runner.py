@@ -106,7 +106,8 @@ def investigate(
             tenant=db.tenant,
             inputs={"verdict_id": verdict.verdict_id, "thread_id": thread_id},
         ) as s:
-            for update in graph.stream(initial, config, stream_mode="updates"):
+            run_config = {**config, "callbacks": steps.graph_callbacks()}
+            for update in graph.stream(initial, run_config, stream_mode="updates"):
                 trajectory.extend(str(k) for k in update)
             final = dict(graph.get_state(config).values.get("final") or {})
             if not final:

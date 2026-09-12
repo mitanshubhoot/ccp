@@ -63,7 +63,8 @@ def _build(
 
 def _run(graph: Any, payload: Any, config: dict[str, Any]) -> list[str]:
     trajectory: list[str] = []
-    for update in graph.stream(payload, config, stream_mode="updates"):
+    run_config = {**config, "callbacks": steps.graph_callbacks()}
+    for update in graph.stream(payload, run_config, stream_mode="updates"):
         for key in update:
             trajectory.append("interrupt" if key == "__interrupt__" else str(key))
     return trajectory

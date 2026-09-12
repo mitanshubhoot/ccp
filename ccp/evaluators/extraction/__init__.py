@@ -65,4 +65,26 @@ def schema_for(name: str) -> SchemaMeta:
         raise KeyError(f"unknown extraction schema {name!r}; known: {sorted(SCHEMAS)}") from None
 
 
-__all__ = ["SCHEMAS", "Cited", "SchemaMeta", "schema_for"]
+def _agent_schemas() -> dict[str, type[BaseModel]]:
+    """The agent graphs' structured-output schemas, by class name (imported lazily so the
+    package stays importable from the graph modules that define their own metadata)."""
+    from ccp.evaluators.extraction.copilot import CopilotAnswerDraft, IntentDraft
+    from ccp.evaluators.extraction.investigation import InvestigationDraft
+    from ccp.evaluators.extraction.policy import GapReportDraft
+
+    return {
+        cls.__name__: cls
+        for cls in (InvestigationDraft, GapReportDraft, IntentDraft, CopilotAnswerDraft)
+    }
+
+
+def schema_model(name: str) -> type[BaseModel] | None:
+    """Any structured-output schema the platform sends, by class name (replay needs every
+    one, not only the tier 2 and tier 3 extraction schemas)."""
+    meta = SCHEMAS.get(name)
+    if meta is not None:
+        return meta.model
+    return _agent_schemas().get(name)
+
+
+__all__ = ["SCHEMAS", "Cited", "SchemaMeta", "schema_for", "schema_model"]

@@ -18,8 +18,25 @@ EXIT_WORDS = frozenset({"exit", "quit", "q"})
 
 
 def _turn(session: runner.Session, question: str, confirm: Callable[[], bool]) -> None:
-    turn = session.ask(question)
-    typer.echo(turn.answer.text)
+    streamed: list[str] = []
+
+    def show(token: str) -> None:
+        streamed.append(token)
+        typer.echo(token, nl=False)
+
+    turn = session.ask(question, on_token=show)
+    prose = "".join(streamed)
+    if prose:
+        typer.echo("")
+    final = turn.answer.text
+    if not prose:
+        typer.echo(final)
+    elif final.startswith(prose):
+        rest = final[len(prose) :].strip()
+        if rest:
+            typer.echo(rest)
+    else:  # the contract rewrote the answer after generation
+        typer.echo(final)
     for c in turn.answer.citations:
         typer.echo(f'  [{c.chunk_id}] "{c.quote[:120]}"')
     for event in turn.rejected:

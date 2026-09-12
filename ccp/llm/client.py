@@ -13,6 +13,7 @@ the vendor SDK; the layering test enforces it. The stub client is the keyless st
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TypeVar
@@ -92,6 +93,7 @@ class LLMClient(Protocol):
         tracker: BudgetTracker,
         max_tokens: int = 2048,
         reasoning: bool = False,
+        on_token: Callable[[str], None] | None = None,
     ) -> Extraction: ...
 
     def complete(
@@ -176,11 +178,17 @@ class StubLLMClient:
         tracker: BudgetTracker,
         max_tokens: int = 2048,
         reasoning: bool = False,
+        on_token: Callable[[str], None] | None = None,
     ) -> Extraction:
         usage = self._charge(tracker)
         if self.handler is None:
             raise RuntimeError("StubLLMClient has no extract handler for this call")
         parsed = self.handler(schema, system, user)
+        if on_token is not None:  # stream the JSON in a few deltas, as a live model would
+            text = json.dumps(parsed.model_dump(mode="json"))
+            size = max(1, -(-len(text) // 4))
+            for start in range(0, len(text), size):
+                on_token(text[start : start + size])
         request = {
             "model": model,
             "system": blocks_as_json(system),

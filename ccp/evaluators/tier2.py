@@ -266,6 +266,7 @@ def evaluate(
     with steps.step(
         "tier2.extract",
         layer="evaluators",
+        kind="generation",
         tenant=ctx.tenant,
         inputs={
             "test_id": spec.test_id,
@@ -275,7 +276,7 @@ def evaluate(
             "fence_nonce": nonce,
         },
     ) as s:
-        s.model(model, prompt_version=spec.prompt_version)
+        s.model(model, prompt_version=spec.prompt_version, prompt_sha256=prompt.sha256)
         extraction = providers.llm.extract(
             schema=meta.model, system=system, user=user, model=model, tracker=tracker
         )

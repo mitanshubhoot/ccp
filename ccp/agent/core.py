@@ -170,6 +170,7 @@ class ModelDeps:
     model: str
     tracker: BudgetTracker
     reasoning: bool = False
+    stream: Callable[[str], None] | None = None  # token sink for nodes built with stream=True
 
     def require(self) -> LLMClient:
         if self.llm is None:
@@ -206,6 +207,7 @@ def make_structured_node(
     select_chunks: Callable[[AgentState], list[dict[str, Any]]],
     describe: Callable[[AgentState], str],
     require_chunks: bool = True,
+    stream: bool = False,
 ) -> NodeFn:
     """Fenced evidence -> one structured call -> raw fields plus replay material. The model's
     output is re-validated against the schema; a mismatch (a stub, a provider quirk) is a
@@ -244,6 +246,7 @@ def make_structured_node(
             model=deps.model,
             tracker=deps.tracker,
             reasoning=deps.reasoning,
+            on_token=deps.stream if stream else None,
         )
         fields = extraction.parsed.model_dump(mode="json")
         events = list(framed.events)

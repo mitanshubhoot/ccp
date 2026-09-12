@@ -7,6 +7,7 @@ proposal with its approval item, exactly where an Investigator run ends."""
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import TracebackType
@@ -23,6 +24,7 @@ from ccp.approvals import store as approvals
 from ccp.config import Settings
 from ccp.copilot import schema
 from ccp.copilot.schema import CopilotAnswer
+from ccp.copilot.streaming import TextFieldStreamer
 from ccp.evaluators import targets
 from ccp.evaluators import verdict as verdicts
 from ccp.evaluators.tier2 import AITierUnavailable, Providers
@@ -122,7 +124,7 @@ class Session:
     def close(self) -> None:
         self.pool.close()
 
-    def _graph(self, now: datetime) -> Any:
+    def _graph(self, now: datetime, stream: Callable[[str], None] | None = None) -> Any:
         tracker = BudgetTracker(RunBudget.from_settings(self.settings))
         tools = bind_tools(
             ToolContext(
@@ -131,7 +133,11 @@ class Session:
             tuple(sorted(ALLOWLISTS[GRAPH])),
         )
         deps = core.ModelDeps(
-            self.providers.llm, self.settings.copilot_model, tracker, reasoning=True
+            self.providers.llm,
+            self.settings.copilot_model,
+            tracker,
+            reasoning=True,
+            stream=stream,
         )
         spec = graph_module.build_spec(
             self.db.tenant,
@@ -143,11 +149,19 @@ class Session:
         )
         return core.build_graph(spec, PostgresSaver(cast(Any, self.pool)))
 
-    def ask(self, question: str, now: datetime | None = None) -> Turn:
+    def ask(
+        self,
+        question: str,
+        now: datetime | None = None,
+        on_token: Callable[[str], None] | None = None,
+    ) -> Turn:
+        """One turn. ``on_token`` receives the answer's prose as it streams (never for a
+        status answer, whose contract may rewrite the text after generation)."""
         moment = now or datetime.now(UTC)
         self.turn_count += 1
-        graph = self._graph(moment)
-        config = {"configurable": {"thread_id": self.thread_id}}
+        streamer = TextFieldStreamer(on_token) if on_token is not None else None
+        graph = self._graph(moment, streamer.feed if streamer is not None else None)
+        config: dict[str, Any] = {"configurable": {"thread_id": self.thread_id}}
         before: dict[str, Any] = (
             dict(graph.get_state(config).values or {}) if self.turn_count > 1 else {}
         )
@@ -179,7 +193,8 @@ class Session:
             },
         ) as s:
             try:
-                for update in graph.stream(initial, config, stream_mode="updates"):
+                run_config = {**config, "callbacks": steps.graph_callbacks()}
+                for update in graph.stream(initial, run_config, stream_mode="updates"):
                     turn_nodes.extend(str(k) for k in update)
             except Exception as exc:
                 threads.mark_failed(
@@ -197,6 +212,11 @@ class Session:
             events = list(values.get("guardrail_events") or [])[n_events:]
             tool_log = list(values.get("tool_log") or [])[n_log:]
             latency_ms = (time.perf_counter() - started) * 1000
+            first_token_ms = (
+                round((streamer.first_token_at - started) * 1000, 3)
+                if streamer is not None and streamer.first_token_at is not None
+                else None
+            )
             answer = CopilotAnswer(
                 tenant_id=self.db.tenant.tenant_id,
                 thread_id=self.thread_id,
@@ -210,6 +230,7 @@ class Session:
                 prompt_version=str(final.get("prompt_version") or ""),
                 guardrail_events=tuple(events),
                 latency_ms=latency_ms,
+                first_token_ms=first_token_ms,
                 fence_nonce=final.get("fence_nonce"),
                 request_json={**(final.get("request_json") or {}), "tool_log": tool_log},
                 response_json=final.get("response_json"),
@@ -227,6 +248,7 @@ class Session:
                     "tools": [t.get("tool") for t in tool_log],
                     "pending": len(pending),
                     "latency_ms": round(latency_ms, 1),
+                    "first_token_ms": first_token_ms,
                 }
             )
         return Turn(answer, tuple(pending), tuple(rejected), tuple(turn_nodes))
