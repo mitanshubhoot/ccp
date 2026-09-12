@@ -296,6 +296,7 @@ def make_tool_loop(
             "guardrail_events": [],
             "retrieved_chunks": {},
             "evidence_coverage": {},
+            "context": dict(state.get("context") or {}),
         }
         calls_made = 0
         while calls_made < max_calls:
@@ -324,6 +325,7 @@ def make_tool_loop(
                         )
                     merged = on_result(state, call.name, result)
                     updates["retrieved_chunks"].update(merged.get("retrieved_chunks", {}))
+                    updates["context"].update(merged.get("context", {}))
                     for k, v in merged.get("evidence_coverage", {}).items():
                         updates["evidence_coverage"][k] = (
                             updates["evidence_coverage"].get(k, False) or v

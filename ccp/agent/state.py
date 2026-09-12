@@ -57,5 +57,8 @@ class AgentState(TypedDict, total=False):
     human_decision: Annotated[dict[str, Any] | None, keep_last]
     context: Annotated[dict[str, Any] | None, keep_last]  # investigator: what is known
     mode: Annotated[str | None, keep_last]  # policy: gap | draft
+    question: Annotated[str | None, keep_last]  # copilot: the operator's question this turn
+    intent: Annotated[str | None, keep_last]  # copilot: explain | status | missing | act | other
+    turn: Annotated[int | None, keep_last]  # copilot: 1-based turn within the session thread
     final: Annotated[dict[str, Any] | None, keep_last]  # non-verdict graphs' output
     final_verdict: Annotated[dict[str, Any] | None, keep_last]

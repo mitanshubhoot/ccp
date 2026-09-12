@@ -9,6 +9,7 @@ only reads through ScopedDB.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -433,8 +434,30 @@ def get_framework_rollup(ctx: ToolContext, args: BaseModel) -> Any:
 
 
 def get_investigation(ctx: ToolContext, args: BaseModel) -> Any:
-    GetInvestigationArgs.model_validate(args.model_dump())
-    return {"error": "not found", "note": "investigations arrive in Phase 12"}
+    a = GetInvestigationArgs.model_validate(args.model_dump())
+    row = ctx.db.fetch_one(
+        "SELECT investigation_id, root_cause, root_cause_category, missing_evidence,"
+        " proposed_actions, citations, confidence, created_at FROM investigations"
+        " WHERE verdict_id = %s ORDER BY created_at DESC LIMIT 1",
+        (a.verdict_id,),
+    )
+    if row is None:
+        return {"error": "not found", "verdict_id": a.verdict_id}
+
+    def load(value: Any) -> Any:
+        return json.loads(value) if isinstance(value, str) else value
+
+    return {
+        "verdict_id": a.verdict_id,
+        "investigation_id": row[0],
+        "root_cause": row[1],
+        "root_cause_category": row[2],
+        "missing_evidence": load(row[3]),
+        "proposed_actions": load(row[4]),
+        "citations": load(row[5]),
+        "confidence": row[6],
+        "created_at": row[7].isoformat(),
+    }
 
 
 TOOL_FNS: dict[str, ToolFn] = {

@@ -1,0 +1,4 @@
+# The Compliance Copilot (spec.md Layer 17, A-36).
+max_actions_per_turn: 2 # extra requested actions are answered with a note, never opened
+max_tool_calls: 10 # the gather loop's budget per turn
+forbidden_summary_words: [ready, compliant] # never a summary judgement in a status answer

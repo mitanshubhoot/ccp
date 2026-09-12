@@ -15,6 +15,7 @@ from ccp.compliance_state import writer as state_writer  # noqa: F401 - register
 from ccp.config import Settings
 from ccp.connectors.base import parse_ts
 from ccp.connectors.registry import CONNECTOR_NAMES, SOURCE_KINDS, build_connector
+from ccp.copilot import cli as copilot_cli
 from ccp.evals import runner as eval_runner
 from ccp.evaluators import clock as clock_producer
 from ccp.evaluators import impact as impact_step
@@ -63,6 +64,7 @@ app.add_typer(agent_cli.app, name="agent")
 app.add_typer(approvals_cli.app, name="approvals")
 app.add_typer(investigate_cli.app, name="investigate")
 app.add_typer(policy_cli.app, name="policy")
+app.command("copilot")(copilot_cli.copilot)
 app.add_typer(remediate_cli.app, name="remediate")
 state_app = typer.Typer(no_args_is_help=True, help="The bitemporal compliance state")
 app.add_typer(state_app, name="state")

@@ -539,6 +539,50 @@ def policy_gap(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> 
     }
 
 
+@target("copilot_answer")
+def copilot_answer(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
+    """One Copilot turn on a fresh session (requires: anthropic); nothing is confirmed."""
+    from datetime import UTC
+
+    from ccp.agent import tier3 as _tier3  # noqa: F401 - registers tier 3
+    from ccp.agent.graphs.copilot import says_forbidden
+    from ccp.approvals import store as approvals
+    from ccp.compliance_state import writer as state_writer
+    from ccp.copilot import runner as copilot
+    from ccp.evaluators import runner as evaluations
+    from ccp.evaluators.tier2 import Providers
+    from ccp.policy import runner as policy_runner
+
+    providers = Providers.from_settings(ctx.settings)
+    db = _indexed_db(ctx, tenant_id, providers, 0)
+    now = datetime.now(UTC)
+    tests = tuple(str(t) for t in inp.get("evaluate", ["HR-1"]))
+    evaluations.enqueue_all(db, ctx.settings, now=now, tests=tests)
+    evaluations.drain(db, ctx.settings, now=now, providers=providers)
+    state_writer.drain(db)
+    open_before = len(approvals.list_items(db, "remediation", True))
+    with copilot.Session(db, ctx.settings, providers) as session:
+        turn = session.ask(str(inp["question"]), now=now)
+    open_after = len(approvals.list_items(db, "remediation", True))
+    request = turn.answer.request_json or {}
+    tokens = policy_runner.other_tenant_tokens(ctx.settings, db.tenant.tenant_id)
+    lowered = turn.answer.text.lower()
+    return {
+        "intent": turn.answer.intent,
+        "tools": [t.get("tool") for t in request.get("tool_log", [])],
+        "trajectory": list(turn.trajectory),
+        "says_forbidden": says_forbidden(turn.answer.text, ("ready", "compliant")),
+        "citations": len(turn.answer.citations),
+        "citations_verified": all(c.verified for c in turn.answer.citations),
+        "requested_actions": [a.get("action") for a in turn.answer.requested_actions],
+        "pending": len(turn.pending),
+        "approvals_opened": open_after - open_before,
+        "mentions_other_tenants": any(t.lower() in lowered for t in tokens),
+        "guardrail_events": sorted({e.split(":")[0] for e in turn.answer.guardrail_events}),
+        "text": turn.answer.text[:500],
+    }
+
+
 @target("pipeline")
 def pipeline(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
     """The full run for one tenant in the scratch database; exact on compliance state."""

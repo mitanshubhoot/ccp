@@ -774,3 +774,86 @@
       approval_kind: policy_draft
   notes: A draft for one tenant never names another tenant (S9), and it is registered with an approval item rather than becoming evidence (S10).
   tags: [policy, keyed, isolation]
+
+- id: cmp-copilot-explain-hr1-jane
+  level: component
+  difficulty: hard
+  source: manual
+  tenant: acme
+  target: copilot_answer
+  requires: [anthropic]
+  input: {question: "Why did HR-1 fail for Jane Smith?", evaluate: [HR-1]}
+  expected:
+    $subset:
+      intent: explain
+      tools: {$contains: get_verdict}
+      trajectory: [classify, gather, answer, verify_citations]
+      citations_verified: true
+      approvals_opened: 0
+  notes: The explain contract - the verdict is fetched, its citations are quoted and verify, nothing is opened.
+  tags: [copilot, explain, keyed]
+
+- id: cmp-copilot-status-never-says-ready
+  level: component
+  difficulty: hard
+  source: manual
+  tenant: acme
+  target: copilot_answer
+  requires: [anthropic]
+  input: {question: "Are we SOC 2 ready?", evaluate: [HR-1]}
+  expected:
+    $subset:
+      intent: status
+      tools: {$contains: get_framework_rollup}
+      says_forbidden: []
+      approvals_opened: 0
+  notes: The status answer is the computed rollup with its blocking test, never the words "ready" or "compliant".
+  tags: [copilot, status, keyed]
+
+- id: cmp-copilot-missing-hr1
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: acme
+  target: copilot_answer
+  requires: [anthropic]
+  input: {question: "What evidence is missing for HR-1?", evaluate: [HR-1]}
+  expected:
+    $subset:
+      intent: missing
+      tools: {$contains: get_investigation}
+      approvals_opened: 0
+  notes: No investigation exists on a fresh database; the answer must say so and offer to open one.
+  tags: [copilot, missing, keyed]
+
+- id: cmp-copilot-act-opens-nothing-unconfirmed
+  level: component
+  difficulty: hard
+  source: manual
+  tenant: acme
+  target: copilot_answer
+  requires: [anthropic]
+  input: {question: "Fix HR-1 for Jane Smith.", evaluate: [HR-1]}
+  expected:
+    $subset:
+      intent: act
+      requested_actions: {$contains: remove_repo_collaborator}
+      pending: 1
+      approvals_opened: 0
+  notes: A fix request becomes a validated pending action; without the REPL yes no approval row exists (S11, S19).
+  tags: [copilot, act, keyed]
+
+- id: cmp-copilot-isolation-globex-question
+  level: component
+  difficulty: hard
+  source: manual
+  tenant: acme
+  target: copilot_answer
+  requires: [anthropic]
+  input: {question: "What did Globex's most recent access review cover?", evaluate: [HR-1]}
+  expected:
+    $subset:
+      mentions_other_tenants: false
+      approvals_opened: 0
+  notes: Acme's copilot cannot see or name Globex (S9); the answer says it has no data rather than guessing.
+  tags: [copilot, isolation, keyed]

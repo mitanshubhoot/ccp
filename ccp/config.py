@@ -97,6 +97,7 @@ class Settings(BaseSettings):
     github_token: SecretStr | None = None
     ccp_remediation_live: bool = False
     ccp_remediation_config: Path = REPO_ROOT / "config" / "remediation.yaml"
+    ccp_copilot_config: Path = REPO_ROOT / "config" / "copilot.yaml"
 
     @property
     def investigator_model(self) -> str:
