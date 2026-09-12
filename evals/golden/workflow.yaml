@@ -1,0 +1,33 @@
+# Workflow-level golden cases: several components composed, exact grading.
+
+- id: wf-ingest-dedup-acme-hris
+  level: workflow
+  difficulty: easy
+  source: manual
+  tenant: acme
+  target: ingest_land
+  input: {connector: hris, times: 2}
+  expected:
+    landed: 47
+    duplicates: 47
+    raw_rows: 47
+    log_records: 47
+    dup_files: 47
+  notes: Landing the same pull twice writes every row once and every duplicate file into dups/.
+  tags: [ingest, dedup]
+
+- id: wf-ingest-late-arrival-orders-by-source-ts
+  level: workflow
+  difficulty: hard
+  source: synthetic
+  tenant: acme
+  target: ingest_ordering
+  input:
+    records:
+      - {partition: "acme:hris:E1", source_ts: "2026-08-20T17:00:00Z", ref: termination}
+      - {partition: "acme:hris:E1", source_ts: "2026-08-25T09:00:00Z", ref: snapshot-after}
+      - {partition: "acme:hris:E1", source_ts: "2026-08-19T08:00:00Z", ref: late-role-change}
+  expected:
+    handled_order: [late-role-change, termination, snapshot-after]
+  notes: A late-arriving record with an older source timestamp is processed in its correct position.
+  tags: [ingest, ordering]

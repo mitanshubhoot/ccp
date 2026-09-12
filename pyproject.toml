@@ -49,6 +49,9 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Option", "typer.Argument"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
@@ -66,6 +69,8 @@ name = "Layers: higher may import lower, never the reverse"
 type = "layers"
 layers = [
     "ccp.cli",
+    "ccp.evals",
+    "ccp.ingest",
     "ccp.connectors",
     "ccp.storage",
     "ccp.observability",

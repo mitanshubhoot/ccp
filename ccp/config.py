@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     ccp_fixtures_dir: Path = REPO_ROOT / "fixtures"
     ccp_tenant: str | None = None
 
+    # Queue (spec.md Layer 2, A-48): parallel-topic claims expire after this many seconds,
+    # which must exceed the run wall-clock budget so a live run is never re-claimed.
+    ccp_claim_visibility_seconds: int = Field(default=300, ge=1)
+    ccp_max_attempts: int = Field(default=5, ge=1)
+    ccp_golden_dir: Path = REPO_ROOT / "evals" / "golden"
+    ccp_eval_runs_dir: Path = REPO_ROOT / "evals" / "runs"
+
     # PDF extraction caps (spec.md A-54); a file over any cap is rejected, never parsed.
     ccp_pdf_max_bytes: int = Field(default=25_000_000, ge=1)
     ccp_pdf_max_pages: int = Field(default=500, ge=1)
@@ -110,6 +117,11 @@ class Settings(BaseSettings):
     def uploads_dir(self) -> Path:
         """Runtime uploads root; one subdirectory per tenant."""
         return self.ccp_data_dir / "uploads"
+
+    @property
+    def raw_dir(self) -> Path:
+        """The immutable raw zone (spec.md Layer 2)."""
+        return self.ccp_data_dir / "raw"
 
     def load_tenants(self) -> dict[str, TenantSettings]:
         raw = yaml.safe_load(self.ccp_tenants_file.read_text(encoding="utf-8"))

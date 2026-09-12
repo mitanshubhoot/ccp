@@ -9,8 +9,12 @@ import typer
 from ccp.config import Settings
 from ccp.connectors.base import parse_ts
 from ccp.connectors.registry import CONNECTOR_NAMES, SOURCE_KINDS, build_connector
+from ccp.evals import runner as eval_runner
+from ccp.ingest import worker
+from ccp.ingest.landing import ingest_tenant
 from ccp.observability import steps
 from ccp.storage import db
+from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
 
 app = typer.Typer(
@@ -19,9 +23,79 @@ app = typer.Typer(
 tenants_app = typer.Typer(no_args_is_help=True, help="Tenants from config/tenants.yaml")
 db_app = typer.Typer(no_args_is_help=True, help="Database migrations and checks")
 connectors_app = typer.Typer(no_args_is_help=True, help="Pull provider data as SourceEvents")
+ingest_app = typer.Typer(no_args_is_help=True, help="Land events in the raw zone and event log")
+worker_app = typer.Typer(no_args_is_help=True, help="Run consumers over the event log")
+evals_app = typer.Typer(no_args_is_help=True, help="Golden-dataset evaluation harness")
 app.add_typer(tenants_app, name="tenants")
 app.add_typer(db_app, name="db")
 app.add_typer(connectors_app, name="connectors")
+app.add_typer(ingest_app, name="ingest")
+app.add_typer(worker_app, name="worker")
+app.add_typer(evals_app, name="evals")
+
+
+@ingest_app.command("run")
+def ingest_run(
+    tenant: str | None = typer.Option(None, "--tenant"),
+    connector: list[str] = typer.Option([], "--connector", help="repeatable; default all"),
+    source: str = typer.Option("fixture", "--source", help="fixture | live"),
+) -> None:
+    """Pull every connector for a tenant, land in the raw zone, append to the event log."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    names = [n for n in CONNECTOR_NAMES if not connector or n in connector]
+    kind = next((k for k in SOURCE_KINDS if k == source), None)
+    if kind is None:
+        raise typer.BadParameter("source must be fixture or live")
+    pool = db.app_pool(settings)
+    try:
+        summary = ingest_tenant(settings, ScopedDB(pool, ctx), ctx, names, kind)
+    finally:
+        pool.close()
+    for name, n in summary.by_connector.items():
+        typer.echo(f"{name:<8} landed {n}")
+    typer.echo(f"total landed {summary.landed}, duplicates {summary.duplicates}")
+
+
+@worker_app.command("run")
+def worker_run(
+    consumer: str = typer.Option(..., "--consumer"),
+    tenant: str | None = typer.Option(None, "--tenant", help="default: every tenant"),
+    once: bool = typer.Option(False, "--once", help="drain and exit instead of polling"),
+    poll_seconds: float = typer.Option(2.0, "--poll-seconds"),
+) -> None:
+    """Run a registered consumer for one tenant or all tenants."""
+    settings = _settings()
+    tenants = [_tenant(settings, tenant)] if tenant else TenantContext.all(settings)
+    processed = worker.run(settings, consumer, tenants, once=once, poll_seconds=poll_seconds)
+    typer.echo(f"{consumer}: processed {processed} records")
+
+
+@worker_app.command("list")
+def worker_list() -> None:
+    """List registered consumers."""
+    for name in sorted(worker.CONSUMERS):
+        typer.echo(name)
+
+
+@evals_app.command("run")
+def evals_run(
+    level: str | None = typer.Option(None, "--level", help="component | workflow | e2e"),
+    tag: str | None = typer.Option(None, "--tag"),
+    case_id: str | None = typer.Option(None, "--id"),
+) -> None:
+    """Run the golden dataset and write evals/runs/latest.json. Exit code 1 on any failure."""
+    settings = _settings()
+    cases, hashes = eval_runner.load_cases(settings.ccp_golden_dir)
+    chosen = eval_runner.select(cases, level=level, tag=tag, case_id=case_id)
+    if not chosen:
+        raise typer.BadParameter("no golden cases matched")
+    report = eval_runner.run(settings, chosen, hashes)
+    path = eval_runner.write_report(report, settings.ccp_eval_runs_dir)
+    typer.echo(eval_runner.format_table(report))
+    typer.echo(f"report: {path}")
+    if not report.all_passed:
+        raise typer.Exit(code=1)
 
 
 def _settings() -> Settings:

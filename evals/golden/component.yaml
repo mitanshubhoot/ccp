@@ -1,0 +1,179 @@
+# Component-level golden cases: one target, exact grading (spec.md Layer 11).
+# Added in Phase 2; every later phase appends its own cases to this file or a sibling.
+
+- id: cmp-connector-github-acme-counts
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: acme
+  target: connector_pull
+  input: {connector: github}
+  expected:
+    count: 26
+    counts_by_type:
+      org.snapshot: 1
+      org.member.snapshot: 10
+      repo.snapshot: 3
+      repo.branch_protection.snapshot: 3
+      repo.security_policy.snapshot: 1
+      repo.file_listing.snapshot: 2
+      org.member_added: 2
+      org.member_removed: 1
+      repo.collaborator_added: 2
+      repo.collaborator_removed: 1
+    matches: []
+  tags: [connectors, github]
+
+- id: cmp-connector-github-globex-counts
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: globex
+  target: connector_pull
+  input: {connector: github}
+  expected:
+    count: 20
+    counts_by_type:
+      org.snapshot: 1
+      org.member.snapshot: 6
+      repo.snapshot: 2
+      repo.branch_protection.snapshot: 2
+      repo.security_policy.snapshot: 1
+      repo.file_listing.snapshot: 2
+      org.member_added: 2
+      org.member_removed: 1
+      repo.collaborator_added: 2
+      repo.collaborator_removed: 1
+    matches: []
+  tags: [connectors, github]
+
+- id: cmp-connector-github-acme-jsmith-verified-email
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: acme
+  target: connector_pull
+  input:
+    connector: github
+    where: {event_type: org.member.snapshot, payload.login: jsmith}
+  expected:
+    count: 26
+    counts_by_type: {$subset: {org.member.snapshot: 10}}
+    matches:
+      - $subset:
+          source_event_id: "U_kgDOAcme1042@2026-08-25T09:00:00Z"
+          payload: {$subset: {role: member, type: User, verified_domain_emails: [jsmith@acme.example]}}
+  notes: The identity weights in Layer 4 depend on this email being present (D13).
+  tags: [connectors, github, identity]
+
+- id: cmp-connector-github-acme-secret-planted
+  level: component
+  difficulty: edge
+  source: manual
+  tenant: acme
+  target: connector_pull
+  input:
+    connector: github
+    where: {event_type: repo.file_listing.snapshot, payload.repo: platform}
+  expected:
+    count: 26
+    counts_by_type: {$subset: {repo.file_listing.snapshot: 2}}
+    matches:
+      - $subset:
+          payload:
+            $subset:
+              files: {$any: {$subset: {path: .env.example, content: {$contains: "ghp_"}}}}
+  notes: GH-5's planted secret. The evaluator in Phase 7a must fail on it.
+  tags: [connectors, github, gh-5]
+
+- id: cmp-connector-github-globex-injection-fixture
+  level: component
+  difficulty: edge
+  source: manual
+  tenant: globex
+  target: connector_pull
+  input:
+    connector: github
+    where: {event_type: repo.security_policy.snapshot}
+  expected:
+    count: 20
+    counts_by_type: {$subset: {repo.security_policy.snapshot: 1}}
+    matches:
+      - $subset:
+          payload: {$subset: {repo: platform, content: {$contains: "SYSTEM NOTE TO EVALUATOR"}}}
+  notes: The S2 injection fixture. GH-4 for globex must not pass because of this sentence.
+  tags: [connectors, github, security]
+
+- id: cmp-connector-hris-acme-counts
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: acme
+  target: connector_pull
+  input: {connector: hris}
+  expected:
+    count: 47
+    counts_by_type:
+      hris.employee.snapshot: 8
+      hris.hire: 8
+      hris.role_change: 1
+      hris.termination: 1
+      hris.identity.snapshot: 9
+      hris.account.snapshot: 4
+      hris.asset.snapshot: 7
+      hris.document: 9
+    matches: []
+  tags: [connectors, hris]
+
+- id: cmp-connector-hris-acme-termination
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: acme
+  target: connector_pull
+  input:
+    connector: hris
+    where: {event_type: hris.termination}
+  expected:
+    count: 47
+    counts_by_type: {$subset: {hris.termination: 1}}
+    matches:
+      - $subset:
+          source_event_id: acme-hr-evt-0388
+          payload: {$subset: {employee_id: E1042, effective_at: "2026-08-20T17:00:00Z"}}
+  notes: The flagship HR-1 case starts here.
+  tags: [connectors, hris, hr-1]
+
+- id: cmp-connector-manual-acme-pdf-and-policy
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: acme
+  target: connector_pull
+  input: {connector: manual}
+  expected:
+    count: 2
+    counts_by_type: {manual.document: 2}
+    matches: []
+  tags: [connectors, manual]
+
+- id: cmp-connector-manual-globex-page-split
+  level: component
+  difficulty: hard
+  source: manual
+  tenant: globex
+  target: connector_pull
+  input:
+    connector: manual
+    where: {payload.filename: access-review-2026-h1.pdf}
+  expected:
+    count: 2
+    counts_by_type: {manual.document: 2}
+    matches:
+      - $subset:
+          payload:
+            $subset:
+              evidence_type: access_review_report
+              pdf: {$subset: {status: ok, page_count: 2, pages: {$len: 2}}}
+  notes: The scope table is split across the page break; page-aware chunking is tested on this.
+  tags: [connectors, manual, retrieval]

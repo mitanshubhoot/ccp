@@ -11,11 +11,14 @@ been applied anywhere.
 
 from __future__ import annotations
 
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import psycopg
 from psycopg import sql
-from psycopg.conninfo import conninfo_to_dict
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg_pool import ConnectionPool
 
 from ccp.config import Settings
@@ -89,6 +92,35 @@ def migrate(settings: Settings) -> list[str]:
                 conn.execute("INSERT INTO schema_migrations (name) VALUES (%s)", (path.name,))
             applied.append(path.name)
     return applied
+
+
+def _with_dbname(url: str, dbname: str) -> str:
+    return make_conninfo(url, dbname=dbname)
+
+
+@contextmanager
+def scratch_database(settings: Settings, prefix: str = "ccp_scratch") -> Iterator[Settings]:
+    """Create a throwaway database, migrate it, yield settings pointing at it, drop it.
+
+    Used by the test suite (one per session) and by the eval runner (one per run) so
+    neither ever touches the working database. Needs the admin URL to reach the server.
+    """
+    maintenance_url = _with_dbname(settings.database_admin_url, "postgres")
+    admin = psycopg.connect(maintenance_url, autocommit=True, connect_timeout=3)
+    name = f"{prefix}_{uuid.uuid4().hex[:8]}"
+    admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+    scoped = settings.model_copy(
+        update={
+            "database_url": _with_dbname(settings.database_url, name),
+            "database_admin_url": _with_dbname(settings.database_admin_url, name),
+        }
+    )
+    try:
+        migrate(scoped)
+        yield scoped
+    finally:
+        admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
+        admin.close()
 
 
 def check(settings: Settings) -> dict[str, str]:
