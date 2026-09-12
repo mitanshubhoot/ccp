@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import typer
 
 from ccp.agent import cli as agent_cli
 from ccp.agent import tier3 as _tier3  # noqa: F401 - registers tier 3
+from ccp.compliance_state import reader as state_reader
+from ccp.compliance_state import run as pipeline
+from ccp.compliance_state import writer as state_writer  # noqa: F401 - registers the state consumer
 from ccp.config import Settings
 from ccp.connectors.base import parse_ts
 from ccp.connectors.registry import CONNECTOR_NAMES, SOURCE_KINDS, build_connector
@@ -53,6 +56,97 @@ app.add_typer(tenants_app, name="tenants")
 app.add_typer(evaluate_app, name="evaluate")
 app.add_typer(index_app, name="index")
 app.add_typer(agent_cli.app, name="agent")
+state_app = typer.Typer(no_args_is_help=True, help="The bitemporal compliance state")
+app.add_typer(state_app, name="state")
+
+
+@app.command("run")
+def run_pipeline(
+    tenant: str | None = typer.Option(None, "--tenant"),
+    source: str = typer.Option("fixture", "--source", help="fixture | live"),
+    no_ingest: bool = typer.Option(False, "--no-ingest", help="skip pulling connectors"),
+) -> None:
+    """Ingest, normalize, resolve, index, evaluate, and write compliance state for one tenant."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    kind = next((k for k in SOURCE_KINDS if k == source), None)
+    if kind is None:
+        raise typer.BadParameter("source must be fixture or live")
+    pool = db.app_pool(settings)
+    try:
+        report_ = pipeline.run(ScopedDB(pool, ctx), settings, source=kind, ingest=not no_ingest)
+    finally:
+        pool.close()
+    typer.echo(pipeline.format_report(report_))
+
+
+@state_app.command("current")
+def state_current(
+    tenant: str | None = typer.Option(None, "--tenant"),
+    subject: str | None = typer.Option(None, "--subject", help="a subject key, e.g. HR-1|person:x"),
+) -> None:
+    """The open row per subject (or one subject)."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        scoped = ScopedDB(pool, ctx)
+        rows = (
+            [r for r in [state_reader.current_state(scoped, subject)] if r is not None]
+            if subject
+            else state_reader.heads(scoped)
+        )
+    finally:
+        pool.close()
+    if not rows:
+        typer.echo("NO EVALUATIONS YET" if not subject else f"no state for {subject}")
+    for row in rows:
+        typer.echo(state_reader.format_row(row))
+
+
+@state_app.command("history")
+def state_history(
+    subject: str = typer.Option(..., "--subject"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Every row ever recorded for a subject, in recorded order."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        rows = state_reader.chain(ScopedDB(pool, ctx), subject)
+    finally:
+        pool.close()
+    if not rows:
+        typer.echo(f"no state for {subject}")
+    for row in rows:
+        typer.echo(state_reader.format_row(row))
+
+
+@state_app.command("asof")
+def state_asof(
+    subject: str = typer.Option(..., "--subject"),
+    valid_at: str = typer.Option(..., "--valid-at", help="ISO timestamp: the moment asked about"),
+    known_at: str | None = typer.Option(
+        None, "--known-at", help="ISO timestamp: what was known then"
+    ),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Answer both audit questions: were we compliant then, and did we know it then."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    valid = parse_ts(valid_at)
+    known = parse_ts(known_at) if known_at else datetime.now(UTC)
+    pool = db.app_pool(settings)
+    try:
+        row = state_reader.state_as_of(ScopedDB(pool, ctx), subject, valid, known)
+    finally:
+        pool.close()
+    typer.echo(
+        state_reader.format_row(row)
+        if row
+        else f"no state for {subject} at {valid_at} as known at {known.isoformat()}"
+    )
 
 
 @evaluate_app.command("run")

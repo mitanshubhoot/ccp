@@ -76,6 +76,7 @@ type = "layers"
 layers = [
     "ccp.cli",
     "ccp.evals",
+    "ccp.compliance_state",
     "ccp.agent",
     "ccp.evaluators",
     "ccp.retrieval",

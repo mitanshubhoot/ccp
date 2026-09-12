@@ -1,0 +1,59 @@
+# End-to-end golden cases: the full pipeline for one tenant, exact on compliance state.
+# Keyless runs park the AI tiers, so these cases pin the tier 1 state; the keyed rows are
+# checked by the tier 2 and tier 3 component cases.
+
+- id: e2e-acme-termination-case
+  level: e2e
+  difficulty: hard
+  source: manual
+  tenant: acme
+  target: pipeline
+  input: {frameworks: [soc2, iso27001]}
+  expected:
+    $subset:
+      landed: 75
+      evaluated: {$gte: 11}
+      state_written: {$gte: 11}
+      heads:
+        $subset:
+          "HR-1|person:hris:person:E1042": fail
+          "GH-1|person:hris:person:E1042": fail
+          "GH-2|org:github:asset:org:acme-example": pass
+          "GH-3|repo:github:asset:R_kgDOAcmeW002": partial
+          "GH-5|repo:github:asset:R_kgDOAcmeP001": fail
+          "HR-2|tenant": fail
+          "HR-5|tenant": fail
+      frameworks:
+        $subset:
+          soc2:
+            $subset:
+              no_evaluations_yet: false
+              requirements: {$subset: {CC6.1: fail, CC6.2: fail, CC6.3: fail, CC8.1: fail, CC7.1: pending}}
+          iso27001:
+            $subset:
+              requirements: {$subset: {A.5.18: fail, A.5.17: fail}}
+  notes: Jane Smith's termination leaves two active GitHub grants; one HR-1 verdict fails CC6.2, CC6.3, and A.5.18 at once.
+  tags: [e2e, acme, hr-1]
+
+- id: e2e-globex-isolation
+  level: e2e
+  difficulty: hard
+  source: manual
+  tenant: globex
+  target: pipeline
+  input: {frameworks: [soc2]}
+  expected:
+    $subset:
+      landed: 56
+      heads:
+        $subset:
+          "HR-1|person:hris:person:G2005": pass
+          "GH-2|org:github:asset:org:globex-example": fail
+          "HR-5|tenant": pass
+      frameworks:
+        $subset:
+          soc2:
+            $subset:
+              requirements: {$subset: {CC6.2: pass}}
+  notes: Globex's heads never contain an acme subject; Yuki Tanaka's revocations landed within the SLA.
+  tags: [e2e, globex, isolation]

@@ -470,6 +470,34 @@ def tier3_verdict(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) 
     }
 
 
+@target("pipeline")
+def pipeline(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
+    """The full run for one tenant in the scratch database; exact on compliance state."""
+    from ccp.compliance_state import reader, run
+
+    db = ctx.scoped(tenant_id)
+    assert ctx.db_settings is not None
+    run_settings = ctx.db_settings.model_copy(update={"ccp_data_dir": ctx.scratch_dir})
+    report = run.run(db, run_settings, ingest=True)
+    heads = {r.subject_key: r.status.value for r in reader.heads(db)}
+    frameworks = {}
+    for framework_id in inp.get("frameworks", ["soc2", "iso27001"]):
+        rollup = reader.framework_rollup(db, framework_id)
+        frameworks[framework_id] = {
+            "no_evaluations_yet": rollup.no_evaluations_yet,
+            "requirements": {r.requirement_id: r.state for r in rollup.requirements},
+        }
+    return {
+        "landed": report.landed,
+        "evaluated": report.evaluated,
+        "parked": report.parked,
+        "ai_tiers_available": report.ai_tiers_available,
+        "state_written": report.state_written,
+        "heads": heads,
+        "frameworks": frameworks,
+    }
+
+
 def make_event(
     tenant: TenantContext, connector: ConnectorName, source_event_id: str, ts: datetime
 ) -> SourceEvent:

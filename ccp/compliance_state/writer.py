@@ -1,0 +1,129 @@
+"""The state writer (spec.md Layer 9): consumes the `verdicts` topic and writes exactly one
+compliance_state row per verdict through the bitemporal writer.
+
+    verdict.trigger_reason              compliance_state.reason
+    human_decision                      human_override
+    stale_evidence, revalidate_interval stale_evidence
+    anything else, valid_from before    late_event   (a fact about the past arrived late)
+      the open row's valid_from
+    anything else                       evaluation
+
+Idempotent on verdict_id: re-consuming the topic writes nothing. A needs_review verdict is
+written as a fact ("as of now, we do not know"); the human's later decision supersedes it.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+import psycopg
+
+from ccp.evaluators import verdict as verdicts
+from ccp.evaluators.verdict import Verdict
+from ccp.ingest.consumers import OrderedConsumer
+from ccp.ingest.event_log import LogRecord
+from ccp.ingest.worker import register
+from ccp.knowledge import graph as knowledge
+from ccp.knowledge.graph import KnowledgeGraph
+from ccp.observability import steps
+from ccp.storage import bitemporal
+from ccp.storage.bitemporal import Reason, StateRow
+from ccp.storage.scoped import ScopedDB
+
+
+@dataclass
+class WriteSummary:
+    consumed: int = 0
+    written: int = 0
+    skipped_existing: int = 0
+    missing_verdicts: int = 0
+    by_reason: dict[str, int] = field(default_factory=dict)
+
+
+def reason_for(verdict: Verdict, head: StateRow | None) -> Reason:
+    if verdict.trigger_reason == "human_decision":
+        return "human_override"
+    if verdict.trigger_reason in ("stale_evidence", "revalidate_interval"):
+        return "stale_evidence"
+    if head is not None and verdict.valid_from < head.valid_from:
+        return "late_event"
+    return "evaluation"
+
+
+def already_written(db: ScopedDB, verdict_id: str) -> bool:
+    row = db.fetch_one("SELECT 1 FROM compliance_state WHERE verdict_id = %s", (verdict_id,))
+    return row is not None
+
+
+def write_verdict(
+    db: ScopedDB, verdict: Verdict, graph: KnowledgeGraph | None = None
+) -> StateRow | None:
+    """One state row for one verdict, or None when it was written before."""
+    if already_written(db, verdict.verdict_id):
+        return None
+    graph = graph or knowledge.load()
+    control_ids = tuple(c.control_id for c in graph.controls_for_test(verdict.test_id))
+    head = bitemporal.current_state(db, verdict.subject_key)
+    reason = reason_for(verdict, head)
+    return bitemporal.record(
+        db,
+        subject_key=verdict.subject_key,
+        test_id=verdict.test_id,
+        control_ids=control_ids,
+        status=verdict.status,
+        verdict_id=verdict.verdict_id,
+        valid_from=verdict.valid_from,
+        reason=reason,
+    )
+
+
+class StateWriterConsumer(OrderedConsumer):
+    name = "state"
+    topic = "verdicts"
+
+    def __init__(self, db: ScopedDB) -> None:
+        super().__init__(db)
+        self.graph = knowledge.load()
+        self.summary = WriteSummary()
+
+    def handle(self, cur: psycopg.Cursor[Any], record: LogRecord) -> None:
+        self.summary.consumed += 1
+        with steps.step(
+            "state.write",
+            layer="compliance_state",
+            tenant=self._db.tenant,
+            inputs={"offset": record.offset, "verdict_id": record.ref},
+        ) as s:
+            verdict = verdicts.load(self._db, record.ref)
+            if verdict is None:
+                self.summary.missing_verdicts += 1
+                s.event(f"verdict_missing:{record.ref}")
+                s.set_output({"written": False})
+                return
+            row = write_verdict(self._db, verdict, self.graph)
+            if row is None:
+                self.summary.skipped_existing += 1
+                s.set_output({"written": False, "reason": "already_written"})
+                return
+            self.summary.written += 1
+            self.summary.by_reason[row.reason] = self.summary.by_reason.get(row.reason, 0) + 1
+            s.set_output(
+                {
+                    "written": True,
+                    "row_id": row.row_id,
+                    "status": row.status.value,
+                    "reason": row.reason,
+                    "supersedes": row.supersedes_row_id,
+                }
+            )
+
+
+register("state")(lambda db, settings: StateWriterConsumer(db))
+
+
+def drain(db: ScopedDB) -> WriteSummary:
+    consumer = StateWriterConsumer(db)
+    while consumer.run_once():
+        pass
+    return consumer.summary

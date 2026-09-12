@@ -35,10 +35,11 @@ DB_TARGETS = {
     "retrieval_metrics",
     "tier2_verdict",
     "tier3_verdict",
+    "pipeline",
 }
 # Targets whose expectations describe a fresh database (first landing, no prior rows) get a
 # scratch database of their own; every other database case shares the run's database.
-FRESH_DB_TARGETS = {"ingest_land"}
+FRESH_DB_TARGETS = {"ingest_land", "pipeline"}
 
 
 def load_cases(golden_dir: Path) -> tuple[list[GoldenCase], dict[str, str]]:
