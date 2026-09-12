@@ -24,6 +24,7 @@ from ccp.normalize.entities import (
     Person,
     Vendor,
 )
+from ccp.normalize.merge import merge_assets, merge_persons
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantId
 from ccp.types import AccountKind, EmploymentStatus, EvidenceType, GrantState
@@ -148,49 +149,35 @@ def _load(value: Any) -> Any:
     return json.loads(value) if isinstance(value, str) else value
 
 
-def current_persons(db: ScopedDB) -> list[Person]:
-    """Merge every observation per person in time order; empty or unknown never overrides."""
+def person_observations(db: ScopedDB) -> list[Person]:
     rows = db.fetch_all(
         "SELECT tenant_id, entity_id, observed_at, source_connector, source_event_id, display_name,"
         " emails, handles, employee_id, account_kind, employment_status, status_effective_at,"
         " owner_employee_id FROM persons ORDER BY entity_id, observed_at, source_event_id"
     )
-    merged: dict[str, dict[str, Any]] = {}
-    for r in rows:
-        cur = merged.setdefault(
-            r[1],
-            {
-                "tenant_id": TenantId(r[0]),
-                "entity_id": r[1],
-                "display_name": None,
-                "emails": (),
-                "handles": {},
-                "employee_id": None,
-                "account_kind": AccountKind.unknown,
-                "employment_status": EmploymentStatus.unknown,
-                "status_effective_at": None,
-                "owner_employee_id": None,
-            },
+    return [
+        Person(
+            tenant_id=TenantId(r[0]),
+            entity_id=r[1],
+            observed_at=r[2],
+            source_connector=r[3],
+            source_event_id=r[4],
+            display_name=r[5],
+            emails=tuple(_load(r[6])),
+            handles=dict(_load(r[7])),
+            employee_id=r[8],
+            account_kind=AccountKind(r[9]),
+            employment_status=EmploymentStatus(r[10]),
+            status_effective_at=r[11],
+            owner_employee_id=r[12],
         )
-        cur["observed_at"], cur["source_connector"], cur["source_event_id"] = r[2], r[3], r[4]
-        if r[5]:
-            cur["display_name"] = r[5]
-        emails = tuple(_load(r[6]))
-        if emails:
-            cur["emails"] = emails
-        handles = dict(_load(r[7]))
-        if handles:
-            cur["handles"] = {**cur["handles"], **handles}
-        if r[8]:
-            cur["employee_id"] = r[8]
-        if AccountKind(r[9]) is not AccountKind.unknown:
-            cur["account_kind"] = AccountKind(r[9])
-        if EmploymentStatus(r[10]) is not EmploymentStatus.unknown:
-            cur["employment_status"] = EmploymentStatus(r[10])
-            cur["status_effective_at"] = r[11]
-        if r[12]:
-            cur["owner_employee_id"] = r[12]
-    return [Person(**merged[k]) for k in sorted(merged)]
+        for r in rows
+    ]
+
+
+def current_persons(db: ScopedDB) -> list[Person]:
+    """Merged view of every person; see ccp.normalize.merge for the rules."""
+    return merge_persons(person_observations(db))
 
 
 def current_grants(db: ScopedDB) -> list[AccessGrant]:
@@ -223,11 +210,8 @@ def current_assets(db: ScopedDB) -> list[Asset]:
         "SELECT tenant_id, entity_id, observed_at, source_connector, source_event_id, name,"
         " asset_type, tags, settings FROM assets ORDER BY entity_id, observed_at, source_event_id"
     )
-    merged: dict[str, Asset] = {}
-    settings: dict[str, dict[str, Any]] = {}
-    for r in rows:
-        settings.setdefault(r[1], {}).update(dict(_load(r[8])))
-        merged[r[1]] = Asset(
+    observations = [
+        Asset(
             tenant_id=TenantId(r[0]),
             entity_id=r[1],
             observed_at=r[2],
@@ -236,9 +220,11 @@ def current_assets(db: ScopedDB) -> list[Asset]:
             name=r[5],
             asset_type=r[6],
             tags=tuple(_load(r[7])),
-            settings=dict(settings[r[1]]),
+            settings=dict(_load(r[8])),
         )
-    return [merged[k] for k in sorted(merged)]
+        for r in rows
+    ]
+    return merge_assets(observations)
 
 
 def current_evidence(db: ScopedDB, evidence_type: EvidenceType | None = None) -> list[Evidence]:

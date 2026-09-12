@@ -1,0 +1,16 @@
+# Identity resolution weights and thresholds (spec.md Layer 4, refit in v1.3 / D13).
+# The sum of matched features is clamped to [0, 1]. Every decision records the values in
+# force at decision time. tests/component/test_identity_bands.py computes every fixture
+# pair's score from these numbers and asserts it lands in the tabled route band.
+weights:
+  email_exact: 0.55                 # HR work email equals a GitHub verified-domain email
+  local_part_equals_handle: 0.30    # jsmith@... vs handle jsmith
+  handle_contains_local_part: 0.25  # dokafor@... vs handle dokafor-dev (not equal)
+  surname_and_initial: 0.20         # same surname token and first initial
+  name_jw_strong: 0.20              # Jaro-Winkler >= 0.90 on display names
+  name_jw_weak: 0.10                # 0.80 <= Jaro-Winkler < 0.90
+  employee_id_equal: 0.40           # both carry an employee id and they match
+  conflicting_verified_emails: -0.50  # both carry verified emails and none match
+thresholds:
+  auto_merge: 0.85                  # score >= auto_merge
+  auto_distinct: 0.40               # score <= auto_distinct

@@ -10,6 +10,7 @@ from ccp.config import Settings
 from ccp.connectors.base import parse_ts
 from ccp.connectors.registry import CONNECTOR_NAMES, SOURCE_KINDS, build_connector
 from ccp.evals import runner as eval_runner
+from ccp.identity import resolver
 from ccp.ingest import worker
 from ccp.ingest.landing import ingest_tenant
 from ccp.normalize import consumer as normalize_consumer
@@ -29,6 +30,7 @@ ingest_app = typer.Typer(no_args_is_help=True, help="Land events in the raw zone
 worker_app = typer.Typer(no_args_is_help=True, help="Run consumers over the event log")
 evals_app = typer.Typer(no_args_is_help=True, help="Golden-dataset evaluation harness")
 normalize_app = typer.Typer(no_args_is_help=True, help="Map raw events into canonical entities")
+identity_app = typer.Typer(no_args_is_help=True, help="Identity resolution and the review queue")
 app.add_typer(tenants_app, name="tenants")
 app.add_typer(db_app, name="db")
 app.add_typer(connectors_app, name="connectors")
@@ -36,6 +38,55 @@ app.add_typer(ingest_app, name="ingest")
 app.add_typer(worker_app, name="worker")
 app.add_typer(evals_app, name="evals")
 app.add_typer(normalize_app, name="normalize")
+app.add_typer(identity_app, name="identity")
+
+
+@identity_app.command("resolve")
+def identity_resolve(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """Block, gate, score, and route every candidate pair; log every decision."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        summary = resolver.resolve_tenant(ScopedDB(pool, ctx))
+    finally:
+        pool.close()
+    typer.echo(f"compared {summary.compared}, unchanged {summary.skipped_unchanged}")
+    for route_name, n in sorted(summary.routes.items()):
+        typer.echo(f"{route_name:<14} {n}")
+
+
+@identity_app.command("review")
+def identity_review(
+    tenant: str | None = typer.Option(None, "--tenant"),
+    list_open: bool = typer.Option(False, "--list", help="List open review items"),
+    resolve: str | None = typer.Option(None, "--resolve", help="Decision id to close"),
+    outcome: str | None = typer.Option(None, "--as", help="merge | distinct"),
+    reviewer: str | None = typer.Option(None, "--reviewer"),
+    note: str | None = typer.Option(None, "--note"),
+) -> None:
+    """List open review items, or close one as merge or distinct."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        scoped = ScopedDB(pool, ctx)
+        if resolve:
+            if not outcome or not reviewer:
+                raise typer.BadParameter("--resolve needs --as merge|distinct and --reviewer")
+            resolver.resolve_review(scoped, resolve, outcome, reviewer, note)
+            typer.echo(f"{resolve}: {outcome} by {reviewer}")
+            return
+        items = resolver.open_reviews(scoped)
+        if not items:
+            typer.echo("no open review items")
+        for item in items:
+            typer.echo(
+                f"{item.decision_id}  score={item.score}  "
+                f"{item.left_entity_id}  <->  {item.right_entity_id}"
+            )
+    finally:
+        pool.close()
 
 
 @normalize_app.command("run")

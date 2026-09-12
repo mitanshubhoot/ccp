@@ -6,9 +6,12 @@ Targets that need a database get one scratch database per eval run through
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -32,6 +35,14 @@ class EvalContext:
     settings: Settings
     db_settings: Settings | None = None
     _pool: ConnectionPool | None = field(default=None, repr=False)
+    _scratch_dir: Path | None = field(default=None, repr=False)
+
+    @property
+    def scratch_dir(self) -> Path:
+        """Per-run filesystem scratch space; nothing from a previous run can leak in."""
+        if self._scratch_dir is None:
+            self._scratch_dir = Path(tempfile.mkdtemp(prefix="ccp-eval-"))
+        return self._scratch_dir
 
     def tenant(self, tenant_id: str | None) -> TenantContext:
         if tenant_id is None:
@@ -49,6 +60,9 @@ class EvalContext:
         if self._pool is not None:
             self._pool.close()
             self._pool = None
+        if self._scratch_dir is not None:
+            shutil.rmtree(self._scratch_dir, ignore_errors=True)
+            self._scratch_dir = None
 
 
 TargetFn = Callable[[EvalContext, str | None, dict[str, Any]], dict[str, Any]]
@@ -109,7 +123,7 @@ def connector_pull(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any])
 def ingest_land(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
     """Land one connector's events `times` times into a scratch database and count what happened."""
     db = ctx.scoped(tenant_id)
-    zone = RawZone(ctx.settings.raw_dir / "eval" / db.tenant.tenant_id)
+    zone = RawZone(ctx.scratch_dir / "raw" / db.tenant.tenant_id)
     connector = build_connector(_connector_name(inp["connector"]), ctx.settings, "fixture")
     landed_total = 0
     duplicates_total = 0
@@ -202,6 +216,31 @@ def mapper(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict
         "event_type": event.event_type,
         "entities": entities,
         "guardrail_events": list(result.guardrail_events),
+    }
+
+
+@target("identity_pair")
+def identity_pair(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
+    """Gate, score, and route one pair of fixture persons in memory (no database)."""
+    from ccp.identity.config import IdentityConfig
+    from ccp.identity.scoring import evaluate
+    from ccp.normalize.consumer import map_event
+    from ccp.normalize.entities import Person
+    from ccp.normalize.merge import merge_persons
+
+    tenant = ctx.tenant(tenant_id)
+    observations: list[Person] = []
+    for name in ("github", "hris"):
+        connector = build_connector(name, ctx.settings, "fixture")
+        for event in connector.pull(tenant):
+            observations.extend(map_event(event).of(Person))
+    persons = {p.entity_id: p for p in merge_persons(observations)}
+    scored = evaluate(persons[inp["left"]], persons[inp["right"]], IdentityConfig.load())
+    return {
+        "gate_result": scored.gate_result,
+        "route": scored.route,
+        "score": scored.score,
+        "features": scored.features,
     }
 
 

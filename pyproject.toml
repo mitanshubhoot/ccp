@@ -13,6 +13,7 @@ dependencies = [
     "python-ulid>=2.7",
     "pypdf>=5.0",
     "httpx>=0.27",
+    "rapidfuzz>=3.9",
 ]
 
 [dependency-groups]
@@ -70,6 +71,7 @@ type = "layers"
 layers = [
     "ccp.cli",
     "ccp.evals",
+    "ccp.identity",
     "ccp.normalize",
     "ccp.ingest",
     "ccp.connectors",

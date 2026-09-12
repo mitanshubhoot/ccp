@@ -210,6 +210,63 @@
   notes: HR-5 fails on this account; identity resolution must refuse to merge it (Layer 4).
   tags: [normalize, hris, hr-5]
 
+- id: cmp-identity-acme-jane-smith-merges
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: acme
+  target: identity_pair
+  input: {left: "hris:person:E1042", right: "github:person:U_kgDOAcme1042"}
+  expected:
+    gate_result: passed
+    route: auto_merge
+    score: {$gte: 0.85}
+    features: {$subset: {email_exact: true, local_part_equals_handle: true}}
+  tags: [identity, hr-1]
+
+- id: cmp-identity-acme-dana-okafor-review
+  level: component
+  difficulty: hard
+  source: manual
+  tenant: acme
+  target: identity_pair
+  input: {left: "hris:person:E1017", right: "github:person:U_kgDOAcme1017"}
+  expected:
+    gate_result: passed
+    route: review
+    score: {$gte: 0.41}
+    features: {$subset: {email_exact: false, handle_contains_local_part: true}}
+  tags: [identity]
+
+- id: cmp-identity-acme-ci-runner-blocked
+  level: component
+  difficulty: edge
+  source: manual
+  tenant: acme
+  target: identity_pair
+  input: {left: "hris:person:E1023", right: "github:person:U_kgDOAcmeBot01"}
+  expected:
+    gate_result: blocked_kind_mismatch
+    route: blocked
+    score: null
+    features: {}
+  notes: A human and a bot with similar names must never merge, whatever the name score would be.
+  tags: [identity, security]
+
+- id: cmp-identity-acme-ops-shared-blocked
+  level: component
+  difficulty: edge
+  source: manual
+  tenant: acme
+  target: identity_pair
+  input: {left: "hris:account:ops-shared", right: "github:person:U_kgDOAcmeShar1"}
+  expected:
+    gate_result: blocked_shared_account
+    route: blocked
+    score: null
+    features: {}
+  tags: [identity, hr-5]
+
 - id: cmp-connector-manual-globex-page-split
   level: component
   difficulty: hard
