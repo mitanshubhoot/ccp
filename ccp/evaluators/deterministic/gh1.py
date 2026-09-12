@@ -69,10 +69,11 @@ def evaluate(ctx: EvaluationContext, subject: str) -> Verdict:
             valid_from,
             ("no_post_termination_observation",),
         )
+    closed_at = max(g.state_effective_at for g in github)
     return ctx.verdict(
         key,
         VerdictStatus.passed,
-        f"every GitHub grant for {name} is revoked",
+        f"every GitHub grant for {name} is revoked (last revocation {closed_at.isoformat()})",
         [person.entity_id, *[g.entity_id for g in github]],
-        valid_from,
+        max(valid_from, closed_at),
     )

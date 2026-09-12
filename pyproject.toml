@@ -76,6 +76,9 @@ type = "layers"
 layers = [
     "ccp.cli",
     "ccp.evals",
+    "ccp.remediation",
+    "ccp.approvals.cli",
+    "ccp.approvals.actions",
     "ccp.compliance_state",
     "ccp.agent",
     "ccp.evaluators",
@@ -86,6 +89,7 @@ layers = [
     "ccp.normalize",
     "ccp.ingest",
     "ccp.connectors",
+    "ccp.approvals.store",
     "ccp.storage",
     "ccp.security",
     "ccp.observability",

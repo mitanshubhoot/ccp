@@ -1,0 +1,5 @@
+# Live-mode allowlist for remediation (spec.md Layer 10, gate 3). Empty by default: live
+# remediation can act only against repositories the operator lists here and owns, and never
+# against the protected logins (add your own login before enabling live mode).
+allowed_repos: []            # e.g. ["acme-example/platform"]
+protected_logins: ["octocat"]

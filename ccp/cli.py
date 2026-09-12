@@ -8,6 +8,7 @@ import typer
 
 from ccp.agent import cli as agent_cli
 from ccp.agent import tier3 as _tier3  # noqa: F401 - registers tier 3
+from ccp.approvals import cli as approvals_cli
 from ccp.compliance_state import reader as state_reader
 from ccp.compliance_state import run as pipeline
 from ccp.compliance_state import writer as state_writer  # noqa: F401 - registers the state consumer
@@ -28,6 +29,7 @@ from ccp.knowledge import rollup as knowledge_rollup
 from ccp.normalize import consumer as normalize_consumer
 from ccp.normalize import repository
 from ccp.observability import steps
+from ccp.remediation import cli as remediate_cli
 from ccp.retrieval import calibration, distractors
 from ccp.retrieval import config as retrieval_cfg
 from ccp.retrieval import index as retrieval_index
@@ -56,6 +58,8 @@ app.add_typer(tenants_app, name="tenants")
 app.add_typer(evaluate_app, name="evaluate")
 app.add_typer(index_app, name="index")
 app.add_typer(agent_cli.app, name="agent")
+app.add_typer(approvals_cli.app, name="approvals")
+app.add_typer(remediate_cli.app, name="remediate")
 state_app = typer.Typer(no_args_is_help=True, help="The bitemporal compliance state")
 app.add_typer(state_app, name="state")
 

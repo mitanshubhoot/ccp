@@ -57,10 +57,11 @@ def evaluate(ctx: EvaluationContext, subject: str) -> Verdict:
     grants = ctx.grants_for(canonical)
     violations: list[AccessGrant] = []
     unknown: list[AccessGrant] = []
-    for grant in grants:
+    late: list[AccessGrant] = []  # revoked after the deadline: the SLA was missed, but the
+    for grant in grants:  # exposure is closed, so the finding is resolved from that moment
         if grant.state is GrantState.revoked:
             if grant.state_effective_at > deadline:
-                violations.append(grant)
+                late.append(grant)
         elif grant.observed_at >= deadline:
             violations.append(grant)
         else:
@@ -84,6 +85,18 @@ def evaluate(ctx: EvaluationContext, subject: str) -> Verdict:
             refs,
             valid_from,
             ("no_post_sla_observation",),
+        )
+    if late:
+        closed_at = max(g.state_effective_at for g in late)
+        detail = "; ".join(_describe(g) for g in late)
+        return ctx.verdict(
+            key,
+            VerdictStatus.passed,
+            f"every grant for {name} is revoked; {len(late)} revoked after the SLA deadline"
+            f" {deadline.isoformat()} ({detail}); exposure closed {closed_at.isoformat()}",
+            [person.entity_id, *[g.entity_id for g in grants]],
+            max(valid_from, closed_at),
+            tuple(f"revoked_after_sla:{g.entity_id}" for g in late),
         )
     return ctx.verdict(
         key,

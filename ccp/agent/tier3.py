@@ -23,6 +23,7 @@ from ccp.agent import core, threads
 from ccp.agent.allowlists import ALLOWLISTS
 from ccp.agent.graphs import tier3 as graph_module
 from ccp.agent.tools import ToolContext, bind_tools
+from ccp.approvals import store as approvals
 from ccp.config import Settings
 from ccp.evaluators import registry
 from ccp.evaluators.context import EvaluationContext, load_context
@@ -201,6 +202,9 @@ def evaluate(
                     values,
                 )
                 threads.mark_interrupted(db, thread_id, payload, trajectory)
+                approvals.open_item(
+                    db, "tier3_interrupt", thread_id, {"thread_id": thread_id, **payload}
+                )
                 return verdict
             final = values.get("final_verdict")
             if not final:

@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     # Connectors and remediation
     github_token: SecretStr | None = None
     ccp_remediation_live: bool = False
+    ccp_remediation_config: Path = REPO_ROOT / "config" / "remediation.yaml"
 
     @property
     def investigator_model(self) -> str:
