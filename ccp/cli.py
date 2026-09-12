@@ -24,6 +24,7 @@ from ccp.evaluators import verdict as verdicts
 from ccp.identity import resolver
 from ccp.ingest import worker
 from ccp.ingest.landing import ingest_tenant
+from ccp.investigation import cli as investigate_cli
 from ccp.knowledge import graph as knowledge_graph
 from ccp.knowledge import rollup as knowledge_rollup
 from ccp.normalize import consumer as normalize_consumer
@@ -59,6 +60,7 @@ app.add_typer(evaluate_app, name="evaluate")
 app.add_typer(index_app, name="index")
 app.add_typer(agent_cli.app, name="agent")
 app.add_typer(approvals_cli.app, name="approvals")
+app.add_typer(investigate_cli.app, name="investigate")
 app.add_typer(remediate_cli.app, name="remediate")
 state_app = typer.Typer(no_args_is_help=True, help="The bitemporal compliance state")
 app.add_typer(state_app, name="state")

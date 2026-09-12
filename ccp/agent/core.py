@@ -25,6 +25,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import RetryPolicy
+from pydantic import ValidationError
 
 from ccp.agent.allowlists import check_allowlist
 from ccp.agent.state import AgentState
@@ -204,16 +205,19 @@ def make_structured_node(
     meta: SchemaMeta,
     select_chunks: Callable[[AgentState], list[dict[str, Any]]],
     describe: Callable[[AgentState], str],
+    require_chunks: bool = True,
 ) -> NodeFn:
-    """Fenced evidence -> one structured call -> raw fields plus replay material."""
+    """Fenced evidence -> one structured call -> raw fields plus replay material. The model's
+    output is re-validated against the schema; a mismatch (a stub, a provider quirk) is a
+    guardrail event and the bounding step downstream rejects what it cannot use."""
 
     def node(state: AgentState) -> dict[str, Any]:
         chunks = select_chunks(state)
-        if not chunks:
+        if not chunks and require_chunks:
             return {"extracted_raw": {name: None}, "guardrail_events": [f"no_evidence:{name}"]}
         nonce = state.get("fence_nonce") or prompt_guard.new_nonce()
         framed, shown = frame_state_chunks(chunks, nonce)
-        if not shown:
+        if not shown and require_chunks:
             return {
                 "extracted_raw": {name: None},
                 "guardrail_events": list(framed.events) + [f"no_evidence:{name}"],
@@ -228,9 +232,10 @@ def make_structured_node(
                 cache=True,
             ),
         ]
+        evidence = framed.text if shown else "(no fenced evidence was gathered)\n"
         user = (
-            f"{prompt_guard.fence_declaration(nonce)}\n\n{describe(state)}\n\n{framed.text}\n"
-            "Fill every field of the schema from the fenced evidence only."
+            f"{prompt_guard.fence_declaration(nonce)}\n\n{describe(state)}\n\n{evidence}\n"
+            "Fill every field of the schema from the fenced evidence and the system data only."
         )
         extraction = deps.require().extract(
             schema=meta.model,
@@ -240,10 +245,14 @@ def make_structured_node(
             tracker=deps.tracker,
             reasoning=deps.reasoning,
         )
+        fields = extraction.parsed.model_dump(mode="json")
+        events = list(framed.events)
+        try:
+            meta.model.model_validate(fields)
+        except ValidationError as exc:
+            events.append(f"schema_validation_failed:{name}:{exc.error_count()}")
         return {
-            "extracted_raw": {
-                name: {"fields": extraction.parsed.model_dump(mode="json"), "chunk_ids": shown}
-            },
+            "extracted_raw": {name: {"fields": fields, "chunk_ids": shown}},
             "requests": {
                 name: {
                     "request": extraction.request,
@@ -254,7 +263,7 @@ def make_structured_node(
                     "usage": extraction.usage.__dict__,
                 }
             },
-            "guardrail_events": list(framed.events),
+            "guardrail_events": events,
             "fence_nonce": nonce,
         }
 

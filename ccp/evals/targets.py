@@ -470,6 +470,36 @@ def tier3_verdict(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) 
     }
 
 
+@target("investigation")
+def investigation(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate one test, then investigate its verdict for one subject (requires: anthropic)."""
+    from datetime import UTC
+
+    from ccp.agent import tier3 as _tier3  # noqa: F401 - registers tier 3
+    from ccp.evaluators import runner as evaluations
+    from ccp.evaluators.tier2 import Providers
+    from ccp.evaluators.verdict import latest_per_subject
+    from ccp.investigation import runner as investigator
+
+    providers = Providers.from_settings(ctx.settings)
+    db = _indexed_db(ctx, tenant_id, providers, 0)
+    test_id = str(inp["test_id"])
+    now = datetime.now(UTC)
+    evaluations.enqueue_all(db, ctx.settings, now=now, tests=(test_id,))
+    evaluations.drain(db, ctx.settings, now=now, providers=providers)
+    verdict = {v.subject: v for v in latest_per_subject(db, test_id)}[str(inp["subject"])]
+    inv = investigator.investigate(db, ctx.settings, verdict, providers, now=now)
+    return {
+        "verdict_status": verdict.status.value,
+        "root_cause_category": inv.root_cause_category,
+        "root_cause": inv.root_cause,
+        "missing_evidence": [m.evidence_type.value for m in inv.missing_evidence],
+        "actions": [p.action for p in inv.proposed_actions],
+        "targets": [p.target for p in inv.proposed_actions],
+        "guardrail_events": sorted({e.split(":")[0] for e in inv.guardrail_events}),
+    }
+
+
 @target("pipeline")
 def pipeline(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
     """The full run for one tenant in the scratch database; exact on compliance state."""

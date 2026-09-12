@@ -31,6 +31,7 @@ class AgentState(TypedDict, total=False):
     subject_key: str
     required_evidence_types: list[str]
     thread_id: str
+    verdict_id: str
     # multi-writer fields, every one has a reducer
     messages: Annotated[list[dict[str, Any]], add]
     retrieved_chunks: Annotated[dict[str, dict[str, Any]], merge_chunks]
@@ -54,4 +55,6 @@ class AgentState(TypedDict, total=False):
     draft_verdict: Annotated[dict[str, Any] | None, keep_last]
     confidence_cap: Annotated[float | None, keep_last]
     human_decision: Annotated[dict[str, Any] | None, keep_last]
+    context: Annotated[dict[str, Any] | None, keep_last]  # investigator: what is known
+    final: Annotated[dict[str, Any] | None, keep_last]  # non-verdict graphs' output
     final_verdict: Annotated[dict[str, Any] | None, keep_last]

@@ -673,3 +673,57 @@
       extracted_fields: {$subset: {critical_systems: {$len: 3}}}
   notes: The H1 review (a page-split PDF) covers all three critical systems.
   tags: [evaluators, tier3, hr-4, pdf, keyed]
+
+# -- Phase 12: the Investigator (keyed) -------------------------------------------------------
+
+- id: cmp-investigator-jane-hr1-offboarding-gap
+  level: component
+  difficulty: hard
+  source: manual
+  tenant: acme
+  target: investigation
+  requires: [anthropic]
+  input: {test_id: HR-1, subject: "person:hris:person:E1042"}
+  expected:
+    $subset:
+      verdict_status: fail
+      root_cause_category: offboarding_gap
+      missing_evidence: []
+      actions: {$contains: remove_repo_collaborator}
+      targets: {$any: {$subset: {repo: acme-example/platform, login: jsmith}}}
+  notes: Jane Smith's termination left an org membership and a platform collaboration active.
+  tags: [investigator, hr-1, keyed]
+
+- id: cmp-investigator-hr4-partial-missing-review
+  level: component
+  difficulty: hard
+  source: manual
+  tenant: acme
+  target: investigation
+  requires: [anthropic]
+  input: {test_id: HR-4, subject: tenant}
+  expected:
+    $subset:
+      verdict_status: partial
+      root_cause_category: missing_evidence
+      root_cause: {$contains: "Payroll-SaaS"}
+      missing_evidence: {$contains: access_review_report}
+      actions: {$contains: request_evidence}
+  notes: The Q2 review omits Payroll-SaaS; the investigation must name it and ask for evidence.
+  tags: [investigator, hr-4, keyed]
+
+- id: cmp-investigator-hr5-ownership-notify-only
+  level: component
+  difficulty: easy
+  source: manual
+  tenant: acme
+  target: investigation
+  requires: [anthropic]
+  input: {test_id: HR-5, subject: tenant}
+  expected:
+    $subset:
+      verdict_status: fail
+      root_cause_category: ownership
+      actions: [notify_owner]
+  notes: There is no safe automatic fix for an unowned shared account.
+  tags: [investigator, hr-5, keyed]

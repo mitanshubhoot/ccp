@@ -1,61 +1,26 @@
-"""The action catalogue and the rule fallback (spec.md Layer 10 "Actions").
-
-| action                    | trigger                                   | reversible | live |
-|---------------------------|-------------------------------------------|------------|------|
-| remove_repo_collaborator  | GH-1 or HR-1 fail, surviving repo grant   | re-invite  | yes  |
-| remove_org_member         | same, org level                           | re-invite  | no   |
-| notify_owner              | any fail or needs_review                  | n/a        | log  |
-| request_evidence          | missing evidence (Investigator)           | n/a        | log  |
-
-`reversible` and `live_capable` come from this table, never from a model. The rule fallback
-proposes the obvious removal for a plain HR-1 or GH-1 fail so the deterministic path never
-depends on a model to propose it.
-"""
+"""The rule fallback (spec.md Layer 10 "Actions"): proposals from the verdict alone, so the
+deterministic path never depends on a model to propose the obvious removal. The catalogue
+itself is reference data in ccp.knowledge.actions."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
 from ccp.evaluators.verdict import Verdict
+from ccp.knowledge.actions import ACTION_NAMES, CATALOGUE, ActionName, ActionSpec
 from ccp.normalize import repository
 from ccp.normalize.entities import AccessGrant
 from ccp.storage.scoped import ScopedDB
 from ccp.types import GrantState, VerdictStatus
 
-ActionName = Literal[
-    "remove_repo_collaborator", "remove_org_member", "notify_owner", "request_evidence"
+__all__ = [
+    "ACTION_NAMES",
+    "CATALOGUE",
+    "ActionName",
+    "ActionSpec",
+    "ProposalDraft",
+    "rule_fallback",
 ]
-
-
-@dataclass(frozen=True)
-class ActionSpec:
-    name: ActionName
-    reversible: bool
-    live_capable: bool
-    description: str
-
-
-CATALOGUE: dict[str, ActionSpec] = {
-    "remove_repo_collaborator": ActionSpec(
-        "remove_repo_collaborator",
-        True,
-        True,
-        "Remove a direct collaborator from one repository; re-invite restores the permission.",
-    ),
-    "remove_org_member": ActionSpec(
-        "remove_org_member",
-        True,
-        False,
-        "Remove an organization member (dry-run only: it also drops every team membership).",
-    ),
-    "notify_owner": ActionSpec(
-        "notify_owner", False, False, "Log a notification for the subject's owner; never live."
-    ),
-    "request_evidence": ActionSpec(
-        "request_evidence", False, False, "Open an evidence request for a human to fulfil."
-    ),
-}
 
 
 @dataclass(frozen=True)
