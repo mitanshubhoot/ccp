@@ -1,0 +1,9 @@
+[
+  {"asset_id": "acme-sys-github", "name": "GitHub", "asset_type": "saas_app", "tags": ["critical"], "owner_employee_id": "E1001", "updated_at": "2026-08-03T10:00:00Z"},
+  {"asset_id": "acme-sys-okta", "name": "Okta", "asset_type": "identity_provider", "tags": ["critical", "tier0"], "owner_employee_id": "E1017", "updated_at": "2026-08-03T10:00:00Z"},
+  {"asset_id": "acme-sys-aws-prod", "name": "AWS-Prod", "asset_type": "saas_app", "tags": ["critical"], "owner_employee_id": "E1001", "updated_at": "2026-08-03T10:00:00Z"},
+  {"asset_id": "acme-sys-payroll", "name": "Payroll-SaaS", "asset_type": "saas_app", "tags": ["critical"], "owner_employee_id": "E1031", "updated_at": "2026-08-03T10:00:00Z"},
+  {"asset_id": "acme-sys-datadog", "name": "Datadog", "asset_type": "saas_app", "tags": ["critical"], "owner_employee_id": "E1044", "updated_at": "2026-08-03T10:00:00Z"},
+  {"asset_id": "acme-sys-slack", "name": "Slack", "asset_type": "saas_app", "tags": ["collaboration"], "owner_employee_id": "E1044", "updated_at": "2026-08-03T10:00:00Z"},
+  {"asset_id": "acme-sys-jira", "name": "Jira", "asset_type": "saas_app", "tags": ["collaboration"], "owner_employee_id": "E1001", "updated_at": "2026-08-03T10:00:00Z"}
+]

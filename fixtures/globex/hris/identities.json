@@ -1,0 +1,9 @@
+[
+  {"identity_id": "okta-gx-2001", "employee_id": "G2001", "email": "jane.smith@globex.example", "kind": "human", "status": "active", "mfa_enabled": true, "updated_at": "2026-08-28T08:00:00Z"},
+  {"identity_id": "okta-gx-2002", "employee_id": "G2002", "email": "tom.baker@globex.example", "kind": "human", "status": "active", "mfa_enabled": true, "updated_at": "2026-08-28T08:00:00Z"},
+  {"identity_id": "okta-gx-2003", "employee_id": "G2003", "email": "ines.duarte@globex.example", "kind": "human", "status": "active", "mfa_enabled": true, "updated_at": "2026-08-28T08:00:00Z"},
+  {"identity_id": "okta-gx-2004", "employee_id": "G2004", "email": "kofi.mensah@globex.example", "kind": "human", "status": "active", "mfa_enabled": false, "updated_at": "2026-08-28T08:00:00Z"},
+  {"identity_id": "okta-gx-2005", "employee_id": "G2005", "email": "yuki.tanaka@globex.example", "kind": "human", "status": "deprovisioned", "mfa_enabled": true, "updated_at": "2026-06-30T18:20:00Z"},
+  {"identity_id": "okta-gx-2006", "employee_id": "G2006", "email": "nadia.hassan@globex.example", "kind": "human", "status": "active", "mfa_enabled": true, "updated_at": "2026-08-28T08:00:00Z"},
+  {"identity_id": "okta-gx-svc01", "employee_id": null, "email": "release-bot@globex.example", "kind": "service", "status": "active", "mfa_enabled": true, "updated_at": "2026-08-28T08:00:00Z"}
+]

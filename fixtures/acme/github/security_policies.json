@@ -1,0 +1,8 @@
+{
+  "platform": {
+    "path": "SECURITY.md",
+    "sha": "3f1c9a0d2b7e4c6a8f0e1d2c3b4a5968778695a4",
+    "updated_at": "2026-06-02T14:20:00Z",
+    "content": "# Security Policy\n\n## Supported versions\n\nThe `main` branch and the two most recent minor releases receive security fixes.\n\n## Reporting a vulnerability\n\nEmail security@acme.example with a description of the issue, the affected versions, and\nsteps to reproduce. Do not open a public issue for security reports. You will receive a\ntracking number on receipt.\n\n## Response timeline\n\nWe acknowledge every report within 5 business days. Confirmed vulnerabilities receive a\nremediation plan within 30 days of acknowledgement, and a coordinated disclosure date is\nagreed with the reporter before any public advisory is published.\n\n## Safe harbour\n\nGood-faith research that follows this policy will not be subject to legal action by\nAcme Corp.\n"
+  }
+}

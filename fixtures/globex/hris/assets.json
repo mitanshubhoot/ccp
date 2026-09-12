@@ -1,0 +1,6 @@
+[
+  {"asset_id": "globex-sys-github", "name": "GitHub", "asset_type": "saas_app", "tags": ["critical"], "owner_employee_id": "G2002", "updated_at": "2026-07-20T10:00:00Z"},
+  {"asset_id": "globex-sys-okta", "name": "Okta", "asset_type": "identity_provider", "tags": ["critical"], "owner_employee_id": "G2003", "updated_at": "2026-07-20T10:00:00Z"},
+  {"asset_id": "globex-sys-payroll", "name": "Payroll-GX", "asset_type": "saas_app", "tags": ["critical"], "owner_employee_id": "G2006", "updated_at": "2026-07-20T10:00:00Z"},
+  {"asset_id": "globex-sys-slack", "name": "Slack", "asset_type": "saas_app", "tags": ["collaboration"], "owner_employee_id": "G2002", "updated_at": "2026-07-20T10:00:00Z"}
+]

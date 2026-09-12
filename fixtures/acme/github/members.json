@@ -1,0 +1,12 @@
+[
+  {"login": "pnatarajan", "node_id": "U_kgDOAcme1001", "type": "User", "role": "admin", "name": "Priya Natarajan", "verified_domain_emails": ["pnatarajan@acme.example"], "updated_at": "2026-08-25T09:00:00Z"},
+  {"login": "jsmith", "node_id": "U_kgDOAcme1042", "type": "User", "role": "member", "name": "Jane Smith", "verified_domain_emails": ["jsmith@acme.example"], "updated_at": "2026-08-25T09:00:00Z"},
+  {"login": "dokafor-dev", "node_id": "U_kgDOAcme1017", "type": "User", "role": "member", "name": "D. Okafor", "verified_domain_emails": [], "updated_at": "2026-08-25T09:00:00Z"},
+  {"login": "ci-runner", "node_id": "U_kgDOAcmeBot01", "type": "Bot", "role": "member", "name": "CI Runner", "verified_domain_emails": [], "updated_at": "2026-08-25T09:00:00Z"},
+  {"login": "ops-shared", "node_id": "U_kgDOAcmeShar1", "type": "User", "role": "member", "name": "Ops Shared", "verified_domain_emails": [], "updated_at": "2026-08-25T09:00:00Z"},
+  {"login": "mribeiro", "node_id": "U_kgDOAcme1031", "type": "User", "role": "admin", "name": "Marco Ribeiro", "verified_domain_emails": ["mribeiro@acme.example"], "updated_at": "2026-08-25T09:00:00Z"},
+  {"login": "lpark", "node_id": "U_kgDOAcme1044", "type": "User", "role": "admin", "name": "Lee Park", "verified_domain_emails": ["lpark@acme.example"], "updated_at": "2026-08-25T09:00:00Z"},
+  {"login": "spatel", "node_id": "U_kgDOAcme1050", "type": "User", "role": "member", "name": "Sam Patel", "verified_domain_emails": ["spatel@acme.example"], "updated_at": "2026-08-25T09:00:00Z"},
+  {"login": "atorres", "node_id": "U_kgDOAcme1058", "type": "User", "role": "member", "name": "Ana Torres", "verified_domain_emails": ["atorres@acme.example"], "updated_at": "2026-08-25T09:00:00Z"},
+  {"login": "deploy-bot", "node_id": "U_kgDOAcmeBot02", "type": "Bot", "role": "member", "name": "Deploy Bot", "verified_domain_emails": [], "updated_at": "2026-08-25T09:00:00Z"}
+]

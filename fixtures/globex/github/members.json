@@ -1,0 +1,8 @@
+[
+  {"login": "tbaker", "node_id": "U_kgDOGlobex2002", "type": "User", "role": "admin", "name": "Tom Baker", "verified_domain_emails": ["tom.baker@globex.example"], "updated_at": "2026-08-28T11:00:00Z"},
+  {"login": "janesmith-gx", "node_id": "U_kgDOGlobex2001", "type": "User", "role": "member", "name": "Jane Smith", "verified_domain_emails": ["jane.smith@globex.example"], "updated_at": "2026-08-28T11:00:00Z"},
+  {"login": "iduarte", "node_id": "U_kgDOGlobex2003", "type": "User", "role": "admin", "name": "Ines Duarte", "verified_domain_emails": ["ines.duarte@globex.example"], "updated_at": "2026-08-28T11:00:00Z"},
+  {"login": "kmensah", "node_id": "U_kgDOGlobex2004", "type": "User", "role": "admin", "name": "Kofi Mensah", "verified_domain_emails": ["kofi.mensah@globex.example"], "updated_at": "2026-08-28T11:00:00Z"},
+  {"login": "nhassan", "node_id": "U_kgDOGlobex2006", "type": "User", "role": "member", "name": "Nadia Hassan", "verified_domain_emails": ["nadia.hassan@globex.example"], "updated_at": "2026-08-28T11:00:00Z"},
+  {"login": "globex-release-bot", "node_id": "U_kgDOGlobexBot1", "type": "Bot", "role": "member", "name": "Globex Release Bot", "verified_domain_emails": [], "updated_at": "2026-08-28T11:00:00Z"}
+]

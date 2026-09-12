@@ -1,0 +1,11 @@
+[
+  {"identity_id": "okta-00u1001", "employee_id": "E1001", "email": "pnatarajan@acme.example", "kind": "human", "status": "active", "mfa_enabled": true, "updated_at": "2026-08-25T08:00:00Z"},
+  {"identity_id": "okta-00u1017", "employee_id": "E1017", "email": "dokafor@acme.example", "kind": "human", "status": "active", "mfa_enabled": true, "updated_at": "2026-08-25T08:00:00Z"},
+  {"identity_id": "okta-00u1023", "employee_id": "E1023", "email": "crunner@acme.example", "kind": "human", "status": "active", "mfa_enabled": true, "updated_at": "2026-08-25T08:00:00Z"},
+  {"identity_id": "okta-00u1031", "employee_id": "E1031", "email": "mribeiro@acme.example", "kind": "human", "status": "active", "mfa_enabled": true, "updated_at": "2026-08-25T08:00:00Z"},
+  {"identity_id": "okta-00u1042", "employee_id": "E1042", "email": "jsmith@acme.example", "kind": "human", "status": "deprovisioned", "mfa_enabled": true, "updated_at": "2026-08-20T17:30:00Z"},
+  {"identity_id": "okta-00u1044", "employee_id": "E1044", "email": "lpark@acme.example", "kind": "human", "status": "active", "mfa_enabled": false, "updated_at": "2026-08-25T08:00:00Z"},
+  {"identity_id": "okta-00u1050", "employee_id": "E1050", "email": "spatel@acme.example", "kind": "human", "status": "active", "mfa_enabled": true, "updated_at": "2026-08-25T08:00:00Z"},
+  {"identity_id": "okta-00u1058", "employee_id": "E1058", "email": "atorres@acme.example", "kind": "human", "status": "active", "mfa_enabled": true, "updated_at": "2026-08-25T08:00:00Z"},
+  {"identity_id": "okta-00usvcbk", "employee_id": null, "email": "svc-backup@acme.example", "kind": "service", "status": "active", "mfa_enabled": true, "updated_at": "2026-08-25T08:00:00Z"}
+]

@@ -1,0 +1,4 @@
+[
+  {"account_id": "globex-acct-0003", "name": "shared-support", "kind": "shared", "owner_employee_id": "G2003", "systems": ["zendesk"], "purpose": "Shared support mailbox login", "updated_at": "2026-08-28T08:00:00Z"},
+  {"account_id": "globex-acct-0009", "name": "globex-release-bot", "kind": "service", "owner_employee_id": "G2002", "systems": ["github"], "purpose": "Release automation", "updated_at": "2026-08-28T08:00:00Z"}
+]

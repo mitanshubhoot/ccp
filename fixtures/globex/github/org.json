@@ -1,0 +1,9 @@
+{
+  "login": "globex-example",
+  "node_id": "O_kgDOGlobex001",
+  "name": "Globex Corporation",
+  "default_repository_permission": "read",
+  "members_can_create_repositories": true,
+  "two_factor_requirement_enabled": false,
+  "updated_at": "2026-08-28T11:00:00Z"
+}

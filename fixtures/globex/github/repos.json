@@ -1,0 +1,26 @@
+[
+  {
+    "name": "platform",
+    "node_id": "R_kgDOGlobexP001",
+    "full_name": "globex-example/platform",
+    "private": true,
+    "default_branch": "main",
+    "updated_at": "2026-08-28T11:00:00Z",
+    "collaborators": [
+      {"login": "janesmith-gx", "node_id": "U_kgDOGlobex2001", "type": "User", "permission": "write"},
+      {"login": "nhassan", "node_id": "U_kgDOGlobex2006", "type": "User", "permission": "write"},
+      {"login": "globex-release-bot", "node_id": "U_kgDOGlobexBot1", "type": "Bot", "permission": "write"}
+    ]
+  },
+  {
+    "name": "mobile",
+    "node_id": "R_kgDOGlobexM002",
+    "full_name": "globex-example/mobile",
+    "private": true,
+    "default_branch": "main",
+    "updated_at": "2026-08-28T11:00:00Z",
+    "collaborators": [
+      {"login": "nhassan", "node_id": "U_kgDOGlobex2006", "type": "User", "permission": "maintain"}
+    ]
+  }
+]

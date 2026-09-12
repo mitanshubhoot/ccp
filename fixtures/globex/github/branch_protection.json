@@ -1,0 +1,15 @@
+{
+  "platform": {
+    "branch": "main",
+    "protected": true,
+    "required_pull_request_reviews": {"required_approving_review_count": 1, "dismiss_stale_reviews": true, "require_code_owner_reviews": false},
+    "enforce_admins": {"enabled": true},
+    "required_status_checks": {"strict": false, "contexts": ["build"]},
+    "updated_at": "2026-08-28T11:00:00Z"
+  },
+  "mobile": {
+    "branch": "main",
+    "protected": false,
+    "updated_at": "2026-08-28T11:00:00Z"
+  }
+}

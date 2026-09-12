@@ -1,0 +1,14 @@
+# Customer uploads for acme. The tenant is the directory this file sits in; nothing in
+# the manifest can change it.
+uploads:
+  - file: security-awareness-2026-atorres.pdf
+    evidence_type: training_record
+    subject_employee_id: E1058
+    title: Security Awareness Training Certificate (Ana Torres)
+    issued_at: 2026-03-14T00:00:00Z
+    uploaded_at: 2026-09-01T09:12:00Z
+  - file: information-security-policy-v4.md
+    evidence_type: policy_document
+    title: Information Security Policy v4
+    issued_at: 2026-01-10T00:00:00Z
+    uploaded_at: 2026-09-01T09:14:00Z

@@ -1,0 +1,44 @@
+[
+  {
+    "id": "globex-d-000210",
+    "event": "organization",
+    "action": "member_added",
+    "delivered_at": "2025-02-01T09:00:00Z",
+    "payload": {"organization": {"login": "globex-example"}, "membership": {"role": "member", "user": {"login": "janesmith-gx", "node_id": "U_kgDOGlobex2001", "type": "User"}}}
+  },
+  {
+    "id": "globex-d-000211",
+    "event": "member",
+    "action": "added",
+    "delivered_at": "2025-02-01T09:05:00Z",
+    "payload": {"repository": {"name": "platform", "node_id": "R_kgDOGlobexP001", "full_name": "globex-example/platform"}, "member": {"login": "janesmith-gx", "node_id": "U_kgDOGlobex2001", "type": "User"}, "changes": {"permission": {"to": "write"}}}
+  },
+  {
+    "id": "globex-d-000150",
+    "event": "organization",
+    "action": "member_added",
+    "delivered_at": "2024-09-09T09:00:00Z",
+    "payload": {"organization": {"login": "globex-example"}, "membership": {"role": "member", "user": {"login": "ytanaka", "node_id": "U_kgDOGlobex2005", "type": "User"}}}
+  },
+  {
+    "id": "globex-d-000151",
+    "event": "member",
+    "action": "added",
+    "delivered_at": "2024-09-09T09:05:00Z",
+    "payload": {"repository": {"name": "platform", "node_id": "R_kgDOGlobexP001", "full_name": "globex-example/platform"}, "member": {"login": "ytanaka", "node_id": "U_kgDOGlobex2005", "type": "User"}, "changes": {"permission": {"to": "write"}}}
+  },
+  {
+    "id": "globex-d-000498",
+    "event": "member",
+    "action": "removed",
+    "delivered_at": "2026-06-30T20:00:00Z",
+    "payload": {"repository": {"name": "platform", "node_id": "R_kgDOGlobexP001", "full_name": "globex-example/platform"}, "member": {"login": "ytanaka", "node_id": "U_kgDOGlobex2005", "type": "User"}}
+  },
+  {
+    "id": "globex-d-000499",
+    "event": "organization",
+    "action": "member_removed",
+    "delivered_at": "2026-06-30T20:01:00Z",
+    "payload": {"organization": {"login": "globex-example"}, "membership": {"role": "member", "user": {"login": "ytanaka", "node_id": "U_kgDOGlobex2005", "type": "User"}}}
+  }
+]

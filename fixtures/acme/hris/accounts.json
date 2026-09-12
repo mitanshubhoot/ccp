@@ -1,0 +1,6 @@
+[
+  {"account_id": "acme-acct-0007", "name": "ops-shared", "kind": "shared", "owner_employee_id": null, "systems": ["github", "okta"], "purpose": "On-call operations console login", "updated_at": "2026-08-25T08:00:00Z"},
+  {"account_id": "acme-acct-0008", "name": "oncall-shared", "kind": "shared", "owner_employee_id": "E1017", "systems": ["pagerduty"], "purpose": "Shared paging identity", "updated_at": "2026-08-25T08:00:00Z"},
+  {"account_id": "acme-acct-0011", "name": "svc-backup", "kind": "service", "owner_employee_id": "E1001", "systems": ["okta", "aws-prod"], "purpose": "Nightly backup job", "updated_at": "2026-08-25T08:00:00Z"},
+  {"account_id": "acme-acct-0012", "name": "deploy-bot", "kind": "service", "owner_employee_id": "E1001", "systems": ["github"], "purpose": "Deployment automation", "updated_at": "2026-08-25T08:00:00Z"}
+]

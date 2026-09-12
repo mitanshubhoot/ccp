@@ -1,0 +1,37 @@
+[
+  {
+    "name": "platform",
+    "node_id": "R_kgDOAcmeP001",
+    "full_name": "acme-example/platform",
+    "private": true,
+    "default_branch": "main",
+    "updated_at": "2026-08-25T09:00:00Z",
+    "collaborators": [
+      {"login": "jsmith", "node_id": "U_kgDOAcme1042", "type": "User", "permission": "write"},
+      {"login": "dokafor-dev", "node_id": "U_kgDOAcme1017", "type": "User", "permission": "maintain"},
+      {"login": "ci-runner", "node_id": "U_kgDOAcmeBot01", "type": "Bot", "permission": "write"}
+    ]
+  },
+  {
+    "name": "website",
+    "node_id": "R_kgDOAcmeW002",
+    "full_name": "acme-example/website",
+    "private": false,
+    "default_branch": "main",
+    "updated_at": "2026-08-25T09:00:00Z",
+    "collaborators": [
+      {"login": "spatel", "node_id": "U_kgDOAcme1050", "type": "User", "permission": "write"}
+    ]
+  },
+  {
+    "name": "infra",
+    "node_id": "R_kgDOAcmeI003",
+    "full_name": "acme-example/infra",
+    "private": true,
+    "default_branch": "main",
+    "updated_at": "2026-08-25T09:00:00Z",
+    "collaborators": [
+      {"login": "pnatarajan", "node_id": "U_kgDOAcme1001", "type": "User", "permission": "admin"}
+    ]
+  }
+]

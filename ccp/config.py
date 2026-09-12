@@ -48,7 +48,13 @@ class Settings(BaseSettings):
     database_admin_url: str = "postgresql://postgres:postgres@localhost:5432/ccp"
     ccp_data_dir: Path = Path("data")
     ccp_tenants_file: Path = REPO_ROOT / "config" / "tenants.yaml"
+    ccp_fixtures_dir: Path = REPO_ROOT / "fixtures"
     ccp_tenant: str | None = None
+
+    # PDF extraction caps (spec.md A-54); a file over any cap is rejected, never parsed.
+    ccp_pdf_max_bytes: int = Field(default=25_000_000, ge=1)
+    ccp_pdf_max_pages: int = Field(default=500, ge=1)
+    ccp_pdf_timeout_seconds: float = Field(default=60.0, gt=0)
 
     # Models
     anthropic_api_key: SecretStr | None = None
@@ -99,6 +105,11 @@ class Settings(BaseSettings):
     @property
     def logs_dir(self) -> Path:
         return self.ccp_data_dir / "logs"
+
+    @property
+    def uploads_dir(self) -> Path:
+        """Runtime uploads root; one subdirectory per tenant."""
+        return self.ccp_data_dir / "uploads"
 
     def load_tenants(self) -> dict[str, TenantSettings]:
         raw = yaml.safe_load(self.ccp_tenants_file.read_text(encoding="utf-8"))

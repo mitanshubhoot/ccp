@@ -1,0 +1,12 @@
+[
+  {"event_id": "acme-hr-evt-0001", "type": "hire", "employee_id": "E1001", "effective_at": "2021-04-12T09:00:00Z", "details": {"title": "VP Engineering"}},
+  {"event_id": "acme-hr-evt-0044", "type": "hire", "employee_id": "E1017", "effective_at": "2022-08-01T09:00:00Z", "details": {"title": "Security Engineer"}},
+  {"event_id": "acme-hr-evt-0087", "type": "hire", "employee_id": "E1031", "effective_at": "2023-02-20T09:00:00Z", "details": {"title": "Head of Finance"}},
+  {"event_id": "acme-hr-evt-0101", "type": "hire", "employee_id": "E1042", "effective_at": "2024-03-01T09:00:00Z", "details": {"title": "Senior Engineer"}},
+  {"event_id": "acme-hr-evt-0118", "type": "hire", "employee_id": "E1044", "effective_at": "2024-06-10T09:00:00Z", "details": {"title": "Ops Manager"}},
+  {"event_id": "acme-hr-evt-0160", "type": "hire", "employee_id": "E1050", "effective_at": "2025-01-13T09:00:00Z", "details": {"title": "Engineer"}},
+  {"event_id": "acme-hr-evt-0201", "type": "hire", "employee_id": "E1023", "effective_at": "2025-11-03T09:00:00Z", "details": {"title": "Build Engineer (contract)"}},
+  {"event_id": "acme-hr-evt-0210", "type": "hire", "employee_id": "E1058", "effective_at": "2026-01-05T09:00:00Z", "details": {"title": "Engineer"}},
+  {"event_id": "acme-hr-evt-0230", "type": "role_change", "employee_id": "E1017", "effective_at": "2026-05-01T09:00:00Z", "details": {"from": "Security Engineer", "to": "Security Lead"}},
+  {"event_id": "acme-hr-evt-0388", "type": "termination", "employee_id": "E1042", "effective_at": "2026-08-20T17:00:00Z", "details": {"reason": "voluntary", "last_day": "2026-08-20"}}
+]

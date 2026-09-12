@@ -1,0 +1,17 @@
+{
+  "platform": {
+    "updated_at": "2026-08-25T09:00:00Z",
+    "files": [
+      {"path": "README.md", "sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678", "size": 412, "content": "# platform\n\nAcme's core service. See docs/ for architecture and CONTRIBUTING.md for the review process.\n\nAll changes land through pull requests with two approvals; CI must be green.\n"},
+      {"path": ".env.example", "sha": "b2c3d4e5f60718293a4b5c6d7e8f901234567890", "size": 186, "content": "# Copy to .env and fill in. Never commit real values.\nDATABASE_URL=postgres://localhost/platform\nGITHUB_TOKEN=ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8\nSENTRY_DSN=\nLOG_LEVEL=info\n"},
+      {"path": "CONTRIBUTING.md", "sha": "c3d4e5f60718293a4b5c6d7e8f90123456789012", "size": 301, "content": "# Contributing\n\nOpen a pull request against main. Two approving reviews from CODEOWNERS are required and\nadministrators are not exempt. Squash on merge.\n"}
+    ]
+  },
+  "website": {
+    "updated_at": "2026-08-25T09:00:00Z",
+    "files": [
+      {"path": "README.md", "sha": "d4e5f60718293a4b5c6d7e8f9012345678901234", "size": 120, "content": "# website\n\nMarketing site. Deployed on merge to main.\n"},
+      {"path": "package.json", "sha": "e5f60718293a4b5c6d7e8f901234567890123456", "size": 240, "content": "{\n  \"name\": \"acme-website\",\n  \"private\": true,\n  \"scripts\": {\"build\": \"next build\"}\n}\n"}
+    ]
+  }
+}

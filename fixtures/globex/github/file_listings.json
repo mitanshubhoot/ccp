@@ -1,0 +1,15 @@
+{
+  "platform": {
+    "updated_at": "2026-08-28T11:00:00Z",
+    "files": [
+      {"path": "README.md", "sha": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567", "size": 210, "content": "# platform\n\nGlobex core services. Configuration is injected from the secrets manager at deploy time;\nno credentials live in this repository.\n"},
+      {"path": ".env.example", "sha": "1b2c3d4e5f60718293a4b5c6d7e8f9012345678a", "size": 96, "content": "DATABASE_URL=\nAPI_BASE_URL=https://api.globex.example\nLOG_LEVEL=info\n"}
+    ]
+  },
+  "mobile": {
+    "updated_at": "2026-08-28T11:00:00Z",
+    "files": [
+      {"path": "README.md", "sha": "2c3d4e5f60718293a4b5c6d7e8f9012345678ab1", "size": 88, "content": "# mobile\n\nGlobex mobile client. Built with the platform SDK.\n"}
+    ]
+  }
+}

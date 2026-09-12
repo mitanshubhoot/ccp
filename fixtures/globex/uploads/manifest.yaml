@@ -1,0 +1,12 @@
+# Customer uploads for globex. The tenant is the directory this file sits in.
+uploads:
+  - file: access-review-2026-h1.pdf
+    evidence_type: access_review_report
+    title: H1 2026 User Access Review
+    issued_at: 2026-08-01T00:00:00Z
+    uploaded_at: 2026-09-02T14:30:00Z
+  - file: information-security-policy-v2.md
+    evidence_type: policy_document
+    title: Information Security Policy v2
+    issued_at: 2025-11-01T00:00:00Z
+    uploaded_at: 2026-09-02T14:32:00Z

@@ -1,0 +1,10 @@
+[
+  {"event_id": "globex-hr-evt-0001", "type": "hire", "employee_id": "G2002", "effective_at": "2020-01-15T09:00:00Z", "details": {"title": "Engineering Manager"}},
+  {"event_id": "globex-hr-evt-0019", "type": "hire", "employee_id": "G2003", "effective_at": "2021-07-05T09:00:00Z", "details": {"title": "Security Engineer"}},
+  {"event_id": "globex-hr-evt-0033", "type": "hire", "employee_id": "G2004", "effective_at": "2022-03-14T09:00:00Z", "details": {"title": "Senior Engineer"}},
+  {"event_id": "globex-hr-evt-0061", "type": "hire", "employee_id": "G2006", "effective_at": "2023-10-02T09:00:00Z", "details": {"title": "Finance Systems Lead"}},
+  {"event_id": "globex-hr-evt-0090", "type": "hire", "employee_id": "G2005", "effective_at": "2024-09-09T09:00:00Z", "details": {"title": "Engineer"}},
+  {"event_id": "globex-hr-evt-0104", "type": "hire", "employee_id": "G2001", "effective_at": "2025-02-01T09:00:00Z", "details": {"title": "Platform Engineer"}},
+  {"event_id": "globex-hr-evt-0140", "type": "role_change", "employee_id": "G2004", "effective_at": "2026-02-01T09:00:00Z", "details": {"from": "Senior Engineer", "to": "Staff Engineer"}},
+  {"event_id": "globex-hr-evt-0177", "type": "termination", "employee_id": "G2005", "effective_at": "2026-06-30T18:00:00Z", "details": {"reason": "voluntary", "last_day": "2026-06-30"}}
+]
