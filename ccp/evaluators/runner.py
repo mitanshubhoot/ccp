@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from functools import lru_cache
 
 from ccp.config import Settings
-from ccp.evaluators import deterministic, tier2
+from ccp.evaluators import deterministic, registry, tier2
 from ccp.evaluators.budget_gate import check_daily_budget
 from ccp.evaluators.context import load_context
 from ccp.evaluators.impact import EvaluationRequest, enqueue
@@ -36,6 +36,7 @@ _REASONS: tuple[TriggerReason, ...] = (
     "revalidate_interval",
     "stale_evidence",
     "reevaluate",
+    "human_decision",
 )
 
 
@@ -68,16 +69,19 @@ def evaluate_request(
 ) -> Verdict:
     """Evaluate one (test, subject) pair by tier."""
     spec = cached_graph().tests[request.test_id]
-    if spec.tier == 3:
-        raise ParkedError(f"tier 3 evaluator not available yet for {spec.test_id}")
     ctx = load_context(
         db, settings, spec, request.trigger_observed_at, now, reason=_reason(request.reason)
     )
     if spec.tier == 1:
         return deterministic.evaluate(ctx, request.subject)
+    evaluator = registry.evaluator_for(spec.tier)
+    if evaluator is None:
+        raise ParkedError(
+            f"tier {spec.tier} evaluator not registered (import ccp.agent.tier3 for tier 3)"
+        )
     active = providers or tier2.Providers.from_settings(settings)
     try:
-        return tier2.evaluate(
+        return evaluator(
             db, settings, ctx, spec, request.subject, active, reason=_reason(request.reason)
         )
     except tier2.AITierUnavailable as exc:
@@ -159,7 +163,7 @@ class EvaluationsConsumer(ParallelConsumer):
             },
         ) as s:
             spec = cached_graph().tests[request.test_id]
-            providers = self.providers if spec.tier == 2 else None
+            providers = self.providers if spec.tier in (2, 3) else None
             verdict = evaluate_request(self._db, self.settings, request, self.now, providers)
             inserted = commit_verdict(self._db, verdict)
             s.set_output(
@@ -189,7 +193,7 @@ def enqueue_all(
     now: datetime | None = None,
     coalesce_seconds: int = 0,
     tests: tuple[str, ...] | None = None,
-    tiers: tuple[int, ...] = (1, 2),
+    tiers: tuple[int, ...] = (1, 2, 3),
 ) -> int:
     """Enqueue every (test, subject) pair once, with the newest entity observation as the
     trigger so a repeated full run is idempotent at the verdict table."""

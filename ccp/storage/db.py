@@ -91,6 +91,15 @@ def migrate(settings: Settings) -> list[str]:
                 conn.execute(body)
                 conn.execute("INSERT INTO schema_migrations (name) VALUES (%s)", (path.name,))
             applied.append(path.name)
+        has_checkpoints = conn.execute(
+            "SELECT 1 FROM pg_namespace WHERE nspname = 'checkpoints'"
+        ).fetchone()
+    if has_checkpoints is not None:
+        # LangGraph's saver creates its own tables; run its idempotent setup as the admin
+        # role every time, then apply row-level security on thread_id (spec.md R8, S14).
+        from ccp.storage.checkpoints import setup_checkpoint_tables
+
+        setup_checkpoint_tables(settings.database_admin_url, role)
     return applied
 
 

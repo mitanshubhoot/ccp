@@ -636,3 +636,40 @@
     extracted_fields: {$subset: {subject_name_in_document: false}}
   notes: The record on file names Sam Patil, employee E1049; the subject is Sam Patel, E1050.
   tags: [evaluators, tier2, hr-3, keyed]
+
+# -- Phase 8: tier 3 workflow (keyed) ---------------------------------------------------------
+
+- id: cmp-tier3-hr4-acme-partial-names-payroll
+  level: component
+  difficulty: hard
+  source: manual
+  tenant: acme
+  target: tier3_verdict
+  requires: [anthropic]
+  input: {test_id: HR-4, subject: tenant}
+  expected:
+    $subset:
+      status: partial
+      thread_status: finished
+      trajectory: [fetch_critical_list, extract_systems, fetch_latest_review, extract_scope, verify_citations, compare, gate, finalize]
+      reasoning: {$contains: "Payroll-SaaS"}
+      extracted_fields: {$subset: {critical_systems: {$contains: "Payroll-SaaS"}}}
+  notes: The Q2 review covers four of five critical systems; the reasoning must name the missing one.
+  tags: [evaluators, tier3, hr-4, keyed]
+
+- id: cmp-tier3-hr4-globex-pass
+  level: component
+  difficulty: hard
+  source: manual
+  tenant: globex
+  target: tier3_verdict
+  requires: [anthropic]
+  input: {test_id: HR-4, subject: tenant}
+  expected:
+    $subset:
+      status: pass
+      thread_status: finished
+      trajectory: [fetch_critical_list, extract_systems, fetch_latest_review, extract_scope, verify_citations, compare, gate, finalize]
+      extracted_fields: {$subset: {critical_systems: {$len: 3}}}
+  notes: The H1 review (a page-split PDF) covers all three critical systems.
+  tags: [evaluators, tier3, hr-4, pdf, keyed]

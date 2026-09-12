@@ -1,0 +1,6 @@
+# Human-interrupt threshold for the AI tiers (spec.md A-10, A-47). A tier 3 run whose computed
+# confidence is below the threshold, or whose status is needs_review, stops at the gate and
+# waits for a reviewer. The value starts at the spec's 0.70 and is re-read from the reliability
+# curve the eval runner prints (Phase 15); `read_from_curve_on` records when that last happened.
+interrupt_threshold: 0.70
+read_from_curve_on: null

@@ -90,6 +90,7 @@ def test_stub_client_charges_the_tracker_and_records_the_request() -> None:
             "user": "usr",
             "schema": "_Fields",
             "max_tokens": 2048,
+            "reasoning": False,
         }
     ]
 

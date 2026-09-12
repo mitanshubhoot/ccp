@@ -18,7 +18,9 @@ from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantId
 from ccp.types import VerdictStatus
 
-TriggerReason = Literal["impact", "full_run", "revalidate_interval", "stale_evidence", "reevaluate"]
+TriggerReason = Literal[
+    "impact", "full_run", "revalidate_interval", "stale_evidence", "reevaluate", "human_decision"
+]
 
 
 class Citation(BaseModel):

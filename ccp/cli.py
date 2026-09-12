@@ -6,6 +6,8 @@ from datetime import datetime
 
 import typer
 
+from ccp.agent import cli as agent_cli
+from ccp.agent import tier3 as _tier3  # noqa: F401 - registers tier 3
 from ccp.config import Settings
 from ccp.connectors.base import parse_ts
 from ccp.connectors.registry import CONNECTOR_NAMES, SOURCE_KINDS, build_connector
@@ -50,6 +52,7 @@ app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(tenants_app, name="tenants")
 app.add_typer(evaluate_app, name="evaluate")
 app.add_typer(index_app, name="index")
+app.add_typer(agent_cli.app, name="agent")
 
 
 @evaluate_app.command("run")

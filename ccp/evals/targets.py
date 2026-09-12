@@ -435,6 +435,41 @@ def tier2_verdict(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) 
     }
 
 
+@target("tier3_verdict")
+def tier3_verdict(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
+    """One tier 3 evaluation through the registered workflow (requires: anthropic)."""
+    from datetime import UTC
+
+    from ccp.agent import threads, tier3
+    from ccp.evaluators.context import load_context
+    from ccp.evaluators.tier2 import Providers
+    from ccp.knowledge.graph import load
+
+    providers = Providers.from_settings(ctx.settings)
+    db = _indexed_db(ctx, tenant_id, providers, 0)
+    spec = load().tests[str(inp["test_id"])]
+    now = datetime.now(UTC)
+    context = load_context(db, ctx.settings, spec, now, now)
+    verdict = tier3.evaluate(
+        db, ctx.settings, context, spec, str(inp.get("subject", "tenant")), providers
+    )
+    thread_id = str((verdict.request_json or {}).get("thread_id"))
+    row = threads.get(db, thread_id)
+    return {
+        "status": verdict.status.value,
+        "confidence": verdict.confidence,
+        "trajectory": list(row.trajectory) if row else [],
+        "thread_status": row.status if row else None,
+        "extracted_fields": {
+            k: v
+            for k, v in (verdict.extracted_fields or {}).items()
+            if k != "systems_prompt_version"
+        },
+        "guardrail_events": sorted({e.split(":")[0] for e in verdict.guardrail_events}),
+        "reasoning": verdict.reasoning,
+    }
+
+
 def make_event(
     tenant: TenantContext, connector: ConnectorName, source_event_id: str, ts: datetime
 ) -> SourceEvent:

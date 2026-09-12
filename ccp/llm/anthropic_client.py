@@ -31,7 +31,7 @@ from pydantic import BaseModel
 
 from ccp.config import Settings
 from ccp.llm.budget import BudgetTracker
-from ccp.llm.client import Completion, Extraction, SystemBlock, Usage
+from ccp.llm.client import ChatTurn, Completion, Extraction, SystemBlock, ToolCall, Usage
 from ccp.llm.errors import RetryableModelError, TerminalModelError, classify_status
 from ccp.observability import cost
 
@@ -53,6 +53,22 @@ def system_param(system: list[SystemBlock]) -> list[dict[str, Any]]:
             item["cache_control"] = {"type": "ephemeral"}
         blocks.append(item)
     return blocks
+
+
+ADAPTIVE_THINKING_PREFIXES = ("claude-sonnet-5", "claude-opus-5", "claude-fable", "claude-mythos")
+TEMPERATURE_ZERO_PREFIXES = ("claude-haiku-4-5",)  # models that still accept sampling params
+
+
+def sampling_params(model: str, *, reasoning: bool) -> dict[str, Any]:
+    """Tier 3: adaptive thinking at medium effort where supported. Tier 2: temperature 0 on
+    the models that still take it (spec.md Layer 8 "Model configuration")."""
+    params: dict[str, Any] = {}
+    if reasoning and model.startswith(ADAPTIVE_THINKING_PREFIXES):
+        params["thinking"] = {"type": "adaptive"}
+        params["output_config"] = {"effort": "medium"}
+    elif not reasoning and model.startswith(TEMPERATURE_ZERO_PREFIXES):
+        params["extra_body"] = {"temperature": 0}
+    return params
 
 
 def _usage(model: str, raw: Any, *, batch: bool = False) -> Usage:
@@ -123,12 +139,14 @@ class AnthropicClient:
         model: str,
         tracker: BudgetTracker,
         max_tokens: int = 2048,
+        reasoning: bool = False,
     ) -> Extraction:
         params: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
             "system": system_param(system),
             "messages": [{"role": "user", "content": user}],
+            **sampling_params(model, reasoning=reasoning),
         }
         request = {**params, "output_format": schema.__name__}
         response = self._with_retry(
@@ -203,6 +221,63 @@ class AnthropicClient:
             model=str(getattr(response, "model", model)),
             request=dict(params),
             response=_to_dict(response),
+        )
+
+    def chat(
+        self,
+        *,
+        system: list[SystemBlock],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        model: str,
+        tracker: BudgetTracker,
+        max_tokens: int = 1024,
+        reasoning: bool = False,
+    ) -> ChatTurn:
+        params: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system_param(system),
+            "messages": messages,
+            **sampling_params(model, reasoning=reasoning),
+        }
+        if tools:
+            params["tools"] = tools
+        response = self._with_retry(lambda: self._client.messages.create(**params))
+        usage = _usage(model, response.usage)
+        tracker.charge(
+            input_tokens=usage.input_tokens + usage.cache_read_input_tokens,
+            output_tokens=usage.output_tokens,
+            usd=usage.usd,
+        )
+        text_parts: list[str] = []
+        calls: list[ToolCall] = []
+        content: list[dict[str, Any]] = []
+        for block in response.content:
+            kind = getattr(block, "type", "")
+            if kind == "text":
+                text_parts.append(str(block.text))
+                content.append({"type": "text", "text": str(block.text)})
+            elif kind == "tool_use":
+                arguments = dict(block.input) if isinstance(block.input, dict) else {}
+                calls.append(ToolCall(str(block.id), str(block.name), arguments))
+                content.append(
+                    {
+                        "type": "tool_use",
+                        "id": str(block.id),
+                        "name": str(block.name),
+                        "input": arguments,
+                    }
+                )
+        return ChatTurn(
+            text="".join(text_parts),
+            tool_calls=tuple(calls),
+            stop_reason=str(getattr(response, "stop_reason", "")),
+            usage=usage,
+            model=str(getattr(response, "model", model)),
+            request={**params, "tools": [t.get("name") for t in tools]},
+            response=_to_dict(response),
+            assistant_content=content,
         )
 
     # -- offline: Message Batches (spec.md R18) ---------------------------------------

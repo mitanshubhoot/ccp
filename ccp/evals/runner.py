@@ -34,6 +34,7 @@ DB_TARGETS = {
     "chunker_pages",
     "retrieval_metrics",
     "tier2_verdict",
+    "tier3_verdict",
 }
 # Targets whose expectations describe a fresh database (first landing, no prior rows) get a
 # scratch database of their own; every other database case shares the run's database.

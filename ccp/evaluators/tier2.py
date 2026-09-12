@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import Any
 
 from ccp.config import Settings
-from ccp.evaluators import budget_gate, citations, confidence, rules
+from ccp.evaluators import budget_gate, citations, confidence, registry, rules
 from ccp.evaluators.context import EvaluationContext
 from ccp.evaluators.deterministic.common import hr_person_for
 from ccp.evaluators.extraction import schema_for
@@ -354,3 +354,6 @@ def _newest_observed(
     ids = {c.evidence_entity_id for c in shown.values()}
     stamps = [e.observed_at for e in ctx.evidence if e.entity_id in ids]
     return max(stamps) if stamps else None
+
+
+registry.register_tier(2, evaluate)

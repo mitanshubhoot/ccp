@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel
 
-from ccp.evaluators.extraction import gh4, hr3
+from ccp.evaluators.extraction import gh4, hr3, hr4
 from ccp.evaluators.extraction.base import Cited
 
 
@@ -37,6 +37,23 @@ SCHEMAS: dict[str, SchemaMeta] = {
         required=("subject_name_in_document", "completion_status", "completion_date"),
         cited=("subject_name_in_document", "completion_status", "completion_date", "provider"),
         value_in_quote=("completion_date", "provider"),
+    ),
+    # list-valued schemas: the tier 3 graph verifies each list item's citation itself
+    "CriticalSystemsFields": SchemaMeta(
+        name="CriticalSystemsFields",
+        model=hr4.CriticalSystemsFields,
+        version=hr4.SCHEMA_VERSION,
+        required=("systems",),
+        cited=(),
+        value_in_quote=(),
+    ),
+    "AccessReviewFields": SchemaMeta(
+        name="AccessReviewFields",
+        model=hr4.AccessReviewFields,
+        version=hr4.SCHEMA_VERSION,
+        required=("systems_in_scope",),
+        cited=("review_date",),
+        value_in_quote=("review_date",),
     ),
 }
 

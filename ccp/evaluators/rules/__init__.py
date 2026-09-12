@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from ccp.evaluators.rules import gh4, hr3
+from ccp.evaluators.rules import gh4, hr3, hr4
 from ccp.types import VerdictStatus
 
 
@@ -24,6 +24,7 @@ Rule = Callable[[dict[str, Any], dict[str, Any], datetime], Decision]
 RULES: dict[str, Rule] = {
     "gh4_disclosure_timeline": gh4.decide,
     "hr3_training_current": hr3.decide,
+    "hr4_review_covers_critical": hr4.decide,
 }
 
 
