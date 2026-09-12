@@ -26,7 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 def base_settings(tmp_path_factory: pytest.TempPathFactory) -> Settings:
     data_dir = tmp_path_factory.mktemp("ccp-data")
     settings = Settings(ccp_data_dir=data_dir)
-    steps.configure(settings)
+    steps.configure(settings, sink=None)  # tests never emit traces, whatever the env holds
     return settings
 
 

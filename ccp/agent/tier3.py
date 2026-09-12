@@ -25,7 +25,7 @@ from ccp.agent.graphs import tier3 as graph_module
 from ccp.agent.tools import ToolContext, bind_tools
 from ccp.approvals import store as approvals
 from ccp.config import Settings
-from ccp.evaluators import registry
+from ccp.evaluators import budget_gate, registry
 from ccp.evaluators.context import EvaluationContext, load_context
 from ccp.evaluators.tier2 import AITierUnavailable, Providers
 from ccp.evaluators.verdict import TriggerReason, Verdict, evaluation_key
@@ -63,8 +63,7 @@ def _build(
 
 def _run(graph: Any, payload: Any, config: dict[str, Any]) -> list[str]:
     trajectory: list[str] = []
-    run_config = {**config, "callbacks": steps.graph_callbacks()}
-    for update in graph.stream(payload, run_config, stream_mode="updates"):
+    for update in graph.stream(payload, config, stream_mode="updates"):
         for key in update:
             trajectory.append("interrupt" if key == "__interrupt__" else str(key))
     return trajectory
@@ -157,7 +156,7 @@ def evaluate(
     subject_key = f"{spec.test_id}|{subject}"
     run_id = str(ULID())
     thread_id = checkpoints.thread_id_for(tenant, spec.test_id, subject_key, run_id)
-    graph, _saver, pool, _tracker = _build(db, settings, spec, providers, ctx.now)
+    graph, _saver, pool, tracker = _build(db, settings, spec, providers, ctx.now)
     threads.create(db, thread_id, GRAPH, spec.test_id, subject_key)
     config = {"configurable": {"thread_id": thread_id}}
     initial: dict[str, Any] = {
@@ -185,6 +184,7 @@ def evaluate(
             inputs={"test_id": spec.test_id, "subject": subject, "thread_id": thread_id},
         ) as s:
             trajectory = _run(graph, initial, config)
+            budget_gate.record_spend(db, tracker.usd, tracker.tokens, s.step_id, ctx.now)
             snapshot = graph.get_state(config)
             payload = _interrupt_payload(snapshot)
             values = dict(snapshot.values or {})
@@ -242,7 +242,7 @@ def resume(
     spec = knowledge.load().tests[row.test_id]
     moment = now or datetime.now(UTC)
     active = providers or Providers.from_settings(settings)
-    graph, _saver, pool, _tracker = _build(db, settings, spec, active, moment)
+    graph, _saver, pool, tracker = _build(db, settings, spec, active, moment)
     config = {"configurable": {"thread_id": thread_id}}
     trajectory = list(row.trajectory)
     try:
@@ -261,6 +261,7 @@ def resume(
                 resume=decision,
             )
             trajectory += _run(graph, command, config)
+            budget_gate.record_spend(db, tracker.usd, tracker.tokens, s.step_id, moment)
             snapshot = graph.get_state(config)
             payload = _interrupt_payload(snapshot)
             values = dict(snapshot.values or {})

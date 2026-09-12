@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
+
+from ccp.observability import tracing
 
 PATTERNS: dict[str, re.Pattern[str]] = {
     "aws_access_key_id": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -37,6 +40,17 @@ def scan(text: str) -> list[SecretFinding]:
     return findings
 
 
+def redact_value(value: Any) -> Any:
+    """Redact every string inside a JSON-like value (the mask for tracing payloads)."""
+    if isinstance(value, str):
+        return redact(value)[0]
+    if isinstance(value, dict):
+        return {k: redact_value(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [redact_value(v) for v in value]
+    return value
+
+
 def redact(text: str) -> tuple[str, list[str]]:
     """Replace every match with [REDACTED:<pattern>]; return the text and the pattern names hit."""
     hits: list[str] = []
@@ -46,3 +60,10 @@ def redact(text: str) -> tuple[str, list[str]]:
             hits.append(name)
             out = pattern.sub(f"[REDACTED:{name}]", out)
     return out, hits
+
+
+def _mask(*, data: Any, **_: Any) -> Any:
+    return redact_value(data)
+
+
+tracing.register_mask(_mask)  # every trace payload goes through the same patterns

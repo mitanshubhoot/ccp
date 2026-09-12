@@ -44,6 +44,7 @@ from ccp.evaluators.extraction.copilot import (
     IntentDraft,
 )
 from ccp.knowledge.actions import CATALOGUE
+from ccp.security import prompt_guard
 from ccp.tenancy import TenantContext
 
 GRAPH_NAME = "copilot"
@@ -346,8 +347,14 @@ def build_spec(
                 if not res.get("is_error") and isinstance(got, dict) and "chunk_id" in got:
                     fetched[chunk_id] = {**got, "turn": turn}
         view: Any = {**state, "retrieved_chunks": {**known, **fetched}} if fetched else state
+        # tool results enter the prompt as system data outside the fence: scan them too
+        flagged = prompt_guard.scan(json.dumps(tool_results(state), default=str))
         inner = inner_answer_plain if state.get("intent") == "status" else inner_answer_streamed
         out = inner(view)
+        if flagged:
+            out.setdefault("guardrail_events", []).extend(
+                f"injection_marker_detected:tool_results:{phrase}" for phrase in flagged
+            )
         if fetched:
             out["retrieved_chunks"] = fetched
         if log:

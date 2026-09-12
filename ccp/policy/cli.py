@@ -8,6 +8,7 @@ import typer
 
 from ccp.config import Settings
 from ccp.evaluators.tier2 import Providers
+from ccp.ingest.consumers import ParkedError
 from ccp.observability import steps
 from ccp.policy import runner, schema
 from ccp.storage import db
@@ -65,6 +66,9 @@ def gap(
     pool = db.app_pool(settings)
     try:
         report = runner.gap(ScopedDB(pool, ctx), settings, control, providers)
+    except ParkedError as exc:
+        typer.echo(f"parked: {exc}", err=True)
+        raise typer.Exit(code=3) from None
     finally:
         pool.close()
     typer.echo(_render(report))
@@ -82,6 +86,9 @@ def draft(
     pool = db.app_pool(settings)
     try:
         report, result = runner.draft(ScopedDB(pool, ctx), settings, control, providers)
+    except ParkedError as exc:
+        typer.echo(f"parked: {exc}", err=True)
+        raise typer.Exit(code=3) from None
     finally:
         pool.close()
     typer.echo(_render(report))

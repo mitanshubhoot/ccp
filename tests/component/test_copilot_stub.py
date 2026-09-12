@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -15,6 +15,7 @@ from ccp.approvals import store as approvals
 from ccp.compliance_state import writer as state_writer
 from ccp.config import Settings
 from ccp.copilot import runner, schema
+from ccp.evaluators import budget_gate
 from ccp.evaluators import runner as evaluations
 from ccp.evaluators.tier2 import Providers
 from ccp.investigation import schema as investigations
@@ -122,7 +123,7 @@ def test_status_reports_the_rollup_and_never_says_ready(world) -> None:  # type:
 def test_missing_says_no_investigation_exists_and_offers_one(world) -> None:  # type: ignore[no-untyped-def]
     settings, acme, providers = world
     with runner.Session(acme, settings, providers) as session:
-        turn = session.ask("What evidence is missing for HR-1?", now=NOW)
+        turn = session.ask("What evidence is missing for GH-4?", now=NOW)  # never investigated
     assert turn.answer.intent == "missing"
     assert "get_investigation" in _tools(turn)
     assert "No investigation exists" in turn.answer.text and "open one" in turn.answer.text
@@ -169,3 +170,29 @@ def test_three_requested_actions_yield_two_and_a_note(world) -> None:  # type: i
     assert "requested_actions_capped:1" in turn.answer.guardrail_events
     assert "were not included" in turn.answer.text
     assert len(turn.pending) == 2
+
+
+def test_an_exhausted_daily_budget_answers_from_computed_state_without_a_model(world) -> None:  # type: ignore[no-untyped-def]
+    settings, acme, providers = world
+    later = NOW + timedelta(days=2)  # a day no other test spends in
+    budget_gate.record_spend(acme, 100.0, 0, None, later)
+    calls_before = len(providers.llm.calls)
+    with runner.Session(acme, settings, providers) as session:
+        turn = session.ask("Are we SOC 2 ready?", now=later)
+        stored = schema.for_thread(acme, session.thread_id)
+    assert len(providers.llm.calls) == calls_before  # no model call was made
+    assert "budget_exhausted:daily" in turn.answer.guardrail_events
+    assert turn.answer.intent == "status" and "Computed state" in turn.answer.text
+    assert "daily model budget is exhausted" in turn.answer.text
+    assert turn.pending == () and turn.answer.model is None and turn.trajectory == ()
+    assert [a.turn for a in stored] == [1] and stored[0].guardrail_events == (
+        "budget_exhausted:daily",
+    )
+
+
+def test_a_turn_records_its_spend_in_the_daily_ledger(world) -> None:  # type: ignore[no-untyped-def]
+    settings, acme, providers = world
+    before = budget_gate.daily_spend(acme, NOW)
+    with runner.Session(acme, settings, providers) as session:
+        session.ask("Why did GH-4 pass for the platform repository?", now=NOW)
+    assert budget_gate.daily_spend(acme, NOW) > before

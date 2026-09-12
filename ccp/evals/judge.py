@@ -158,6 +158,13 @@ def judge(
         rubric=rubric.name,
         variant=variant,
         guardrail_events=events,
+        usage={
+            "input_tokens": extraction.usage.input_tokens,
+            "output_tokens": extraction.usage.output_tokens,
+            "cache_read": extraction.usage.cache_read_input_tokens,
+            "cache_write": extraction.usage.cache_creation_input_tokens,
+            "usd": extraction.usage.usd,
+        },
     )
 
 

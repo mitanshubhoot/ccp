@@ -25,16 +25,18 @@ from ccp.config import Settings
 from ccp.copilot import schema
 from ccp.copilot.schema import CopilotAnswer
 from ccp.copilot.streaming import TextFieldStreamer
-from ccp.evaluators import targets
+from ccp.evaluators import budget_gate, targets
 from ccp.evaluators import verdict as verdicts
 from ccp.evaluators.tier2 import AITierUnavailable, Providers
 from ccp.evaluators.verdict import Citation, Verdict
+from ccp.ingest.consumers import ParkedError
 from ccp.investigation import runner as investigator
 from ccp.investigation import schema as investigations
 from ccp.knowledge import graph as knowledge
 from ccp.llm.budget import BudgetTracker, RunBudget
 from ccp.observability import steps
 from ccp.remediation import proposals
+from ccp.security import prompt_guard
 from ccp.storage import checkpoints
 from ccp.storage.scoped import ScopedDB
 
@@ -79,6 +81,10 @@ def describe(turn: Turn) -> str:
         lines.append(f"- {p.action} ({where}); {kind}; fixes verdict {p.verdict_id}")
         if p.rationale:
             lines.append(f"    {p.rationale}")
+    lines.append(
+        "If a verdict has no investigation yet, the Investigator runs first (one model run"
+        " per such verdict) before its approval item opens."
+    )
     lines.append("Nothing runs until a reviewer approves and the remediation gates pass.")
     return "\n".join(lines)
 
@@ -108,7 +114,7 @@ class Session:
         self.pool = checkpoints.saver_pool(settings, db.tenant)
         self.turn_count = 0
         self.trajectory: list[str] = []
-        threads.create(db, self.thread_id, GRAPH, "copilot", self.session_id)
+        self._tracker: BudgetTracker | None = None  # the current turn's run budget
 
     def __enter__(self) -> Session:
         return self
@@ -126,6 +132,7 @@ class Session:
 
     def _graph(self, now: datetime, stream: Callable[[str], None] | None = None) -> Any:
         tracker = BudgetTracker(RunBudget.from_settings(self.settings))
+        self._tracker = tracker
         tools = bind_tools(
             ToolContext(
                 self.db, self.providers.embedder, self.providers.reranker, self.providers.retrieval
@@ -159,6 +166,12 @@ class Session:
         status answer, whose contract may rewrite the text after generation)."""
         moment = now or datetime.now(UTC)
         self.turn_count += 1
+        if self.turn_count == 1:  # the thread row exists once a question was asked
+            threads.create(self.db, self.thread_id, GRAPH, "copilot", self.session_id)
+        try:
+            budget_gate.check_daily_budget(self.db, moment)
+        except ParkedError as exc:  # spec.md A-11: the daily cap covers every model call
+            return self._without_model(question, moment, str(exc))
         streamer = TextFieldStreamer(on_token) if on_token is not None else None
         graph = self._graph(moment, streamer.feed if streamer is not None else None)
         config: dict[str, Any] = {"configurable": {"thread_id": self.thread_id}}
@@ -179,6 +192,7 @@ class Session:
             "extracted_raw": {},
             "extracted": {},
             "requests": {},
+            "fence_nonce": prompt_guard.new_nonce(),  # a fresh fence every turn
         }
         started = time.perf_counter()
         turn_nodes: list[str] = []
@@ -193,8 +207,7 @@ class Session:
             },
         ) as s:
             try:
-                run_config = {**config, "callbacks": steps.graph_callbacks()}
-                for update in graph.stream(initial, run_config, stream_mode="updates"):
+                for update in graph.stream(initial, config, stream_mode="updates"):
                     turn_nodes.extend(str(k) for k in update)
             except Exception as exc:
                 threads.mark_failed(
@@ -217,6 +230,8 @@ class Session:
                 if streamer is not None and streamer.first_token_at is not None
                 else None
             )
+            # validate before the durable record so a rejected action is visible in it
+            pending, rejected = self._validate(final.get("requested_actions") or [], final)
             answer = CopilotAnswer(
                 tenant_id=self.db.tenant.tenant_id,
                 thread_id=self.thread_id,
@@ -228,7 +243,7 @@ class Session:
                 requested_actions=tuple(final.get("requested_actions") or []),
                 model=final.get("model"),
                 prompt_version=str(final.get("prompt_version") or ""),
-                guardrail_events=tuple(events),
+                guardrail_events=tuple(events + list(rejected)),
                 latency_ms=latency_ms,
                 first_token_ms=first_token_ms,
                 fence_nonce=final.get("fence_nonce"),
@@ -238,7 +253,10 @@ class Session:
             )
             schema.persist(self.db, answer)
             threads.mark_finished(self.db, self.thread_id, answer.answer_id, self.trajectory)
-            pending, rejected = self._validate(final.get("requested_actions") or [], final)
+            if self._tracker is not None:
+                budget_gate.record_spend(
+                    self.db, self._tracker.usd, self._tracker.tokens, s.step_id, moment
+                )
             for event in rejected:
                 s.event(event)
             s.set_output(
@@ -252,6 +270,82 @@ class Session:
                 }
             )
         return Turn(answer, tuple(pending), tuple(rejected), tuple(turn_nodes))
+
+    def _without_model(self, question: str, moment: datetime, reason: str) -> Turn:
+        """The tenant's daily model budget is exhausted: no model is called; the answer is the
+        computed state (the framework rollups) and says so. Nothing is requested, nothing
+        opens, and the turn is recorded like any other."""
+        started = time.perf_counter()
+        tools = bind_tools(
+            ToolContext(
+                self.db, self.providers.embedder, self.providers.reranker, self.providers.retrieval
+            ),
+            ("get_framework_rollup",),
+        )
+        context: dict[str, Any] = {}
+        tool_log: list[dict[str, Any]] = []
+        for framework_id in sorted(knowledge.load().frameworks):
+            res = tools["get_framework_rollup"].call({"framework_id": framework_id})
+            tool_log.append(
+                {
+                    "node": "budget",
+                    "tool": "get_framework_rollup",
+                    "arguments": {"framework_id": framework_id},
+                    "is_error": bool(res.get("is_error")),
+                }
+            )
+            if not res.get("is_error"):
+                context[f"get_framework_rollup:{framework_id}"] = res.get("result")
+        text = (
+            "The tenant's daily model budget is exhausted, so no model was called for this"
+            f" question ({reason}). What follows is computed state only; ask again after the"
+            " day rolls over.\n\n" + graph_module.render_rollups(context)
+        )
+        event = "budget_exhausted:daily"
+        with steps.step(
+            "copilot.turn",
+            layer="copilot",
+            tenant=self.db.tenant,
+            inputs={
+                "thread_id": self.thread_id,
+                "turn": self.turn_count,
+                "question": question[:500],
+            },
+        ) as s:
+            s.event(event)
+            latency_ms = (time.perf_counter() - started) * 1000
+            answer = CopilotAnswer(
+                tenant_id=self.db.tenant.tenant_id,
+                thread_id=self.thread_id,
+                turn=self.turn_count,
+                question=question,
+                intent="status",
+                text=text,
+                citations=(),
+                requested_actions=(),
+                model=None,
+                prompt_version="",
+                guardrail_events=(event,),
+                latency_ms=latency_ms,
+                first_token_ms=None,
+                fence_nonce=None,
+                request_json={"calls": {}, "retrieved_chunk_ids": [], "tool_log": tool_log},
+                response_json=None,
+                created_at=moment,
+            )
+            schema.persist(self.db, answer)
+            threads.mark_finished(self.db, self.thread_id, answer.answer_id, self.trajectory)
+            s.set_output(
+                {
+                    "intent": "status",
+                    "trajectory": [],
+                    "tools": [t["tool"] for t in tool_log],
+                    "pending": 0,
+                    "latency_ms": round(latency_ms, 1),
+                    "first_token_ms": None,
+                }
+            )
+        return Turn(answer, (), (), ())
 
     def _verdict_for(self, item: dict[str, Any], final: dict[str, Any]) -> Verdict | None:
         verdict_id = item.get("verdict_id")

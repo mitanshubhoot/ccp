@@ -156,7 +156,14 @@ def calibrate(
     bias_on: int | None = None,
 ) -> CalibrationReport:
     """Run the judge over the labeled set (normal and paraphrased wording, plus the bias
-    variants on ``bias_on`` cases; every case by default) and compare with the labels."""
+    variants on ``bias_on`` cases; every case by default) and compare with the labels.
+    ``tracker`` is the budget template: every judge call gets a fresh tracker with the same
+    budget, because one run budget cannot cover the eighty-odd calls a calibration makes
+    (its wall clock and token caps are sized for one verdict)."""
+
+    def fresh() -> BudgetTracker:
+        return BudgetTracker(tracker.budget, clock=tracker.clock)
+
     rubrics: dict[str, Rubric] = {}
     per_key_human: dict[str, list[bool]] = {}
     per_key_judge: dict[str, list[bool]] = {}
@@ -174,7 +181,7 @@ def calibrate(
             rubric = judging.load_rubric(case.rubric, rubrics_dir)
             rubrics[case.rubric] = rubric
         plain = judging.judge(
-            llm, rubric, case_input=case.input, output=case.output, model=model, tracker=tracker
+            llm, rubric, case_input=case.input, output=case.output, model=model, tracker=fresh()
         )
         para = judging.judge(
             llm,
@@ -182,7 +189,7 @@ def calibrate(
             case_input=case.input,
             output=case.output,
             model=model,
-            tracker=tracker,
+            tracker=fresh(),
             variant="paraphrase",
         )
         judge_model = judge_model or plain.model
@@ -205,7 +212,7 @@ def calibrate(
                     case_input=case.input,
                     output=case.output,
                     model=model,
-                    tracker=tracker,
+                    tracker=fresh(),
                     base=plain,
                 )
             )

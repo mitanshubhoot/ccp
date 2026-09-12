@@ -10,7 +10,6 @@ response are stored on the verdict for replay. Models extract, code decides.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -19,7 +18,7 @@ from ccp.config import Settings
 from ccp.evaluators import budget_gate, citations, confidence, registry, rules
 from ccp.evaluators.context import EvaluationContext
 from ccp.evaluators.deterministic.common import hr_person_for
-from ccp.evaluators.extraction import schema_for
+from ccp.evaluators.extraction import schema_block, schema_for
 from ccp.evaluators.verdict import TriggerReason, Verdict, evaluation_key
 from ccp.knowledge.graph import TestSpec
 from ccp.llm.budget import BudgetTracker, RunBudget
@@ -121,8 +120,7 @@ def build_query(ctx: EvaluationContext, spec: TestSpec, subject: str) -> tuple[s
 
 
 def _schema_block(meta_model: type[Any]) -> str:
-    schema = meta_model.model_json_schema()
-    return "Extraction schema (JSON Schema):\n" + json.dumps(schema, sort_keys=True)
+    return schema_block(meta_model)
 
 
 def evaluate(

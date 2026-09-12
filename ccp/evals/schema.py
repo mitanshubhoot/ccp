@@ -46,6 +46,7 @@ class JudgeResult(BaseModel):
     rubric: str | None = None
     variant: str = "normal"
     guardrail_events: list[str] = Field(default_factory=list)
+    usage: dict[str, Any] | None = None  # the judge call's tokens and cost
 
 
 class CaseResult(BaseModel):

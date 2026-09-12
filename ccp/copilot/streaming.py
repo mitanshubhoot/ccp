@@ -12,7 +12,8 @@ import time
 from collections.abc import Callable
 
 _KEY = re.compile(r'"text"\s*:\s*"')
-_PARTIAL_ESCAPE = re.compile(r"\\(u[0-9a-fA-F]{0,3})?$")
+# an incomplete escape, or a complete high surrogate that must wait for its low half
+_PARTIAL_ESCAPE = re.compile(r"\\(u[0-9a-fA-F]{0,3}|u[dD][89abAB][0-9a-fA-F]{2})?$")
 
 
 def _unescaped_quote(raw: str) -> int | None:

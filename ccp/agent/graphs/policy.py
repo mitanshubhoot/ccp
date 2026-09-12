@@ -15,7 +15,9 @@ The graph has no write tool. The runner writes the draft file and opens the appr
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from datetime import datetime
 from typing import Any
 
@@ -74,28 +76,22 @@ def _on_tool_result(state: AgentState, tool: str, result: dict[str, Any]) -> dic
     return {"retrieved_chunks": chunks, "evidence_coverage": {"policy_document": bool(chunks)}}
 
 
+def token_ref(token: str) -> str:
+    """A short stable reference to a forbidden token, so an event can say which token was
+    removed without carrying the other tenant's name into the log or the terminal."""
+    return hashlib.sha256(token.lower().encode("utf-8")).hexdigest()[:8]
+
+
 def scrub_text(text: str, forbidden_tokens: list[str]) -> tuple[str, list[str]]:
-    """Secrets patterns first (S6), then other tenants' names (S9). Returns the text and events."""
+    """Secrets patterns first (S6), then other tenants' names (S9), whole words only, any
+    case. Returns the text and events that reference the removed token by hash."""
     cleaned, hits = redact(text)
     events = [f"draft_secret_redacted:{h}" for h in hits]
-    for token in sorted(set(forbidden_tokens), key=len, reverse=True):
-        if not token:
-            continue
-        lowered = cleaned.lower()
-        if token.lower() in lowered:
-            count = lowered.count(token.lower())
-            start = 0
-            pieces: list[str] = []
-            while True:
-                idx = lowered.find(token.lower(), start)
-                if idx < 0:
-                    pieces.append(cleaned[start:])
-                    break
-                pieces.append(cleaned[start:idx])
-                pieces.append("[REDACTED:other_tenant]")
-                start = idx + len(token)
-            cleaned = "".join(pieces)
-            events.append(f"draft_other_tenant_redacted:{token}:{count}")
+    for token in sorted({t for t in forbidden_tokens if t}, key=len, reverse=True):
+        pattern = re.compile(rf"(?<![\w-]){re.escape(token)}(?![\w-])", re.IGNORECASE)
+        cleaned, count = pattern.subn("[REDACTED:other_tenant]", cleaned)
+        if count:
+            events.append(f"draft_other_tenant_redacted:{token_ref(token)}:{count}")
     return cleaned, events
 
 

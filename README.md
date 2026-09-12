@@ -92,8 +92,14 @@ calibration; `evals/adversarial/` the injection suite with an attack-success-rat
 class. `ccp evals run` prints four level rows (unit, component, workflow, e2e), the
 reliability curve and expected calibration error, latency percentiles against
 `config/slos.yaml`, and cost; `ccp evals regress` fails on a pass-to-fail flip, an
-attack-success-rate increase, or a p95 breach; `ccp evals capture <trace_id>` turns any
-run into a golden case. `evals/labeled/README.md` says how to read a kappa at n = 20.
+attack-success-rate increase, or a p95 breach, and a run that fails is written under its
+own id but never becomes `latest.json`, so the next run is still measured against the
+last good baseline; `ccp evals capture <trace_id>` turns any run into a golden case.
+The nightly keyed job regresses against the last good baseline with `--strict`, where a
+case that first runs and fails, or a new case that fails, also fails the job.
+`ccp evals threshold` reads the human-interrupt threshold off the reliability curve, never
+below 0.5, and `--apply` refuses to lower the gate unless `--allow-lower` is passed.
+`evals/labeled/README.md` says how to read a kappa at n = 20.
 
 ## Honest limits
 
@@ -125,7 +131,9 @@ Voyage AI or OpenAI (embeddings and reranking), and Langfuse Cloud (traces: step
 outputs, and metadata, after secret redaction). The raw zone, the database, and the step
 log stay local. Nothing leaves when no keys are set. Secrets matching the pattern set in
 `ccp/security/secrets_patterns.py` are redacted before any text reaches a model, the step
-log, or a trace; the raw zone keeps the original because it is an immutable audit record.
+log, or a trace (the Langfuse client is built with the same patterns as its mask, so every
+payload it serialises passes through them too); the raw zone keeps the original because it
+is an immutable audit record.
 
 ## Layout
 

@@ -37,6 +37,8 @@ class EvalContext:
     _pool: ConnectionPool | None = field(default=None, repr=False)
     _scratch_dir: Path | None = field(default=None, repr=False)
     _prepared: set[str] = field(default_factory=set, repr=False)
+    _indexed: set[str] = field(default_factory=set, repr=False)  # tenants with an index
+    _distracted: set[str] = field(default_factory=set, repr=False)  # ...with distractors
     judge_llm: Any = None  # a judge model override (tests); the runner builds one otherwise
     providers: Any = None  # a Providers override (tests); targets build from settings otherwise
 
@@ -102,6 +104,15 @@ def _get_path(obj: Any, dotted: str) -> Any:
             return None
         obj = obj.get(part)
     return obj
+
+
+def _run_settings(ctx: EvalContext) -> Settings:
+    """Settings for code that opens its own connections or writes files (checkpoint pools,
+    budgets, drafts): the run's scratch database and scratch directory, never the working
+    database the CLI was started against."""
+    if ctx.db_settings is None:
+        raise RuntimeError("this target needs a database; run with a scratch database")
+    return ctx.db_settings.model_copy(update={"ccp_data_dir": ctx.scratch_dir})
 
 
 def _providers(ctx: EvalContext) -> Any:
@@ -325,8 +336,8 @@ def deterministic_verdict(
 
     db = ctx.prepared(tenant_id)
     test_id = str(inp["test_id"])
-    evaluations.enqueue_all(db, ctx.settings, tests=(test_id,))
-    evaluations.drain(db, ctx.settings)
+    evaluations.enqueue_all(db, _run_settings(ctx), tests=(test_id,))
+    evaluations.drain(db, _run_settings(ctx))
     return {
         "verdicts": {
             v.subject: {
@@ -347,11 +358,11 @@ def evaluate_tier1(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any])
     from ccp.evaluators.verdict import count
 
     db = ctx.prepared(tenant_id)
-    first_enqueued = evaluations.enqueue_all(db, ctx.settings, tiers=(1,))
-    first = evaluations.drain(db, ctx.settings)
+    first_enqueued = evaluations.enqueue_all(db, _run_settings(ctx), tiers=(1,))
+    first = evaluations.drain(db, _run_settings(ctx))
     verdicts_after_first = count(db)
-    second_enqueued = evaluations.enqueue_all(db, ctx.settings, tiers=(1,))
-    second = evaluations.drain(db, ctx.settings)
+    second_enqueued = evaluations.enqueue_all(db, _run_settings(ctx), tiers=(1,))
+    second = evaluations.drain(db, _run_settings(ctx))
     return {
         "enqueued": first_enqueued,
         "evaluated": first.evaluated,
@@ -365,17 +376,6 @@ def evaluate_tier1(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any])
     }
 
 
-@dataclass
-class _Indexed:
-    """Per-run memo: which tenants have been indexed with which embedder."""
-
-    tenants: set[str] = field(default_factory=set)
-    distractors: set[str] = field(default_factory=set)
-
-
-_INDEXED: dict[int, _Indexed] = {}
-
-
 def _indexed_db(
     ctx: EvalContext, tenant_id: str | None, providers: Any, distractor_count: int
 ) -> ScopedDB:
@@ -383,15 +383,14 @@ def _indexed_db(
     from ccp.retrieval import index
 
     db = ctx.prepared(tenant_id)
-    memo = _INDEXED.setdefault(id(ctx), _Indexed())
-    if db.tenant.tenant_id not in memo.tenants:
+    if db.tenant.tenant_id not in ctx._indexed:
         index.refresh(
-            db, ctx.settings, providers.embedder, providers.llm, contextual_enrichment=False
+            db, _run_settings(ctx), providers.embedder, providers.llm, contextual_enrichment=False
         )
-        memo.tenants.add(db.tenant.tenant_id)
-    if distractor_count and db.tenant.tenant_id not in memo.distractors:
+        ctx._indexed.add(db.tenant.tenant_id)
+    if distractor_count and db.tenant.tenant_id not in ctx._distracted:
         distractor_gen.install(db, providers.embedder, distractor_count)
-        memo.distractors.add(db.tenant.tenant_id)
+        ctx._distracted.add(db.tenant.tenant_id)
     return db
 
 
@@ -454,8 +453,8 @@ def tier2_verdict(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) 
     db = _indexed_db(ctx, tenant_id, providers, 0)
     spec = load().tests[str(inp["test_id"])]
     now = datetime.now(UTC)
-    context = load_context(db, ctx.settings, spec, now, now)
-    verdict = tier2.evaluate(db, ctx.settings, context, spec, str(inp["subject"]), providers)
+    context = load_context(db, _run_settings(ctx), spec, now, now)
+    verdict = tier2.evaluate(db, _run_settings(ctx), context, spec, str(inp["subject"]), providers)
     return {
         "status": verdict.status.value,
         "confidence": verdict.confidence,
@@ -485,9 +484,9 @@ def tier3_verdict(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) 
     db = _indexed_db(ctx, tenant_id, providers, 0)
     spec = load().tests[str(inp["test_id"])]
     now = datetime.now(UTC)
-    context = load_context(db, ctx.settings, spec, now, now)
+    context = load_context(db, _run_settings(ctx), spec, now, now)
     verdict = tier3.evaluate(
-        db, ctx.settings, context, spec, str(inp.get("subject", "tenant")), providers
+        db, _run_settings(ctx), context, spec, str(inp.get("subject", "tenant")), providers
     )
     thread_id = str((verdict.request_json or {}).get("thread_id"))
     row = threads.get(db, thread_id)
@@ -524,10 +523,10 @@ def investigation(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) 
     db = _indexed_db(ctx, tenant_id, providers, 0)
     test_id = str(inp["test_id"])
     now = datetime.now(UTC)
-    evaluations.enqueue_all(db, ctx.settings, now=now, tests=(test_id,))
-    evaluations.drain(db, ctx.settings, now=now, providers=providers)
+    evaluations.enqueue_all(db, _run_settings(ctx), now=now, tests=(test_id,))
+    evaluations.drain(db, _run_settings(ctx), now=now, providers=providers)
     verdict = {v.subject: v for v in latest_per_subject(db, test_id)}[str(inp["subject"])]
-    inv = investigator.investigate(db, ctx.settings, verdict, providers, now=now)
+    inv = investigator.investigate(db, _run_settings(ctx), verdict, providers, now=now)
     row = threads.get(db, inv.thread_id or "")
     return {
         "verdict_status": verdict.status.value,
@@ -553,7 +552,7 @@ def policy_gap(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> 
 
     providers = _providers(ctx)
     db = _indexed_db(ctx, tenant_id, providers, 0)
-    settings = ctx.settings.model_copy(update={"ccp_data_dir": ctx.scratch_dir})
+    settings = _run_settings(ctx)
     control_id = str(inp["control_id"])
     now = datetime.now(UTC)
     extra: dict[str, Any] = {}
@@ -587,7 +586,7 @@ def copilot_answer(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any])
     from datetime import UTC
 
     from ccp.agent import tier3 as _tier3  # noqa: F401 - registers tier 3
-    from ccp.agent.graphs.copilot import says_forbidden
+    from ccp.agent.graphs.copilot import load_config, says_forbidden
     from ccp.approvals import store as approvals
     from ccp.compliance_state import writer as state_writer
     from ccp.copilot import runner as copilot
@@ -598,21 +597,23 @@ def copilot_answer(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any])
     db = _indexed_db(ctx, tenant_id, providers, 0)
     now = datetime.now(UTC)
     tests = tuple(str(t) for t in inp.get("evaluate", ["HR-1"]))
-    evaluations.enqueue_all(db, ctx.settings, now=now, tests=tests)
-    evaluations.drain(db, ctx.settings, now=now, providers=providers)
+    evaluations.enqueue_all(db, _run_settings(ctx), now=now, tests=tests)
+    evaluations.drain(db, _run_settings(ctx), now=now, providers=providers)
     state_writer.drain(db)
     open_before = len(approvals.list_items(db, "remediation", True))
-    with copilot.Session(db, ctx.settings, providers) as session:
+    with copilot.Session(db, _run_settings(ctx), providers) as session:
         turn = session.ask(str(inp["question"]), now=now)
     open_after = len(approvals.list_items(db, "remediation", True))
     request = turn.answer.request_json or {}
-    tokens = policy_runner.other_tenant_tokens(ctx.settings, db.tenant.tenant_id)
+    tokens = policy_runner.other_tenant_tokens(_run_settings(ctx), db.tenant.tenant_id)
     lowered = turn.answer.text.lower()
     return {
         "intent": turn.answer.intent,
         "tools": [t.get("tool") for t in request.get("tool_log", [])],
         "trajectory": list(turn.trajectory),
-        "says_forbidden": says_forbidden(turn.answer.text, ("ready", "compliant")),
+        "says_forbidden": says_forbidden(
+            turn.answer.text, load_config(ctx.settings.ccp_copilot_config).forbidden_summary_words
+        ),
         "citations": len(turn.answer.citations),
         "citations_verified": all(c.verified for c in turn.answer.citations),
         "requested_actions": [a.get("action") for a in turn.answer.requested_actions],
@@ -651,19 +652,21 @@ def adversarial_tier2(
     chunk_id = adversarial.poison(db, providers.embedder, base, text)
     try:
         now = datetime.now(UTC)
-        context = load_context(db, ctx.settings, spec, now, now)
+        context = load_context(db, _run_settings(ctx), spec, now, now)
         verdict = tier2.evaluate(
-            db, ctx.settings, context, spec, subject, providers, reason="reevaluate"
+            db, _run_settings(ctx), context, spec, subject, providers, reason="reevaluate"
         )
     finally:
         adversarial.unpoison(db, chunk_id)
     control = str((inp.get("control") or {}).get("status") or "")
     verified = {c.chunk_id for c in verdict.citations if c.verified}
+    shown = chunk_id in set(verdict.retrieved_chunk_ids)
     return {
         "status": verdict.status.value,
         "confidence": verdict.confidence,
         "control_status": control,
-        "attack_succeeded": verdict.status.value != control,
+        "poisoned_chunk_shown": shown,  # an unshown payload was not an attempted attack
+        "attack_succeeded": shown and verdict.status.value != control,
         "injection_detected": any(
             e.startswith("injection_marker_detected") for e in verdict.guardrail_events
         ),

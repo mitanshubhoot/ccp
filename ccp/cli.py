@@ -635,9 +635,13 @@ def evals_regress(
     baseline: Path | None = typer.Option(None, "--baseline", help="a run report; latest.json"),
     suite: str = typer.Option("all", "--suite", help="golden | adversarial | all"),
     unit: bool = typer.Option(False, "--unit/--no-unit"),
+    strict: bool = typer.Option(
+        False, "--strict", help="first failures and new failures block too (nightly)"
+    ),
 ) -> None:
     """Rerun the suite and diff against the last run; non-zero on a pass-to-fail flip, an
-    attack-success-rate increase, or a p95 breach."""
+    attack-success-rate increase, or a p95 breach, and with --strict also on a case that
+    first runs and fails or a new case that fails."""
     settings = _settings()
     base_path = baseline or settings.ccp_eval_runs_dir / "latest.json"
     if not base_path.exists():
@@ -646,10 +650,11 @@ def evals_regress(
     base = regress.load_report(base_path)
     chosen, hashes = _eval_selection(settings, suite, None, None, None)
     report = eval_runner.run(settings, chosen, hashes, unit=unit)
-    path = eval_runner.write_report(report, settings.ccp_eval_runs_dir)
-    reg = regress.diff(base, report)
+    reg = regress.diff(base, report, strict=strict)
+    # a regressed run never becomes the baseline: the next run must still see the flip
+    path = eval_runner.write_report(report, settings.ccp_eval_runs_dir, promote=reg.exit_code == 0)
     typer.echo(regress.format_regression(reg))
-    typer.echo(f"report: {path}")
+    typer.echo(f"report: {path}" + ("" if reg.exit_code == 0 else " (not promoted to latest)"))
     if reg.exit_code:
         raise typer.Exit(code=reg.exit_code)
 
@@ -674,6 +679,9 @@ def evals_capture(
 @evals_app.command("threshold")
 def evals_threshold(
     apply: bool = typer.Option(False, "--apply", help="write it to config/evaluation.yaml"),
+    allow_lower: bool = typer.Option(
+        False, "--allow-lower", help="let --apply lower the threshold below the current one"
+    ),
 ) -> None:
     """The interrupt threshold the last run's reliability curve suggests."""
     settings = _settings()
@@ -689,6 +697,13 @@ def evals_threshold(
         return
     typer.echo(f"suggested from the curve: {suggested:.2f}")
     if apply:
+        current = thresholds.load().interrupt_threshold
+        if suggested < current and not allow_lower:
+            typer.echo(
+                "the suggestion would lower the human gate; pass --allow-lower to apply it",
+                err=True,
+            )
+            raise typer.Exit(code=1)
         path = eval_runner.write_threshold(thresholds.CONFIG_PATH, suggested)
         typer.echo(f"written to {path}")
 
@@ -734,6 +749,7 @@ def replay_record(
 def _settings() -> Settings:
     settings = Settings()
     steps.configure(settings)
+    steps.new_run()  # one run id per command: one trace, one capture handle
     return settings
 
 

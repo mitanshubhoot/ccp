@@ -152,6 +152,22 @@ class StepRecord:
             "gen_ai.usage.cache_creation_input_tokens": cache_write,
         }
 
+    def add_usage(
+        self,
+        *,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read: int = 0,
+        cache_write: int = 0,
+    ) -> None:
+        """Accumulate usage (a node step may make several model calls)."""
+        self.usage(
+            input_tokens=self.usage_raw.get("input_tokens", 0) + input_tokens,
+            output_tokens=self.usage_raw.get("output_tokens", 0) + output_tokens,
+            cache_read=self.usage_raw.get("cache_read", 0) + cache_read,
+            cache_write=self.usage_raw.get("cache_write", 0) + cache_write,
+        )
+
     def event(self, name: str) -> None:
         """Record a guardrail or degrade event, e.g. 'injection_marker_detected:chunk_42'."""
         self.events.append(name)
@@ -171,17 +187,29 @@ class StepRecord:
         )
 
 
-def graph_callbacks() -> list[Any]:
-    """LangChain callbacks bound to the current step's observation (empty without a sink),
-    for ``graph.stream(..., config={"callbacks": ...})``."""
+def note_model_call(
+    model_id: str | None,
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read: int = 0,
+    cache_write: int = 0,
+    prompt_version: str | None = None,
+) -> None:
+    """Attribute a model call to the current step, so cost accounting sees every call the
+    agents and the judge make, not only tier 2's."""
     record = _current.get()
-    if _sink is None or record is None or record.handle is None:
-        return []
-    try:
-        return list(_sink.callbacks(record.handle))
-    except Exception as exc:  # noqa: BLE001
-        _disable_sink(exc)
-        return []
+    if record is None or not model_id:
+        return
+    record.model_id = model_id
+    if prompt_version:
+        record.prompt_version = prompt_version
+    record.add_usage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read=cache_read,
+        cache_write=cache_write,
+    )
 
 
 def _offload(step_id: str, kind: str, value: Any) -> Any:

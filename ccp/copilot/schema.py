@@ -30,7 +30,7 @@ class CopilotAnswer(BaseModel):
     prompt_version: str
     guardrail_events: tuple[str, ...] = ()
     latency_ms: float | None = None
-    first_token_ms: float | None = None  # streaming arrives with Layer 12's Phase 16 work
+    first_token_ms: float | None = None  # ms to the first streamed delta; None unstreamed
     fence_nonce: str | None = None
     request_json: dict[str, Any] | None = None
     response_json: dict[str, Any] | None = None
@@ -106,12 +106,5 @@ def get(db: ScopedDB, answer_id: str) -> CopilotAnswer | None:
 def for_thread(db: ScopedDB, thread_id: str) -> list[CopilotAnswer]:
     rows = db.fetch_all(
         f"SELECT {_COLUMNS} FROM copilot_answers WHERE thread_id = %s ORDER BY turn", (thread_id,)
-    )
-    return [_from_row(r) for r in rows]
-
-
-def list_recent(db: ScopedDB, limit: int = 50) -> list[CopilotAnswer]:
-    rows = db.fetch_all(
-        f"SELECT {_COLUMNS} FROM copilot_answers ORDER BY created_at DESC LIMIT %s", (limit,)
     )
     return [_from_row(r) for r in rows]

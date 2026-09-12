@@ -21,7 +21,7 @@ from ccp.agent.graphs import investigator as graph_module
 from ccp.agent.tools import ToolContext, bind_tools
 from ccp.approvals import store as approvals
 from ccp.config import Settings
-from ccp.evaluators import targets
+from ccp.evaluators import budget_gate, targets
 from ccp.evaluators import verdict as verdicts
 from ccp.evaluators.tier2 import AITierUnavailable, Providers
 from ccp.evaluators.verdict import Citation, Verdict
@@ -79,8 +79,9 @@ def investigate(
     if existing is not None:
         return existing
     moment = now or datetime.now(UTC)
+    budget_gate.check_daily_budget(db, moment)  # ParkedError past the cap
     thread_id = checkpoints.thread_id_for(db.tenant, "investigate", verdict.verdict_id, str(ULID()))
-    graph, pool, _tracker = _build(db, settings, providers, moment)
+    graph, pool, tracker = _build(db, settings, providers, moment)
     threads.create(db, thread_id, GRAPH, verdict.test_id, verdict.subject_key)
     config = {"configurable": {"thread_id": thread_id}}
     initial: dict[str, Any] = {
@@ -106,14 +107,14 @@ def investigate(
             tenant=db.tenant,
             inputs={"verdict_id": verdict.verdict_id, "thread_id": thread_id},
         ) as s:
-            run_config = {**config, "callbacks": steps.graph_callbacks()}
-            for update in graph.stream(initial, run_config, stream_mode="updates"):
+            for update in graph.stream(initial, config, stream_mode="updates"):
                 trajectory.extend(str(k) for k in update)
             final = dict(graph.get_state(config).values.get("final") or {})
             if not final:
                 raise RuntimeError("investigator graph finished without a result")
             investigation = _finish(db, verdict, final, s)
             threads.mark_finished(db, thread_id, verdict.verdict_id, trajectory)
+            budget_gate.record_spend(db, tracker.usd, tracker.tokens, s.step_id, moment)
             s.set_output(
                 {"investigation_id": investigation.investigation_id, "trajectory": trajectory}
             )

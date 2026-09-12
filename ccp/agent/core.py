@@ -16,7 +16,6 @@ of what every graph needs. Graph modules are short declarations over these facto
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -31,7 +30,7 @@ from ccp.agent.allowlists import check_allowlist
 from ccp.agent.state import AgentState
 from ccp.agent.tools import BoundTool
 from ccp.evaluators import citations
-from ccp.evaluators.extraction import SchemaMeta
+from ccp.evaluators.extraction import SchemaMeta, schema_block
 from ccp.ingest.consumers import RetryableError
 from ccp.llm.budget import BudgetTracker
 from ccp.llm.client import LLMClient, SystemBlock, tool_result_message
@@ -228,11 +227,7 @@ def make_structured_node(
         prompt = load_prompt(prompt_version)
         system = [
             SystemBlock(prompt.text),
-            SystemBlock(
-                "Extraction schema (JSON Schema):\n"
-                + json.dumps(meta.model.model_json_schema(), sort_keys=True),
-                cache=True,
-            ),
+            SystemBlock(schema_block(meta.model), cache=True),
         ]
         evidence = framed.text if shown else "(no fenced evidence was gathered)\n"
         user = (
@@ -247,6 +242,14 @@ def make_structured_node(
             tracker=deps.tracker,
             reasoning=deps.reasoning,
             on_token=deps.stream if stream else None,
+        )
+        steps.note_model_call(
+            extraction.model,
+            input_tokens=extraction.usage.input_tokens,
+            output_tokens=extraction.usage.output_tokens,
+            cache_read=extraction.usage.cache_read_input_tokens,
+            cache_write=extraction.usage.cache_creation_input_tokens,
+            prompt_version=prompt_version,
         )
         fields = extraction.parsed.model_dump(mode="json")
         events = list(framed.events)
@@ -301,6 +304,9 @@ def make_tool_loop(
             "evidence_coverage": {},
             "context": dict(state.get("context") or {}),
         }
+        first_request: dict[str, Any] | None = None
+        last_response: Any = None
+        last_model: str | None = None
         calls_made = 0
         while calls_made < max_calls:
             turn = llm.chat(
@@ -311,6 +317,19 @@ def make_tool_loop(
                 tracker=deps.tracker,
                 reasoning=deps.reasoning,
             )
+            steps.note_model_call(
+                turn.model,
+                input_tokens=turn.usage.input_tokens,
+                output_tokens=turn.usage.output_tokens,
+                cache_read=turn.usage.cache_read_input_tokens,
+                cache_write=turn.usage.cache_creation_input_tokens,
+                prompt_version=prompt_version,
+            )
+            if first_request is None:
+                first_request = dict(turn.request)
+            last_response, last_model = turn.response, turn.model
+            if turn.stop_reason not in ("tool_use", "end_turn", ""):
+                updates["guardrail_events"].append(f"tool_loop_stopped:{name}:{turn.stop_reason}")
             messages.append({"role": "assistant", "content": turn.assistant_content})
             if not turn.tool_calls:
                 break
@@ -350,6 +369,16 @@ def make_tool_loop(
                     updates["guardrail_events"].append(f"tool_loop_budget_exhausted:{name}")
                     break
         updates["messages"] = messages
+        if first_request is not None:  # replay can check the gather prompt too
+            updates["requests"] = {
+                name: {
+                    "request": first_request,
+                    "response": last_response,
+                    "model": last_model,
+                    "prompt_version": prompt_version,
+                    "prompt_sha256": prompt.sha256,
+                }
+            }
         return updates
 
     return node

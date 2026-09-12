@@ -16,6 +16,7 @@ from ccp.config import Settings
 from ccp.copilot import runner
 from ccp.evaluators import runner as evaluations
 from ccp.evaluators.tier2 import Providers
+from ccp.evaluators.verdict import latest_per_subject
 from ccp.remediation import github_admin, proposals
 from ccp.remediation import runner as remediation
 from ccp.retrieval import index
@@ -39,10 +40,28 @@ def world(base_settings: Settings) -> Iterator[tuple[Settings, ScopedDB, Provide
         yield settings, acme, providers
 
 
+def _proposal_ids(db: ScopedDB, verdict_id: str) -> set[str]:
+    return {p.proposal_id for p in proposals.for_verdict(db, verdict_id)}
+
+
+def _all_proposal_ids(db: ScopedDB) -> set[str]:
+    return {
+        p.proposal_id
+        for v in latest_per_subject(db, "HR-1")
+        for p in proposals.for_verdict(db, v.verdict_id)
+    }
+
+
+def _open_ids(db: ScopedDB) -> set[str]:
+    return {i.approval_id for i in approvals.list_items(db, "remediation", True)}
+
+
 def test_fix_this_refuses_the_write_tool_and_opens_an_approval_only_after_yes(world) -> None:  # type: ignore[no-untyped-def]
     settings, acme, providers = world
     assert not settings.ccp_remediation_live
     recorder = github_admin.RecordingGitHubAdmin()
+    before_proposals = _all_proposal_ids(acme)
+    before_open = _open_ids(acme)
     with runner.Session(acme, settings, providers) as session:
         turn = session.ask("Fix HR-1 for Jane Smith.", now=NOW)
         log = (turn.answer.request_json or {}).get("tool_log", [])
@@ -52,8 +71,9 @@ def test_fix_this_refuses_the_write_tool_and_opens_an_approval_only_after_yes(wo
         assert [a["action"] for a in turn.answer.requested_actions] == ["remove_repo_collaborator"]
         assert len(turn.pending) == 1
         verdict_id = turn.pending[0].verdict_id
-        assert proposals.for_verdict(acme, verdict_id) == []  # nothing before the yes
-        assert approvals.list_items(acme, "remediation", True) == []
+        # nothing is written by the turn itself: the same rows exist before and after it
+        assert _proposal_ids(acme, verdict_id) <= before_proposals
+        assert _open_ids(acme) == before_open
         opened = session.confirm(turn, now=NOW)
     assert len(opened.approval_ids) == 1
     item = approvals.get(acme, opened.approval_ids[0])
@@ -83,3 +103,35 @@ def test_three_requested_actions_yield_two_approvals_and_a_note(world) -> None: 
     # the repo-collaborator item was reused from the first test (already approved there);
     # the org-membership item is new and open
     assert any(i is not None and i.is_open for i in items)
+
+
+def test_an_action_on_another_tenants_repo_is_rejected_and_opens_nothing(world) -> None:  # type: ignore[no-untyped-def]
+    settings, acme, providers = world
+    from ccp.evaluators.extraction.investigation import ProposalTarget
+
+    llm = providers.llm
+    base = llm.handler
+
+    def extract(schema, system, user):  # type: ignore[no-untyped-def]
+        out = base(schema, system, user)
+        if schema.__name__ == "CopilotAnswerDraft" and out.requested_actions:
+            out.requested_actions[0].target = ProposalTarget(
+                repo="globex-example/platform", login="jsmith"
+            )
+        return out
+
+    llm.handler = extract
+    try:
+        before = _all_proposal_ids(acme)
+        with runner.Session(acme, settings, providers) as session:
+            turn = session.ask("Fix HR-1 for Jane Smith.", now=NOW)
+            assert turn.answer.requested_actions and turn.pending == ()
+            assert turn.rejected and any("unknown_repo" in e for e in turn.rejected)
+            assert set(turn.rejected) <= set(
+                turn.answer.guardrail_events
+            )  # durable, not only logged
+            opened = session.confirm(turn, now=NOW)
+        assert opened.approval_ids == () and opened.proposal_ids == ()
+        assert _all_proposal_ids(acme) == before
+    finally:
+        llm.handler = base

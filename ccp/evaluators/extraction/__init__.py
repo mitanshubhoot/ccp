@@ -3,6 +3,7 @@ sibling `x_citation`; the model never returns a status or a confidence."""
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from pydantic import BaseModel
@@ -78,6 +79,13 @@ def _agent_schemas() -> dict[str, type[BaseModel]]:
     }
 
 
+def schema_block(model: type[BaseModel]) -> str:
+    """The system block that carries a schema (tier 2, every structured node, replay)."""
+    return "Extraction schema (JSON Schema):\n" + json.dumps(
+        model.model_json_schema(), sort_keys=True
+    )
+
+
 def schema_model(name: str) -> type[BaseModel] | None:
     """Any structured-output schema the platform sends, by class name (replay needs every
     one, not only the tier 2 and tier 3 extraction schemas)."""
@@ -87,4 +95,4 @@ def schema_model(name: str) -> type[BaseModel] | None:
     return _agent_schemas().get(name)
 
 
-__all__ = ["SCHEMAS", "Cited", "SchemaMeta", "schema_for", "schema_model"]
+__all__ = ["SCHEMAS", "Cited", "SchemaMeta", "schema_block", "schema_for", "schema_model"]

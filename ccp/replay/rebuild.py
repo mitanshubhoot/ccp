@@ -20,8 +20,8 @@ from ccp.config import Settings
 from ccp.copilot import schema as copilot_schema
 from ccp.evaluators import verdict as verdicts
 from ccp.evaluators.context import load_context
-from ccp.evaluators.extraction import schema_model
-from ccp.evaluators.tier2 import _schema_block, build_query
+from ccp.evaluators.extraction import schema_block, schema_model
+from ccp.evaluators.tier2 import build_query
 from ccp.investigation import schema as investigations
 from ccp.knowledge import graph as knowledge
 from ccp.llm.budget import BudgetTracker, RunBudget
@@ -31,8 +31,6 @@ from ccp.policy import schema as policy_schema
 from ccp.security import prompt_guard
 from ccp.security.prompt_guard import FramedChunk
 from ccp.storage.scoped import ScopedDB
-
-KINDS = ("verdict", "investigation", "gap_report", "copilot_answer")
 
 
 @dataclass(frozen=True)
@@ -156,7 +154,7 @@ def check_call(
         model_cls = schema_model(schema)
         if model_cls is None:
             diff.append(f"schema {schema!r} is not registered")
-        elif len(system) >= 2 and system[1][0] != _schema_block(model_cls):
+        elif len(system) >= 2 and system[1][0] != schema_block(model_cls):
             diff.append(f"system[1] differs from the JSON schema block of {schema}")
     user = _user_text(request)
     fenced = 0
@@ -165,7 +163,7 @@ def check_call(
         fenced = len(blocks)
         if nonce and blocks and any(b.nonce != nonce for b in blocks):
             diff.append("a fenced block carries a different nonce than the record")
-        if nonce and nonce not in user:
+        if nonce and blocks and nonce not in user:
             diff.append("the record's fence nonce does not appear in the stored request")
         chunks = _chunk_texts(db, [b.chunk_id for b in blocks])
         for block in blocks:

@@ -32,8 +32,8 @@ def _confidence_cases(cases: list[CaseResult]) -> list[tuple[float, bool]]:
     whose expectation names a status; correct means the status expectation held."""
     out: list[tuple[float, bool]] = []
     for r in cases:
-        if r.skipped or r.error or not r.actual:
-            continue
+        if r.skipped or r.error or not r.actual or r.attack_class is not None:
+            continue  # adversarial cases expect an outcome, not a status
         confidence = r.actual.get("confidence")
         if not isinstance(confidence, int | float) or "status" not in r.actual:
             continue
@@ -75,11 +75,19 @@ def reliability(
     return rows, round(ece, 4), len(points)
 
 
+THRESHOLD_FLOOR = 0.5  # the human gate never drops below this, whatever the curve says
+
+
 def suggested_threshold(
-    rows: list[ReliabilityBin], *, target_accuracy: float = 0.9, min_points: int = 10
+    rows: list[ReliabilityBin],
+    *,
+    target_accuracy: float = 0.9,
+    min_points: int = 10,
+    floor: float = THRESHOLD_FLOOR,
 ) -> float | None:
-    """The lowest bin edge from which every bin above reaches the target accuracy; None
-    until enough points exist to read a threshold off the curve at all."""
+    """The lowest bin edge from which every bin above reaches the target accuracy, never
+    below the floor; None until enough points exist to read a threshold off the curve at
+    all."""
     if sum(r.count for r in rows) < min_points:
         return None
     ordered = sorted(rows, key=lambda r: r.lower)
@@ -88,7 +96,7 @@ def suggested_threshold(
         if all(r.accuracy >= target_accuracy for r in ordered[i:]):
             chosen = row.lower
             break
-    return chosen
+    return None if chosen is None else max(chosen, floor)
 
 
 def attack_success(cases: list[CaseResult]) -> tuple[dict[str, float], dict[str, list[int]]]:
@@ -145,6 +153,41 @@ def cost_by_target(cases: list[CaseResult]) -> dict[str, float]:
         if r.cost_usd:
             out[r.target] = round(out.get(r.target, 0.0) + r.cost_usd, 6)
     return out
+
+
+def usage_since(log_path: Path, offset: int) -> tuple[int, float]:
+    """Tokens and USD of every model-bearing step appended after byte ``offset`` (the log
+    is append-only, so a case's own steps are exactly the bytes it added)."""
+    if not log_path.exists():
+        return 0, 0.0
+    tokens = 0
+    usd = 0.0
+    with log_path.open("rb") as raw_fh:
+        raw_fh.seek(offset)
+        tail = raw_fh.read().decode("utf-8", errors="replace")
+    for raw in tail.splitlines():
+        try:
+            line = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        model = line.get("gen_ai.request.model")
+        if not model:
+            continue
+        inp = int(line.get("gen_ai.usage.input_tokens") or 0)
+        out = int(line.get("gen_ai.usage.output_tokens") or 0)
+        tokens += inp + out
+        recorded = line.get("ccp.cost_usd")
+        if isinstance(recorded, int | float):
+            usd += float(recorded)
+        else:
+            usd += cost.estimate_usd(
+                str(model),
+                input_tokens=inp,
+                output_tokens=out,
+                cache_read_tokens=int(line.get("gen_ai.usage.cache_read_input_tokens") or 0),
+                cache_write_tokens=int(line.get("gen_ai.usage.cache_creation_input_tokens") or 0),
+            )
+    return tokens, round(usd, 6)
 
 
 def usage_between(log_path: Path, start: datetime, end: datetime) -> tuple[int, float]:

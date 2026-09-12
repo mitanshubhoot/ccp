@@ -133,3 +133,35 @@ def test_write_threshold_is_readable_by_the_thresholds_loader(tmp_path: Path) ->
     loaded = thresholds.load(path)
     assert loaded.interrupt_threshold == 0.8
     assert 'read_from_curve_on: "2026-09-12"' in path.read_text(encoding="utf-8")
+
+
+def test_a_first_failure_is_reported_and_a_new_attack_class_counts() -> None:
+    base = _report("b", [_result("k", True, skipped=True)], metrics=RunMetrics(asr={}))
+    current = _report("c", [_result("k", False)], metrics=RunMetrics(asr={"role_play": 0.5}))
+    reg = regress.diff(base, current)
+    assert reg.first_failures == ["k"] and reg.new_failures == [] and reg.flips_to_fail == []
+    assert "first executed and failing" in regress.format_regression(reg)
+    assert reg.asr_increases == {"role_play": [0.0, 0.5]}
+    assert reg.exit_code == 1
+
+
+def test_strict_mode_blocks_first_and_new_failures() -> None:
+    base = _report("b", [_result("k", True, skipped=True)])
+    current = _report("c", [_result("k", False), _result("n", False)])
+    lenient = regress.diff(base, current)
+    assert lenient.first_failures == ["k"] and lenient.new_failures == ["n"]
+    assert lenient.exit_code == 0
+    strict = regress.diff(base, current, strict=True)
+    assert strict.exit_code == 1 and strict.strict
+    assert "mode: strict" in regress.format_regression(strict)
+    assert regress.diff(base, base, strict=True).exit_code == 0
+
+
+def test_write_report_can_skip_promotion(tmp_path: Path) -> None:
+    from ccp.evals.runner import write_report
+
+    report = _report("r1", [_result("a", True)])
+    write_report(report, tmp_path, promote=True)
+    write_report(_report("r2", [_result("a", False)]), tmp_path, promote=False)
+    latest = regress.load_report(tmp_path / "latest.json")
+    assert latest.run_id == "r1" and (tmp_path / "r2.json").exists()

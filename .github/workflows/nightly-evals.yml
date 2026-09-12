@@ -1,13 +1,18 @@
 name: nightly-evals
 
 # The keyed evaluation run (spec.md Layer 11, Phase 17): golden plus adversarial suites with
-# the model, embedding, and judge keys, under a per-run budget and a job-level cost cap, with
-# the report and the calibration file uploaded as artifacts. CI (ci.yml) runs keyless.
+# the model, embedding, and judge keys, regressed strictly against the last good baseline
+# (restored from the Actions cache; only a passing run becomes the next baseline), under a
+# per-run budget and a job-level cost cap, with the reports and the calibration file uploaded
+# as artifacts. CI (ci.yml) runs keyless. Keys are scoped to the two steps that call a model.
 
 on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   evals:
@@ -31,11 +36,7 @@ jobs:
       DATABASE_URL: postgresql://ccp_app:ccp@localhost:5432/ccp
       DATABASE_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/ccp
       CCP_DATA_DIR: ${{ github.workspace }}/data
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
-      LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
-      LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
-      # Per-run budget enforced inside the model client, and the cap for the whole job below.
+      # Per-run budget enforced inside the model client; the job-level cap is checked below.
       CCP_RUN_BUDGET_USD: "0.50"
       NIGHTLY_COST_CAP_USD: "5.00"
     steps:
@@ -45,31 +46,62 @@ jobs:
           python-version: "3.12"
       - run: uv sync --group dev
       - run: uv run ccp db migrate
-      - name: golden and adversarial suites (keyed)
+      - name: restore the last good baseline (evals/runs/latest.json)
+        uses: actions/cache@v4
+        with:
+          path: evals/runs/latest.json
+          key: nightly-baseline-${{ github.run_id }}
+          restore-keys: |
+            nightly-baseline-
+      - name: golden and adversarial suites (keyed), strict regression against the baseline
         id: evals
         continue-on-error: true
-        run: uv run ccp evals run --suite all --no-unit
-      - name: cost cap
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+        run: |
+          if [ -f evals/runs/latest.json ]; then
+            uv run ccp evals regress --suite all --no-unit --strict
+          else
+            echo "no baseline restored: this run becomes the baseline"
+            uv run ccp evals run --suite all --no-unit
+          fi
+      - name: judge calibration (keyed)
+        id: calibrate
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: uv run ccp evals calibrate --bootstrap 500
+      - name: cost cap (the newest report, promoted or not)
         run: |
           uv run python - <<'EOF'
-          import json, os, sys
-          report = json.load(open("evals/runs/latest.json", encoding="utf-8"))
+          import json, os, pathlib, sys
+          runs = pathlib.Path("evals/runs")
+          reports = sorted(
+              (p for p in runs.glob("*.json") if p.name != "latest.json"),
+              key=lambda p: p.stat().st_mtime,
+          )
+          if not reports:
+              print("no eval report was written: the suite did not finish; nothing to cap")
+              sys.exit(1)
+          report = json.loads(reports[-1].read_text(encoding="utf-8"))
           spent = float((report.get("metrics") or {}).get("total_cost_usd") or 0.0)
           cap = float(os.environ["NIGHTLY_COST_CAP_USD"])
-          print(f"nightly run cost {spent:.4f} USD (cap {cap:.2f})")
+          print(f"{reports[-1].name}: suite cost {spent:.4f} USD (cap {cap:.2f}); calibration is billed to the per-call budget")
           sys.exit(1 if spent > cap else 0)
           EOF
-      - name: judge calibration (keyed)
-        continue-on-error: true
-        run: uv run ccp evals calibrate --bootstrap 500
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: nightly-evals-${{ github.run_id }}
           path: |
-            evals/runs/latest.json
+            evals/runs/*.json
             evals/runs/calibration-*.json
           if-no-files-found: warn
-      - name: fail the job if the suites failed
-        if: steps.evals.outcome == 'failure'
-        run: exit 1
+      - name: fail the job if a keyed step failed
+        if: steps.evals.outcome == 'failure' || steps.calibrate.outcome == 'failure'
+        run: |
+          echo "suites: ${{ steps.evals.outcome }}; calibration: ${{ steps.calibrate.outcome }}"
+          exit 1

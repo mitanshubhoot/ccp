@@ -4,16 +4,18 @@ draft file and its approval item, the scrub, and the fixed search argument."""
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from ccp.agent import threads
-from ccp.agent.graphs.policy import TRAJECTORY_DRAFT, TRAJECTORY_GAP, scrub_text
+from ccp.agent.graphs.policy import TRAJECTORY_DRAFT, TRAJECTORY_GAP, scrub_text, token_ref
 from ccp.approvals import store as approvals
 from ccp.config import Settings
+from ccp.evaluators import budget_gate
 from ccp.evaluators.tier2 import Providers
+from ccp.ingest.consumers import ParkedError
 from ccp.llm.client import StubLLMClient
 from ccp.policy import runner, schema
 from ccp.retrieval import index
@@ -110,11 +112,41 @@ def test_scrub_is_case_insensitive_and_reports_counts() -> None:
     assert "Globex" not in cleaned and "GLOBEX" not in cleaned and "ghp_" not in cleaned
     assert cleaned.count("[REDACTED:other_tenant]") == 2
     assert events[0] == "draft_secret_redacted:github_pat_classic"
-    assert any(e.startswith("draft_other_tenant_redacted:Globex Corporation:1") for e in events)
+    ref = token_ref("Globex Corporation")
+    assert f"draft_other_tenant_redacted:{ref}:1" in events
+    assert not any("globex" in e.lower() for e in events)  # the event never names the tenant
+
+
+def test_scrub_matches_whole_words_only_and_keeps_generic_vocabulary() -> None:
+    cleaned, events = scrub_text(
+        "The Globexian corporation, globex-example/platform and Globex's policy.",
+        ["Globex Corporation", "globex-example", "Globex"],
+    )
+    assert cleaned == (
+        "The Globexian corporation, [REDACTED:other_tenant]/platform and"
+        " [REDACTED:other_tenant]'s policy."
+    )
+    assert len(events) == 2 and all(e.startswith("draft_other_tenant_redacted:") for e in events)
 
 
 def test_other_tenant_tokens_come_from_config_only(world) -> None:  # type: ignore[no-untyped-def]
     settings, _, _ = world
     tokens = runner.other_tenant_tokens(settings, "acme")
     assert "Globex Corporation" in tokens and "globex-example" in tokens and "globex" in tokens
+    assert "Corporation" not in tokens  # a generic word names nobody
     assert not any("acme" in t.lower() for t in tokens)
+
+
+def test_an_exhausted_daily_budget_parks_the_policy_agent_and_a_run_records_its_spend(
+    world,
+) -> None:  # type: ignore[no-untyped-def]
+    settings, dbs, providers = world
+    acme = dbs["acme"]
+    fresh = datetime(2026, 9, 20, 12, tzinfo=UTC)  # days no other test spends in
+    assert budget_gate.daily_spend(acme, fresh) == 0.0
+    runner.gap(acme, settings, "CTL-VULN-DISCLOSURE", providers, now=fresh)
+    assert budget_gate.daily_spend(acme, fresh) > 0.0
+    exhausted = fresh + timedelta(days=1)
+    budget_gate.record_spend(acme, 100.0, 0, None, exhausted)
+    with pytest.raises(ParkedError, match="budget_exceeded"):
+        runner.gap(acme, settings, "CTL-VULN-DISCLOSURE", providers, now=exhausted)

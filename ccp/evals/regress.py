@@ -23,6 +23,7 @@ class Regression(BaseModel):
     flips_to_fail: list[str] = Field(default_factory=list)
     flips_to_pass: list[str] = Field(default_factory=list)
     new_failures: list[str] = Field(default_factory=list)  # cases absent from the baseline
+    first_failures: list[str] = Field(default_factory=list)  # skipped before, failing now
     confidence_deltas: list[dict[str, Any]] = Field(default_factory=list)
     cost_delta_usd: float = 0.0
     golden_changed: list[str] = Field(default_factory=list)
@@ -30,10 +31,14 @@ class Regression(BaseModel):
     p95_breaches: list[str] = Field(default_factory=list)
     added_cases: list[str] = Field(default_factory=list)
     removed_cases: list[str] = Field(default_factory=list)
+    strict: bool = False  # first failures and new failures block too (the nightly job)
 
     @property
     def exit_code(self) -> int:
-        return 1 if (self.flips_to_fail or self.asr_increases or self.p95_breaches) else 0
+        blocking = self.flips_to_fail or self.asr_increases or self.p95_breaches
+        if self.strict:
+            blocking = blocking or self.new_failures or self.first_failures
+        return 1 if blocking else 0
 
 
 def load_report(path: Path) -> RunReport:
@@ -50,11 +55,18 @@ def _confidence(r: CaseResult) -> float | None:
 
 
 def diff(
-    baseline: RunReport, current: RunReport, *, confidence_delta: float = CONFIDENCE_DELTA
+    baseline: RunReport,
+    current: RunReport,
+    *,
+    confidence_delta: float = CONFIDENCE_DELTA,
+    strict: bool = False,
 ) -> Regression:
+    """Strict mode is for the keyed nightly job, whose keyless baseline skipped every keyed
+    case: there a case that first runs and fails, or a new case that fails, is the only
+    regression signal available, so it blocks."""
     before = {r.id: r for r in baseline.cases}
     after = {r.id: r for r in current.cases}
-    reg = Regression(baseline_run_id=baseline.run_id, current_run_id=current.run_id)
+    reg = Regression(baseline_run_id=baseline.run_id, current_run_id=current.run_id, strict=strict)
     for case_id, now in after.items():
         was = before.get(case_id)
         if was is None:
@@ -62,6 +74,8 @@ def diff(
             if _executed(now) and not now.passed:
                 reg.new_failures.append(case_id)
             continue
+        if not _executed(was) and _executed(now) and not now.passed:
+            reg.first_failures.append(case_id)  # skipped in the baseline (no key), failing now
         if _executed(was) and _executed(now):
             if was.passed and not now.passed:
                 reg.flips_to_fail.append(case_id)
@@ -83,8 +97,8 @@ def diff(
     )
     if baseline.metrics and current.metrics:
         for klass, rate in current.metrics.asr.items():
-            previous = baseline.metrics.asr.get(klass)
-            if previous is not None and rate > previous:
+            previous = baseline.metrics.asr.get(klass, 0.0)  # unseen before: any success counts
+            if rate > previous:
                 reg.asr_increases[klass] = [round(previous, 3), round(rate, 3)]
     if current.metrics:
         reg.p95_breaches = sorted(
@@ -95,10 +109,16 @@ def diff(
 
 def format_regression(reg: Regression) -> str:
     lines = [f"regression: {reg.baseline_run_id} -> {reg.current_run_id}"]
+    if reg.strict:
+        lines.append("  mode: strict (first failures and new failures block)")
     lines.append(f"  pass -> fail: {reg.flips_to_fail or 'none'}")
     lines.append(f"  fail -> pass: {reg.flips_to_pass or 'none'}")
     if reg.new_failures:
         lines.append(f"  new cases failing: {reg.new_failures}")
+    if reg.first_failures:
+        lines.append(
+            f"  first executed and failing (skipped in the baseline): {reg.first_failures}"
+        )
     if reg.confidence_deltas:
         lines.append(f"  confidence moved by more than {CONFIDENCE_DELTA}:")
         lines.extend(f"    {d['id']}: {d['before']} -> {d['after']}" for d in reg.confidence_deltas)

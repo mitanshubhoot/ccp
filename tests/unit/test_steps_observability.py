@@ -61,7 +61,6 @@ def test_sink_receives_nested_spans_with_one_trace_per_run(log: Path) -> None:
     steps.set_sink(sink)
     run_id = steps.new_run()
     with steps.step("outer", layer="tests", inputs={"q": 1}) as outer:
-        assert steps.graph_callbacks() == []  # the recording sink offers none
         with steps.step("inner", layer="tests", kind="generation") as inner:
             inner.model("claude-haiku-4-5")
             inner.usage(input_tokens=10, output_tokens=5)
@@ -120,3 +119,99 @@ def test_a_failing_sink_is_disabled_without_losing_the_step(log: Path, capsys) -
 
 def test_build_sink_without_keys() -> None:
     assert tracing.build_sink(Settings()) == (None, None)
+
+
+def test_langfuse_sink_uses_the_sdk_keywords_and_nests_by_trace_context() -> None:
+    from types import SimpleNamespace
+
+    made: list[dict] = []  # type: ignore[type-arg]
+
+    class Obs:
+        def __init__(self, n: int) -> None:
+            self.id, self.trace_id, self.updates, self.ended = f"o{n}", "t" * 32, [], False
+
+        def update(self, **kw):  # type: ignore[no-untyped-def]
+            self.updates.append(kw)
+
+        def end(self) -> None:
+            self.ended = True
+
+    def start_observation(
+        *, trace_context=None, name, as_type="span", input=None, output=None, metadata=None, **rest
+    ):  # type: ignore[no-untyped-def]
+        assert not rest, rest  # the real v3/v4 signature has no trace_id / parent_observation_id
+        made.append({"trace_context": trace_context, "name": name, "as_type": as_type})
+        return Obs(len(made))
+
+    sink = tracing.LangfuseSink(
+        SimpleNamespace(start_observation=start_observation, flush=lambda: None)
+    )
+    outer = sink.start(
+        step_id="s1",
+        name="outer",
+        kind="span",
+        trace_key="t" * 32,
+        parent_key=None,
+        inputs={},
+        metadata={},
+    )
+    inner = sink.start(
+        step_id="s2",
+        name="inner",
+        kind="generation",
+        trace_key="t" * 32,
+        parent_key="s1",
+        inputs={},
+        metadata={},
+    )
+    assert made[0]["trace_context"] == {"trace_id": "t" * 32}
+    assert made[1]["trace_context"] == {"trace_id": "t" * 32, "parent_span_id": "o1"}
+    sink.end(
+        inner,
+        output={"ok": 1},
+        metadata={},
+        model="m",
+        usage={"input_tokens": 1, "output_tokens": 2, "cache_read": 3, "cache_write": 4},
+        cost_usd=0.5,
+        error=None,
+    )
+    update = inner[1].updates[0]
+    assert update["usage_details"] == {
+        "input": 1,
+        "output": 2,
+        "cache_read_input_tokens": 3,
+        "cache_creation_input_tokens": 4,
+    }
+    assert (
+        update["cost_details"] == {"total": 0.5} and update["level"] == "DEFAULT" and inner[1].ended
+    )
+    sink.end(outer, output=None, metadata={}, model=None, usage={}, cost_usd=None, error="boom")
+    assert outer[1].updates[0]["level"] == "ERROR" and sink._ids == {}
+
+
+def test_model_calls_inside_a_step_are_attributed_to_it(log: Path) -> None:
+    with steps.step("node.answer", layer="tests") as s:
+        steps.note_model_call(
+            "claude-haiku-4-5", input_tokens=100, output_tokens=10, prompt_version="p1"
+        )
+        steps.note_model_call("claude-haiku-4-5", input_tokens=50, output_tokens=5, cache_read=20)
+        assert s.usage_raw == {
+            "input_tokens": 150,
+            "output_tokens": 15,
+            "cache_read": 20,
+            "cache_write": 0,
+        }
+    line = _lines(log)[-1]
+    assert line["gen_ai.request.model"] == "claude-haiku-4-5" and line["ccp.prompt_version"] == "p1"
+    assert line["ccp.cost_usd"] > 0
+    steps.note_model_call("m", input_tokens=1, output_tokens=1)  # outside any step: a no-op
+
+
+def test_the_registered_mask_redacts_every_string_in_a_payload() -> None:
+    import ccp.security.secrets_patterns  # noqa: F401 - registers the mask at import
+
+    mask = tracing.registered_mask()
+    assert mask is not None
+    payload = {"text": "token ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8", "items": ["ok", {"n": 1}]}
+    masked = mask(data=payload)
+    assert "ghp_" not in masked["text"] and masked["items"] == ["ok", {"n": 1}]

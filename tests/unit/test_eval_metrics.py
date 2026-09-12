@@ -168,3 +168,18 @@ def test_slos_load_from_yaml(tmp_path: Path) -> None:
     assert metrics.load_slos(path) == {"tier2_verdict": 1500.0}
     assert metrics.load_slos(tmp_path / "missing.yaml") == {}
     assert "pipeline" in metrics.load_slos()  # the repository file
+
+
+def test_adversarial_cases_do_not_enter_the_reliability_curve() -> None:
+    cases = [_case(f"a{i}", 0.9, True) for i in range(10)]
+    poisoned = [
+        _case(f"p{i}", 0.9, False, attack="direct_override", succeeded=True) for i in range(5)
+    ]
+    bins, _, n = metrics.reliability(cases + poisoned)
+    assert n == 10 and bins[-1].accuracy == 1.0  # the five successful attacks did not count
+
+
+def test_suggested_threshold_never_drops_below_the_floor() -> None:
+    bins, _, _ = metrics.reliability([_case(f"a{i}", 0.05, True) for i in range(12)])
+    assert bins[0].lower == 0.0 and bins[0].accuracy == 1.0
+    assert metrics.suggested_threshold(bins) == metrics.THRESHOLD_FLOOR

@@ -20,8 +20,19 @@ from ccp.observability import steps
 
 CAPTURED_FILE = "captured.yaml"
 VOLATILE_KEYS = frozenset(
-    {"latency_ms", "thread_id", "verdict_id", "run_id", "text", "reasoning", "created_at"}
-)
+    {
+        "latency_ms",
+        "thread_id",
+        "verdict_id",
+        "run_id",
+        "text",
+        "reasoning",
+        "markdown",
+        "summary",
+        "root_cause",
+        "created_at",
+    }
+)  # model prose flaps between runs; captured cases pin structure, not wording
 REPLAY_KEYS = (
     "retrieved_chunk_ids",
     "chunk_ids",
@@ -43,15 +54,14 @@ def find_step(log_path: Path, trace_id: str) -> dict[str, Any] | None:
                 line = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            line = steps.resolve_blobs(line, log_path)
             name = str(line.get("gen_ai.operation.name") or "")
             if not name.startswith("eval."):
                 continue
             if line.get("ccp.step_id") == trace_id:
-                return dict(line)
+                return steps.resolve_blobs(line, log_path)
             if line.get("ccp.run_id") == trace_id:
                 by_run = dict(line)
-    return by_run
+    return steps.resolve_blobs(by_run, log_path) if by_run is not None else None
 
 
 def _collect(obj: Any, key: str) -> Any:

@@ -20,6 +20,20 @@ import httpx
 from ccp.config import Settings
 
 Usage = dict[str, int]
+MaskFn = Callable[..., Any]  # called by the SDK as mask(data=...)
+_mask: MaskFn | None = None
+
+
+def register_mask(fn: MaskFn | None) -> None:
+    """The function every Langfuse payload passes through before it leaves the machine
+    (the secrets patterns register theirs at import; observability cannot import them
+    itself because of the layer order)."""
+    global _mask
+    _mask = fn
+
+
+def registered_mask() -> MaskFn | None:
+    return _mask
 
 
 class Sink(Protocol):
@@ -46,8 +60,6 @@ class Sink(Protocol):
         cost_usd: float | None,
         error: str | None,
     ) -> None: ...
-
-    def callbacks(self, handle: Any) -> list[Any]: ...
 
     def flush(self) -> None: ...
 
@@ -114,9 +126,6 @@ class RecordingSink:
             }
         )
 
-    def callbacks(self, handle: Any) -> list[Any]:
-        return []
-
     def flush(self) -> None:
         self.flushed += 1
 
@@ -129,9 +138,6 @@ class FailingSink:
 
     def end(self, handle: Any, **kwargs: Any) -> None:
         raise RuntimeError("sink exploded")
-
-    def callbacks(self, handle: Any) -> list[Any]:
-        return []
 
     def flush(self) -> None:
         return None
@@ -156,13 +162,19 @@ class LangfuseSink:
         metadata: dict[str, Any],
     ) -> Any:
         parent = self._ids.get(parent_key) if parent_key else None
+        # The v3/v4 SDK links an observation to a trace and a parent through trace_context
+        # (W3C ids); there are no trace_id / parent_observation_id keywords.
+        trace_context: dict[str, str] = {}
+        if trace_key:
+            trace_context["trace_id"] = trace_key
+        if parent:
+            trace_context["parent_span_id"] = parent
         observation = self._client.start_observation(
             name=name,
             as_type=kind,
             input=inputs,
             metadata=metadata,
-            trace_id=trace_key,
-            parent_observation_id=parent,
+            trace_context=trace_context or None,
         )
         self._ids[step_id] = observation.id
         return (step_id, observation)
@@ -202,20 +214,6 @@ class LangfuseSink:
             observation.end()
             self._ids.pop(step_id, None)
 
-    def callbacks(self, handle: Any) -> list[Any]:
-        """The LangChain callback handler bound under this step's observation, so LangGraph
-        node entries and exits land in the same trace."""
-        try:
-            from langfuse.langchain import CallbackHandler
-        except ImportError:
-            return []
-        _, observation = handle
-        return [
-            CallbackHandler(
-                trace_context={"trace_id": observation.trace_id, "parent_span_id": observation.id}
-            )
-        ]
-
     def flush(self) -> None:
         self._client.flush()
 
@@ -233,6 +231,8 @@ def build_sink(
     secret = settings.langfuse_secret_key
     if public is None or secret is None:
         return None, None
+    if not public.get_secret_value().strip() or not secret.get_secret_value().strip():
+        return None, None  # an empty variable (an unset CI secret) is not a key
     host = settings.langfuse_host
     try:
         (probe or default_probe)(host)
@@ -249,6 +249,7 @@ def build_sink(
             secret_key=secret.get_secret_value(),
             host=host,
             flush_interval=2.0,
+            mask=_mask,
         )
     except Exception as exc:  # noqa: BLE001 - the SDK must never take the run down
         return (

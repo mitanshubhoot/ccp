@@ -56,6 +56,9 @@ def system_param(system: list[SystemBlock]) -> list[dict[str, Any]]:
 
 
 ADAPTIVE_THINKING_PREFIXES = ("claude-sonnet-5", "claude-opus-5", "claude-fable", "claude-mythos")
+# max_tokens bounds the thinking and the answer together; a structured answer behind a
+# 2048-token cap would be cut off mid-JSON on a live reasoning model (a stub never is).
+REASONING_MIN_MAX_TOKENS = 8192
 TEMPERATURE_ZERO_PREFIXES = ("claude-haiku-4-5",)  # models that still accept sampling params
 
 
@@ -69,6 +72,11 @@ def sampling_params(model: str, *, reasoning: bool) -> dict[str, Any]:
     elif not reasoning and model.startswith(TEMPERATURE_ZERO_PREFIXES):
         params["extra_body"] = {"temperature": 0}
     return params
+
+
+def _room_for_thinking(params: dict[str, Any]) -> None:
+    if "thinking" in params:
+        params["max_tokens"] = max(int(params["max_tokens"]), REASONING_MIN_MAX_TOKENS)
 
 
 def _usage(model: str, raw: Any, *, batch: bool = False) -> Usage:
@@ -93,6 +101,29 @@ def _classify(exc: Exception) -> Exception:
     if isinstance(exc, anthropic.APIStatusError):
         return classify_status(exc.status_code, getattr(exc, "message", str(exc)))
     return TerminalModelError(f"{type(exc).__name__}: {exc}")
+
+
+class _Malformed:
+    """The model answered, but not in the schema: the SDK raised while parsing the text.
+    Carries no usage (the SDK discarded the response) and no parsed output."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        self.model: str | None = None
+        self.parsed_output: Any = None
+        self.stop_reason = "malformed"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"malformed": self.reason}
+
+
+def _block_dict(block: Any) -> dict[str, Any]:
+    """A content block as the API accepts it back (signed thinking blocks must return
+    verbatim when a tool-use turn continues)."""
+    dump = getattr(block, "model_dump", None)
+    if callable(dump):
+        return dict(dump(exclude_none=True))
+    return dict(block)
 
 
 class AnthropicClient:
@@ -134,11 +165,27 @@ class AnthropicClient:
         self, params: dict[str, Any], schema: type[Any], on_token: Callable[[str], None]
     ) -> Any:
         """Structured output streamed token by token (spec.md Layer 12); the final message
-        carries parsed_output exactly as the non-streamed call does."""
-        with self._client.messages.stream(**params, output_format=schema) as stream:
-            for text in stream.text_stream:
-                on_token(text)
-            return stream.get_final_message()
+        carries parsed_output exactly as the non-streamed call does. Once a token has
+        reached the caller the stream cannot be retried transparently, so a failure after
+        that point is terminal rather than replayed into the terminal."""
+        emitted = False
+        try:
+            with self._client.messages.stream(**params, output_format=schema) as stream:
+                for text in stream.text_stream:
+                    emitted = True
+                    on_token(text)
+                try:
+                    return stream.get_final_message()
+                except ValueError as exc:
+                    return _Malformed(f"{type(exc).__name__}: {exc}"[:500])
+        except TerminalModelError:
+            raise
+        except Exception as exc:
+            if emitted:
+                raise TerminalModelError(
+                    f"stream interrupted after output began: {type(exc).__name__}: {exc}"
+                ) from exc
+            raise
 
     def extract(
         self,
@@ -159,13 +206,46 @@ class AnthropicClient:
             "messages": [{"role": "user", "content": user}],
             **sampling_params(model, reasoning=reasoning),
         }
+        _room_for_thinking(params)
         request = {**params, "output_format": schema.__name__}
         if on_token is not None:
             response = self._with_retry(lambda: self._stream_parse(params, schema, on_token))
         else:
-            response = self._with_retry(
-                lambda: self._client.messages.parse(**params, output_format=schema)
+            response = self._with_retry(lambda: self._parse_or_malformed(params, schema))
+        usage, parsed = self._settle(model, tracker, response)
+        if parsed is None:  # one re-ask, then terminal (spec.md D9)
+            params["messages"] = [{"role": "user", "content": user + REASK_SUFFIX}]
+            response = self._with_retry(lambda: self._parse_or_malformed(params, schema))
+            second, parsed = self._settle(model, tracker, response)
+            usage = Usage(
+                usage.input_tokens + second.input_tokens,
+                usage.output_tokens + second.output_tokens,
+                usage.cache_read_input_tokens + second.cache_read_input_tokens,
+                usage.cache_creation_input_tokens + second.cache_creation_input_tokens,
+                usage.usd + second.usd,
             )
+            if parsed is None:
+                raise TerminalModelError("schema refusal after one re-ask")
+        return Extraction(
+            parsed=parsed,
+            usage=usage,
+            model=str(getattr(response, "model", None) or model),
+            request=request,
+            response=_to_dict(response),
+        )
+
+    def _parse_or_malformed(self, params: dict[str, Any], schema: type[Any]) -> Any:
+        """The SDK raises when the answer is not valid JSON for the schema; that is a
+        malformed answer to ask again about, not a provider error to retry."""
+        try:
+            return self._client.messages.parse(**params, output_format=schema)
+        except ValueError as exc:  # pydantic's ValidationError is a ValueError
+            return _Malformed(f"{type(exc).__name__}: {exc}"[:500])
+
+    def _settle(self, model: str, tracker: BudgetTracker, response: Any) -> tuple[Usage, Any]:
+        """Charge the tracker and pick the parsed object; None means ask once more."""
+        if isinstance(response, _Malformed):
+            return Usage(0, 0, 0, 0, 0.0), None
         usage = _usage(model, response.usage)
         tracker.charge(
             input_tokens=usage.input_tokens + usage.cache_read_input_tokens,
@@ -174,35 +254,7 @@ class AnthropicClient:
         )
         if getattr(response, "stop_reason", None) == "refusal":
             raise TerminalModelError("model refused the extraction request")
-        parsed = getattr(response, "parsed_output", None)
-        if parsed is None:  # one re-ask, then terminal (spec.md D9)
-            params["messages"] = [{"role": "user", "content": user + REASK_SUFFIX}]
-            response = self._with_retry(
-                lambda: self._client.messages.parse(**params, output_format=schema)
-            )
-            second = _usage(model, response.usage)
-            tracker.charge(
-                input_tokens=second.input_tokens + second.cache_read_input_tokens,
-                output_tokens=second.output_tokens,
-                usd=second.usd,
-            )
-            usage = Usage(
-                usage.input_tokens + second.input_tokens,
-                usage.output_tokens + second.output_tokens,
-                usage.cache_read_input_tokens + second.cache_read_input_tokens,
-                usage.cache_creation_input_tokens + second.cache_creation_input_tokens,
-                usage.usd + second.usd,
-            )
-            parsed = getattr(response, "parsed_output", None)
-            if parsed is None:
-                raise TerminalModelError("schema refusal after one re-ask")
-        return Extraction(
-            parsed=parsed,
-            usage=usage,
-            model=str(getattr(response, "model", model)),
-            request=request,
-            response=_to_dict(response),
-        )
+        return usage, getattr(response, "parsed_output", None)
 
     def complete(
         self,
@@ -255,6 +307,7 @@ class AnthropicClient:
             "messages": messages,
             **sampling_params(model, reasoning=reasoning),
         }
+        _room_for_thinking(params)
         if tools:
             params["tools"] = tools
         response = self._with_retry(lambda: self._client.messages.create(**params))
@@ -272,6 +325,8 @@ class AnthropicClient:
             if kind == "text":
                 text_parts.append(str(block.text))
                 content.append({"type": "text", "text": str(block.text)})
+            elif kind in ("thinking", "redacted_thinking"):
+                content.append(_block_dict(block))
             elif kind == "tool_use":
                 arguments = dict(block.input) if isinstance(block.input, dict) else {}
                 calls.append(ToolCall(str(block.id), str(block.name), arguments))

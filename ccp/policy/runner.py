@@ -8,7 +8,6 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, cast
 
 from langgraph.checkpoint.postgres import PostgresSaver
@@ -20,6 +19,7 @@ from ccp.agent.graphs import policy as graph_module
 from ccp.agent.tools import ToolContext, bind_tools
 from ccp.approvals import store as approvals
 from ccp.config import Settings
+from ccp.evaluators import budget_gate
 from ccp.evaluators.tier2 import AITierUnavailable, Providers
 from ccp.evaluators.verdict import Citation
 from ccp.knowledge import graph as knowledge
@@ -34,21 +34,50 @@ GRAPH = graph_module.GRAPH_NAME
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
+GENERIC_NAME_WORDS = frozenset(
+    {
+        "corporation",
+        "corp",
+        "company",
+        "incorporated",
+        "limited",
+        "holdings",
+        "group",
+        "international",
+        "global",
+        "technologies",
+        "technology",
+        "systems",
+        "services",
+        "solutions",
+        "industries",
+        "enterprises",
+        "partners",
+        "example",
+    }
+)  # words of a company name that name nobody in particular; never scrubbed on their own
+
+
 def other_tenant_tokens(settings: Settings, tenant_id: str) -> list[str]:
     """Distinctive names of every *other* configured tenant (config, not tenant data): a draft
-    for one tenant must never contain them (S9)."""
+    for one tenant must never contain them (S9). The whole display name, the GitHub org and
+    the id always count; a single word of the name counts only when it is distinctive."""
     tokens: list[str] = []
     for other_id, other in settings.load_tenants().items():
         if other_id == tenant_id:
             continue
         tokens.extend([other.display_name, other.github_org, other_id])
-        tokens.extend(part for part in other.display_name.split() if len(part) > 4)
+        tokens.extend(
+            part
+            for part in other.display_name.split()
+            if len(part) > 4 and part.lower() not in GENERIC_NAME_WORDS
+        )
     return sorted({t for t in tokens if t}, key=len, reverse=True)
 
 
 def _build(
     db: ScopedDB, settings: Settings, providers: Providers, now: datetime
-) -> tuple[Any, Any]:
+) -> tuple[Any, Any, BudgetTracker]:
     tracker = BudgetTracker(RunBudget.from_settings(settings))
     tools = bind_tools(
         ToolContext(db, providers.embedder, providers.reranker, providers.retrieval),
@@ -64,7 +93,7 @@ def _build(
         forbidden_tokens=other_tenant_tokens(settings, db.tenant.tenant_id),
     )
     pool = checkpoints.saver_pool(settings, db.tenant)
-    return core.build_graph(spec, PostgresSaver(cast(Any, pool))), pool
+    return core.build_graph(spec, PostgresSaver(cast(Any, pool))), pool, tracker
 
 
 def _run(
@@ -79,8 +108,9 @@ def _run(
         raise AITierUnavailable("ANTHROPIC_API_KEY is not set; the Policy Agent is unavailable")
     if control_id not in knowledge.load().controls:
         raise KeyError(f"unknown control {control_id!r}")
+    budget_gate.check_daily_budget(db, now)  # ParkedError past the cap, before any row exists
     thread_id = checkpoints.thread_id_for(db.tenant, f"policy-{mode}", control_id, str(ULID()))
-    graph, pool = _build(db, settings, providers, now)
+    graph, pool, tracker = _build(db, settings, providers, now)
     threads.create(db, thread_id, GRAPH, "policy", control_id)
     config = {"configurable": {"thread_id": thread_id}}
     initial: dict[str, Any] = {
@@ -105,13 +135,13 @@ def _run(
             tenant=db.tenant,
             inputs={"control_id": control_id, "thread_id": thread_id},
         ) as s:
-            run_config = {**config, "callbacks": steps.graph_callbacks()}
-            for update in graph.stream(initial, run_config, stream_mode="updates"):
+            for update in graph.stream(initial, config, stream_mode="updates"):
                 trajectory.extend(str(k) for k in update)
             final = dict(graph.get_state(config).values.get("final") or {})
             if not final:
                 raise RuntimeError("policy graph finished without a result")
             threads.mark_finished(db, thread_id, control_id, trajectory)
+            budget_gate.record_spend(db, tracker.usd, tracker.tokens, s.step_id, now)
             s.set_output(
                 {
                     "trajectory": trajectory,
@@ -186,11 +216,12 @@ def draft(
     scrub_events = tuple(e for e in report.guardrail_events if e.startswith("draft_"))
     directory = settings.drafts_dir / db.tenant.tenant_id
     directory.mkdir(parents=True, exist_ok=True)
-    stamp = moment.strftime("%Y%m%dT%H%M%SZ")
-    path = directory / f"{_SAFE.sub('-', control_id)}-{stamp}.md"
-    path.write_text(markdown, encoding="utf-8")
-    digest = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
     draft_id = str(ULID())
+    stamp = moment.strftime("%Y%m%dT%H%M%SZ")
+    path = directory / f"{_SAFE.sub('-', control_id)}-{stamp}-{draft_id}.md"
+    with path.open("xb") as fh:  # never overwrite an earlier draft; LF bytes everywhere,
+        fh.write(markdown.encode("utf-8"))  # so the recorded hash is the file's hash
+    digest = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
     approval_id = approvals.open_item(
         db,
         "policy_draft",
@@ -217,7 +248,3 @@ def draft(
     )
     schema.persist_draft(db, result, digest)
     return report, result
-
-
-def drafts_root(settings: Settings) -> Path:
-    return settings.drafts_dir

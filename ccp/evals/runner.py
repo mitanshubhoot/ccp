@@ -26,7 +26,6 @@ from typing import Any
 
 import psycopg
 import yaml
-from ulid import ULID
 
 from ccp.config import REPO_ROOT, Settings
 from ccp.evals import metrics as metrics_mod
@@ -60,7 +59,7 @@ DB_TARGETS = {
 # scratch database of their own; every other database case shares the run's database.
 FRESH_DB_TARGETS = {"ingest_land", "pipeline"}
 LEVELS = ("component", "workflow", "e2e")
-_PYTEST_COUNT = re.compile(r"(\d+) (passed|failed|error)")
+_PYTEST_COUNT = re.compile(r"(\d+) (passed|failed|errors?)\b")
 
 
 def load_cases(golden_dir: Path) -> tuple[list[GoldenCase], dict[str, str]]:
@@ -210,7 +209,8 @@ def run_case(ctx: EvalContext, case: GoldenCase) -> CaseResult:
         except (OSError, ValueError) as exc:
             return _failed(case, f"rubric: {exc}")
     t0 = time.perf_counter()
-    started = datetime.now(UTC)
+    log = steps.log_path()
+    offset = log.stat().st_size if log.exists() else 0  # the log is append-only
     trace_id: str | None = None
     try:
         with steps.step(
@@ -235,7 +235,6 @@ def run_case(ctx: EvalContext, case: GoldenCase) -> CaseResult:
         result.trace_id = trace_id
         return result
     latency_ms = round((time.perf_counter() - t0) * 1000, 3)
-    finished = datetime.now(UTC)
     mismatches = compare(case.expected, actual) if case.expected else []
     judged = None
     if rubric is not None:
@@ -244,24 +243,41 @@ def run_case(ctx: EvalContext, case: GoldenCase) -> CaseResult:
             mismatches.append("judge: no judge model available")
         else:
             try:
-                judged = run_judge(
-                    llm,
-                    rubric,
-                    case_input=case.input,
-                    output=_compact(actual),
-                    model=ctx.settings.ccp_judge_model,
-                    tracker=BudgetTracker(RunBudget.from_settings(ctx.settings)),
-                )
+                with steps.step(
+                    "eval.judge",
+                    layer="evals",
+                    kind="generation",
+                    inputs={"case_id": case.id, "rubric": rubric.name},
+                ) as js:
+                    judged = run_judge(
+                        llm,
+                        rubric,
+                        case_input=case.input,
+                        output=_compact(actual),
+                        model=ctx.settings.ccp_judge_model,
+                        tracker=BudgetTracker(RunBudget.from_settings(ctx.settings)),
+                    )
+                    usage = judged.usage or {}
+                    steps.note_model_call(
+                        judged.model,
+                        input_tokens=int(usage.get("input_tokens", 0)),
+                        output_tokens=int(usage.get("output_tokens", 0)),
+                        cache_read=int(usage.get("cache_read", 0)),
+                        cache_write=int(usage.get("cache_write", 0)),
+                    )
+                    js.set_output({"overall_pass": judged.overall_pass})
             except Exception as exc:
                 mismatches.append(f"judge: {type(exc).__name__}: {exc}")
             else:
                 if not judged.overall_pass:
                     unmet = ", ".join(c.name for c in judged.criteria if not c.met) or "overall"
                     mismatches.append(f"judge: {unmet} not met")
-    tokens, usd = metrics_mod.usage_between(steps.log_path(), started, finished)
+    tokens, usd = metrics_mod.usage_since(log, offset)
     attack: bool | None = None
     if case.attack_class is not None and isinstance(actual, dict):
-        attack = bool(actual.get("attack_succeeded"))
+        # an attack whose poisoned chunk the model never saw was not attempted
+        shown = actual.get("poisoned_chunk_shown")
+        attack = None if shown is False else bool(actual.get("attack_succeeded"))
     return CaseResult(
         id=case.id,
         level=case.level,
@@ -300,9 +316,17 @@ def run_unit_tests(repo_root: Path = REPO_ROOT) -> LevelSummary:
         check=False,
         cwd=repo_root,
     )
-    counts = {kind: int(n) for n, kind in _PYTEST_COUNT.findall(out.stdout)}
+    return parse_pytest_summary(out.stdout, out.returncode)
+
+
+def parse_pytest_summary(stdout: str, returncode: int) -> LevelSummary:
+    """The unit row from pytest's footer; a run that exits non-zero without a parsable
+    footer (a collection crash, a missing pytest) counts as one failure, never as 0/0."""
+    counts = {kind: int(n) for n, kind in _PYTEST_COUNT.findall(stdout)}
     passed = counts.get("passed", 0)
-    failed = counts.get("failed", 0) + counts.get("error", 0)
+    failed = counts.get("failed", 0) + counts.get("error", 0) + counts.get("errors", 0)
+    if returncode != 0 and failed == 0:
+        failed = 1
     return LevelSummary(passed=passed, total=passed + failed)
 
 
@@ -335,6 +359,7 @@ def run(
     unit: bool = False,
 ) -> RunReport:
     started = datetime.now(UTC)
+    run_id = steps.new_run()  # one run id for the report, the step log, and the trace
     judge_llm = judge_llm or try_build_client(settings)
     needs_db = any(c.target in DB_TARGETS for c in cases)
     results: list[CaseResult] = []
@@ -371,7 +396,7 @@ def run(
             skipped=sum(r.skipped for r in at_level),
         )
     return RunReport(
-        run_id=str(ULID()),
+        run_id=run_id,
         started_at=started,
         finished_at=datetime.now(UTC),
         git_commit=_git_commit(),
@@ -389,12 +414,15 @@ def run(
     )
 
 
-def write_report(report: RunReport, runs_dir: Path) -> Path:
+def write_report(report: RunReport, runs_dir: Path, *, promote: bool = True) -> Path:
+    """Write the run under its id; promote it to latest.json (the regression baseline)
+    unless the caller says the run must not become the baseline."""
     runs_dir.mkdir(parents=True, exist_ok=True)
     path = runs_dir / f"{report.run_id}.json"
     payload = report.model_dump(mode="json")
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    (runs_dir / "latest.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if promote:
+        (runs_dir / "latest.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
 
 
