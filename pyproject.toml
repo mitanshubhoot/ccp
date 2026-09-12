@@ -24,6 +24,7 @@ dev = [
     "import-linter>=2.0",
     "types-PyYAML>=6.0",
     "fpdf2>=2.8",
+    "hypothesis>=6.100",
 ]
 
 [project.scripts]

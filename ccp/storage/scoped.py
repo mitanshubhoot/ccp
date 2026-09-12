@@ -17,7 +17,7 @@ There is no method that accepts a tenant id argument, on purpose.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any
 
@@ -26,7 +26,7 @@ from psycopg_pool import ConnectionPool
 
 from ccp.tenancy import TenantContext
 
-Params = Sequence[Any] | None
+Params = Sequence[Any] | Mapping[str, Any] | None
 
 
 class ScopedDB:
