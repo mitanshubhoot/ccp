@@ -29,7 +29,7 @@ def admin_connection(admin_url: str) -> psycopg.Connection[tuple[object, ...]]:
 
 
 def app_pool(settings: Settings, *, max_size: int = 8) -> ConnectionPool:
-    """Pooled connections as the application role; the only way application code reaches Postgres."""
+    """Pooled connections as the application role: the only route from app code to Postgres."""
     return ConnectionPool(settings.database_url, min_size=1, max_size=max_size, open=True)
 
 
