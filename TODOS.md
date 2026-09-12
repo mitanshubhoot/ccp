@@ -28,6 +28,30 @@
 **Priority:** P3
 **Depends on:** `ccp evals capture` (spec v1.3 Layer 11); a second annotator being available.
 
+### Grow the extraction and adversarial suites
+
+**What:** Take `evals/golden/component.yaml`'s extraction suite from six cases to the twelve the spec tabled (every tier 2 and tier 3 schema with expected field values), and `evals/adversarial/cases.yaml` from sixteen cases toward the twenty the S17 table allows, adding a memory-poisoning class once the Copilot has cross-session memory.
+
+**Why:** Six extraction cases cover only the fields whose names are fixed by the shipped schemas; support precision is reported but has no expectation of its own yet. The adversarial classes are all present, but two or three payloads per class is a thin sample for an attack-success-rate that `regress` treats as a hard gate.
+
+**Context:** Phase 15 (spec v1.3 Layer 11, A-83, A-84). The growth mechanism for extraction cases is `ccp evals capture <trace_id>` over a keyed run; adversarial cases are hand-written because each needs a control and a placement. Start from `ccp/evals/adversarial.py` and the `extraction` tag.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** A keyed run to observe real extraction outputs.
+
+### Tighten the latency SLOs from run history
+
+**What:** Replace the provisional p95 values in `config/slos.yaml` with values read from `evals/runs/*.json` history (for example the 1.5x of the observed p95 over the last ten runs), and measure per call rather than per target so the first case of a target no longer pays for preparing its tenant.
+
+**Why:** The shipped values are generous first guesses on one laptop; `ccp evals regress` fails on a p95 breach, so a too-tight value turns machine load into a false regression and a too-loose one hides a real one.
+
+**Context:** Phase 15 (spec v1.3 Layer 11, A-84). Per-target latency comes from `CaseResult.latency_ms`; the step log has per-step latency (`latency_ms` on each `eval.<target>` line) that would let the runner separate preparation from the call. Start from `ccp/evals/metrics.py::latency_by_target`.
+
+**Effort:** S
+**Priority:** P4
+**Depends on:** Ten or more runs in `evals/runs/` on the machine the SLO is meant for.
+
 ## Observability
 
 ### OpenTelemetry OTLP exporter alongside the Langfuse SDK

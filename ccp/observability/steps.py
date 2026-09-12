@@ -39,6 +39,11 @@ def configure(settings: Settings) -> None:
     _log_path = settings.logs_dir / "steps.jsonl"
 
 
+def log_path() -> Path:
+    """Where step lines go right now (the eval runner reads usage back from it)."""
+    return _log_path
+
+
 def new_run() -> str:
     """Start a new run id for the current context; steps nest under it."""
     run_id = str(ULID())

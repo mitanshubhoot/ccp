@@ -1,0 +1,24 @@
+# Provisional latency SLOs per eval target (p95, milliseconds), spec.md Layer 11. The eval
+# runner prints p50/p95/p99 per target against these; `ccp evals regress` exits non-zero on a
+# p95 breach. Keyed targets are only measured when a key is set. Values are generous first
+# guesses on a laptop with Postgres in Docker; the first case of a target also pays for
+# preparing its tenant, so per-target values are not per-call values. Tighten them from
+# evals/runs history.
+p95_ms:
+  connector_pull: 3000
+  ingest_land: 20000
+  ingest_ordering: 20000
+  mapper: 1000
+  knowledge_router: 1000
+  identity_pair: 1000
+  deterministic_verdict: 5000
+  evaluate_tier1: 15000
+  chunker_pages: 10000
+  retrieval_metrics: 60000
+  tier2_verdict: 45000
+  tier3_verdict: 180000
+  investigation: 180000
+  policy_gap: 180000
+  copilot_answer: 90000
+  adversarial_tier2: 45000
+  pipeline: 90000

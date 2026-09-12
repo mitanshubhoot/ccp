@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import typer
 
@@ -16,11 +17,14 @@ from ccp.config import Settings
 from ccp.connectors.base import parse_ts
 from ccp.connectors.registry import CONNECTOR_NAMES, SOURCE_KINDS, build_connector
 from ccp.copilot import cli as copilot_cli
+from ccp.evals import calibration as judge_calibration
+from ccp.evals import capture, regress
 from ccp.evals import runner as eval_runner
+from ccp.evals.schema import GoldenCase
 from ccp.evaluators import clock as clock_producer
 from ccp.evaluators import impact as impact_step
 from ccp.evaluators import runner as evaluations
-from ccp.evaluators import tier2
+from ccp.evaluators import thresholds, tier2
 from ccp.evaluators import verdict as verdicts
 from ccp.identity import resolver
 from ccp.ingest import worker
@@ -28,6 +32,8 @@ from ccp.ingest.landing import ingest_tenant
 from ccp.investigation import cli as investigate_cli
 from ccp.knowledge import graph as knowledge_graph
 from ccp.knowledge import rollup as knowledge_rollup
+from ccp.llm.budget import BudgetTracker, RunBudget
+from ccp.llm.client import try_build_client
 from ccp.normalize import consumer as normalize_consumer
 from ccp.normalize import repository
 from ccp.observability import steps
@@ -563,24 +569,127 @@ def worker_list() -> None:
         typer.echo(name)
 
 
+def _eval_selection(
+    settings: Settings, suite: str, level: str | None, tag: str | None, case_id: str | None
+) -> tuple[list[GoldenCase], dict[str, str]]:
+    try:
+        cases, hashes = eval_runner.all_cases(settings, suite=suite)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    chosen = eval_runner.select(cases, level=level, tag=tag, case_id=case_id)
+    if not chosen:
+        raise typer.BadParameter("no golden cases matched")
+    return chosen, hashes
+
+
 @evals_app.command("run")
 def evals_run(
     level: str | None = typer.Option(None, "--level", help="component | workflow | e2e"),
     tag: str | None = typer.Option(None, "--tag"),
     case_id: str | None = typer.Option(None, "--id"),
+    suite: str = typer.Option("golden", "--suite", help="golden | adversarial | all"),
+    unit: bool = typer.Option(
+        True, "--unit/--no-unit", help="run pytest tests/unit for the unit row"
+    ),
 ) -> None:
     """Run the golden dataset and write evals/runs/latest.json. Exit code 1 on any failure."""
     settings = _settings()
-    cases, hashes = eval_runner.load_cases(settings.ccp_golden_dir)
-    chosen = eval_runner.select(cases, level=level, tag=tag, case_id=case_id)
-    if not chosen:
-        raise typer.BadParameter("no golden cases matched")
-    report = eval_runner.run(settings, chosen, hashes)
+    chosen, hashes = _eval_selection(settings, suite, level, tag, case_id)
+    report = eval_runner.run(settings, chosen, hashes, unit=unit)
     path = eval_runner.write_report(report, settings.ccp_eval_runs_dir)
     typer.echo(eval_runner.format_table(report))
     typer.echo(f"report: {path}")
     if not report.all_passed:
         raise typer.Exit(code=1)
+
+
+@evals_app.command("calibrate")
+def evals_calibrate(
+    bootstrap: int = typer.Option(1000, "--bootstrap", help="bootstrap resamples per interval"),
+    bias_on: int | None = typer.Option(None, "--bias-on", help="bias checks on the first N cases"),
+) -> None:
+    """Run the judge over evals/labeled and report agreement and kappa with intervals."""
+    settings = _settings()
+    llm = try_build_client(settings)
+    if llm is None:
+        typer.echo("calibration needs ANTHROPIC_API_KEY (the judge model)", err=True)
+        raise typer.Exit(code=2)
+    cases = judge_calibration.load_labeled(settings.ccp_labeled_dir)
+    report = judge_calibration.calibrate(
+        llm,
+        cases,
+        model=settings.ccp_judge_model,
+        tracker=BudgetTracker(RunBudget.from_settings(settings)),
+        rubrics_dir=settings.ccp_rubrics_dir,
+        n_boot=bootstrap,
+        bias_on=bias_on,
+    )
+    typer.echo(judge_calibration.format_report(report))
+    written = judge_calibration.write_report(report, settings.ccp_eval_runs_dir)
+    typer.echo(f"report: {written}")
+
+
+@evals_app.command("regress")
+def evals_regress(
+    baseline: Path | None = typer.Option(None, "--baseline", help="a run report; latest.json"),
+    suite: str = typer.Option("all", "--suite", help="golden | adversarial | all"),
+    unit: bool = typer.Option(False, "--unit/--no-unit"),
+) -> None:
+    """Rerun the suite and diff against the last run; non-zero on a pass-to-fail flip, an
+    attack-success-rate increase, or a p95 breach."""
+    settings = _settings()
+    base_path = baseline or settings.ccp_eval_runs_dir / "latest.json"
+    if not base_path.exists():
+        typer.echo(f"no baseline at {base_path}; run `ccp evals run` first", err=True)
+        raise typer.Exit(code=2)
+    base = regress.load_report(base_path)
+    chosen, hashes = _eval_selection(settings, suite, None, None, None)
+    report = eval_runner.run(settings, chosen, hashes, unit=unit)
+    path = eval_runner.write_report(report, settings.ccp_eval_runs_dir)
+    reg = regress.diff(base, report)
+    typer.echo(regress.format_regression(reg))
+    typer.echo(f"report: {path}")
+    if reg.exit_code:
+        raise typer.Exit(code=reg.exit_code)
+
+
+@evals_app.command("capture")
+def evals_capture(
+    trace_id: str = typer.Argument(..., help="an eval step id or run id from the step log"),
+    file: str = typer.Option("captured.yaml", "--file", help="golden file to append to"),
+) -> None:
+    """Write a golden case from a trace: inputs, observed output, and its replay material."""
+    settings = _settings()
+    try:
+        case, path = capture.capture(
+            steps.log_path(), trace_id, settings.ccp_golden_dir, filename=file
+        )
+    except LookupError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"captured {case.id} -> {path}")
+
+
+@evals_app.command("threshold")
+def evals_threshold(
+    apply: bool = typer.Option(False, "--apply", help="write it to config/evaluation.yaml"),
+) -> None:
+    """The interrupt threshold the last run's reliability curve suggests."""
+    settings = _settings()
+    latest = settings.ccp_eval_runs_dir / "latest.json"
+    if not latest.exists():
+        typer.echo("no evals/runs/latest.json; run `ccp evals run` first", err=True)
+        raise typer.Exit(code=2)
+    report = regress.load_report(latest)
+    typer.echo(f"current interrupt_threshold: {thresholds.load().interrupt_threshold}")
+    suggested = report.metrics.suggested_interrupt_threshold if report.metrics else None
+    if suggested is None:
+        typer.echo("the reliability curve has too few points to suggest a threshold; kept")
+        return
+    typer.echo(f"suggested from the curve: {suggested:.2f}")
+    if apply:
+        path = eval_runner.write_threshold(thresholds.CONFIG_PATH, suggested)
+        typer.echo(f"written to {path}")
 
 
 def _settings() -> Settings:

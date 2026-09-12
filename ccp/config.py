@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     ccp_max_attempts: int = Field(default=5, ge=1)
     ccp_golden_dir: Path = REPO_ROOT / "evals" / "golden"
     ccp_eval_runs_dir: Path = REPO_ROOT / "evals" / "runs"
+    ccp_rubrics_dir: Path = REPO_ROOT / "evals" / "rubrics"
+    ccp_labeled_dir: Path = REPO_ROOT / "evals" / "labeled"
+    ccp_adversarial_path: Path = REPO_ROOT / "evals" / "adversarial" / "cases.yaml"
+    ccp_slos_path: Path = REPO_ROOT / "config" / "slos.yaml"
 
     # PDF extraction caps (spec.md A-54); a file over any cap is rejected, never parsed.
     ccp_pdf_max_bytes: int = Field(default=25_000_000, ge=1)

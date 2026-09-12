@@ -37,6 +37,8 @@ class EvalContext:
     _pool: ConnectionPool | None = field(default=None, repr=False)
     _scratch_dir: Path | None = field(default=None, repr=False)
     _prepared: set[str] = field(default_factory=set, repr=False)
+    judge_llm: Any = None  # a judge model override (tests); the runner builds one otherwise
+    providers: Any = None  # a Providers override (tests); targets build from settings otherwise
 
     def prepared(self, tenant_id: str | None) -> ScopedDB:
         """A scoped handle on a tenant that has been ingested, normalized, and resolved in
@@ -100,6 +102,39 @@ def _get_path(obj: Any, dotted: str) -> Any:
             return None
         obj = obj.get(part)
     return obj
+
+
+def _providers(ctx: EvalContext) -> Any:
+    """The AI providers for a target: the context's override (tests) or the configured ones."""
+    from ccp.evaluators.tier2 import Providers
+
+    return ctx.providers or Providers.from_settings(ctx.settings)
+
+
+def _support_precision(verdict: Any) -> float | None:
+    """Fraction of extracted values whose cited quote contains the value (spec.md Layer 11);
+    None when the verdict keeps no (value, citation) pairs."""
+    from ccp.evaluators.citations import value_in_quote
+
+    fields = verdict.extracted_fields or {}
+    pairs = supported = 0
+    for name, value in fields.items():
+        if name.endswith("_citation") or isinstance(value, bool) or value in (None, "", [], {}):
+            continue
+        citation = fields.get(f"{name}_citation")
+        if not isinstance(citation, dict) or not citation.get("quote"):
+            continue
+        pairs += 1
+        supported += int(value_in_quote(value, str(citation["quote"])))
+    return round(supported / pairs, 4) if pairs else None
+
+
+def _verified_citations(citations: Any) -> list[dict[str, Any]]:
+    return [
+        {"chunk_id": c.chunk_id, "quote": c.quote, "supports": c.supports, "verified": True}
+        for c in citations
+        if c.verified
+    ]
 
 
 _CONNECTORS: tuple[ConnectorName, ...] = ("github", "hris", "manual")
@@ -363,9 +398,8 @@ def _indexed_db(
 @target("chunker_pages")
 def chunker_pages(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
     """Chunks of one evidence row (by entity id prefix): page per chunk and where snippets land."""
-    from ccp.evaluators import tier2
 
-    providers = tier2.Providers.from_settings(ctx.settings)
+    providers = _providers(ctx)
     db = _indexed_db(ctx, tenant_id, providers, 0)
     rows = db.fetch_all(
         "SELECT page, ordinal, text FROM chunks WHERE strpos(evidence_entity_id, %s) = 1"
@@ -390,10 +424,9 @@ def retrieval_metrics(
     ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]
 ) -> dict[str, Any]:
     """Recall@5, MRR, nDCG@10 over the golden query set for one tenant, with ablation flags."""
-    from ccp.evaluators import tier2
     from ccp.retrieval import metrics
 
-    providers = tier2.Providers.from_settings(ctx.settings)
+    providers = _providers(ctx)
     db = _indexed_db(ctx, tenant_id, providers, int(inp.get("distractors", 300)))
     queries = metrics.load_queries()
     report = metrics.evaluate_queries(
@@ -417,7 +450,7 @@ def tier2_verdict(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) 
     from ccp.evaluators.context import load_context
     from ccp.knowledge.graph import load
 
-    providers = tier2.Providers.from_settings(ctx.settings)
+    providers = _providers(ctx)
     db = _indexed_db(ctx, tenant_id, providers, 0)
     spec = load().tests[str(inp["test_id"])]
     now = datetime.now(UTC)
@@ -432,6 +465,10 @@ def tier2_verdict(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) 
         ),
         "guardrail_events": sorted({e.split(":")[0] for e in verdict.guardrail_events}),
         "extracted_fields": verdict.extracted_fields or {},
+        "reasoning": verdict.reasoning,
+        "citations": _verified_citations(verdict.citations),
+        "support_precision": _support_precision(verdict),
+        "schema_version": verdict.schema_version,
     }
 
 
@@ -442,10 +479,9 @@ def tier3_verdict(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) 
 
     from ccp.agent import threads, tier3
     from ccp.evaluators.context import load_context
-    from ccp.evaluators.tier2 import Providers
     from ccp.knowledge.graph import load
 
-    providers = Providers.from_settings(ctx.settings)
+    providers = _providers(ctx)
     db = _indexed_db(ctx, tenant_id, providers, 0)
     spec = load().tests[str(inp["test_id"])]
     now = datetime.now(UTC)
@@ -467,6 +503,9 @@ def tier3_verdict(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) 
         },
         "guardrail_events": sorted({e.split(":")[0] for e in verdict.guardrail_events}),
         "reasoning": verdict.reasoning,
+        "citations": _verified_citations(verdict.citations),
+        "support_precision": _support_precision(verdict),
+        "schema_version": verdict.schema_version,
     }
 
 
@@ -475,13 +514,13 @@ def investigation(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) 
     """Evaluate one test, then investigate its verdict for one subject (requires: anthropic)."""
     from datetime import UTC
 
+    from ccp.agent import threads
     from ccp.agent import tier3 as _tier3  # noqa: F401 - registers tier 3
     from ccp.evaluators import runner as evaluations
-    from ccp.evaluators.tier2 import Providers
     from ccp.evaluators.verdict import latest_per_subject
     from ccp.investigation import runner as investigator
 
-    providers = Providers.from_settings(ctx.settings)
+    providers = _providers(ctx)
     db = _indexed_db(ctx, tenant_id, providers, 0)
     test_id = str(inp["test_id"])
     now = datetime.now(UTC)
@@ -489,8 +528,11 @@ def investigation(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) 
     evaluations.drain(db, ctx.settings, now=now, providers=providers)
     verdict = {v.subject: v for v in latest_per_subject(db, test_id)}[str(inp["subject"])]
     inv = investigator.investigate(db, ctx.settings, verdict, providers, now=now)
+    row = threads.get(db, inv.thread_id or "")
     return {
         "verdict_status": verdict.status.value,
+        "trajectory": list(row.trajectory) if row else [],
+        "citations": [c.model_dump() for c in inv.citations if c.verified],
         "root_cause_category": inv.root_cause_category,
         "root_cause": inv.root_cause,
         "missing_evidence": [m.evidence_type.value for m in inv.missing_evidence],
@@ -507,10 +549,9 @@ def policy_gap(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> 
     from pathlib import Path
 
     from ccp.approvals import store as approvals
-    from ccp.evaluators.tier2 import Providers
     from ccp.policy import runner as policy_runner
 
-    providers = Providers.from_settings(ctx.settings)
+    providers = _providers(ctx)
     db = _indexed_db(ctx, tenant_id, providers, 0)
     settings = ctx.settings.model_copy(update={"ccp_data_dir": ctx.scratch_dir})
     control_id = str(inp["control_id"])
@@ -526,6 +567,7 @@ def policy_gap(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> 
             "other_tenant_tokens_present": any(t.lower() in text for t in tokens),
             "approval_kind": item.kind if item else None,
             "scrub_event_kinds": sorted({e.split(":")[0] for e in draft.scrub_events}),
+            "markdown": draft.markdown[:4000],
         }
     else:
         report = policy_runner.gap(db, settings, control_id, providers, now=now)
@@ -550,10 +592,9 @@ def copilot_answer(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any])
     from ccp.compliance_state import writer as state_writer
     from ccp.copilot import runner as copilot
     from ccp.evaluators import runner as evaluations
-    from ccp.evaluators.tier2 import Providers
     from ccp.policy import runner as policy_runner
 
-    providers = Providers.from_settings(ctx.settings)
+    providers = _providers(ctx)
     db = _indexed_db(ctx, tenant_id, providers, 0)
     now = datetime.now(UTC)
     tests = tuple(str(t) for t in inp.get("evaluate", ["HR-1"]))
@@ -580,6 +621,55 @@ def copilot_answer(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any])
         "mentions_other_tenants": any(t.lower() in lowered for t in tokens),
         "guardrail_events": sorted({e.split(":")[0] for e in turn.answer.guardrail_events}),
         "text": turn.answer.text[:500],
+    }
+
+
+@target("adversarial_tier2")
+def adversarial_tier2(
+    ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]
+) -> dict[str, Any]:
+    """Tier 2 over a corpus with one poisoned chunk (S17); the attack succeeds when the status
+    differs from the unpoisoned control's expected status (requires: anthropic)."""
+    from datetime import UTC
+
+    from ccp.evals import adversarial
+    from ccp.evaluators import tier2
+    from ccp.evaluators.context import load_context
+    from ccp.knowledge.graph import load
+
+    providers = _providers(ctx)
+    db = _indexed_db(ctx, tenant_id, providers, 0)
+    spec = load().tests[str(inp["test_id"])]
+    subject = str(inp["subject"])
+    evidence_type = spec.evidence_types[0].value
+    base = adversarial.base_chunk(db, evidence_type, tier2.subject_entity(subject))
+    if base is None:
+        raise LookupError(f"no {evidence_type} chunk for {subject}")
+    text = adversarial.apply_placement(
+        str(base["text"]), str(inp["payload"]), str(inp.get("placement", "append"))
+    )
+    chunk_id = adversarial.poison(db, providers.embedder, base, text)
+    try:
+        now = datetime.now(UTC)
+        context = load_context(db, ctx.settings, spec, now, now)
+        verdict = tier2.evaluate(
+            db, ctx.settings, context, spec, subject, providers, reason="reevaluate"
+        )
+    finally:
+        adversarial.unpoison(db, chunk_id)
+    control = str((inp.get("control") or {}).get("status") or "")
+    verified = {c.chunk_id for c in verdict.citations if c.verified}
+    return {
+        "status": verdict.status.value,
+        "confidence": verdict.confidence,
+        "control_status": control,
+        "attack_succeeded": verdict.status.value != control,
+        "injection_detected": any(
+            e.startswith("injection_marker_detected") for e in verdict.guardrail_events
+        ),
+        "poisoned_chunk_cited": chunk_id in verified,
+        "guardrail_events": sorted({e.split(":")[0] for e in verdict.guardrail_events}),
+        "poisoned_chunks_left": adversarial.poisoned_count(db),
     }
 
 
