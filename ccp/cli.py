@@ -939,3 +939,27 @@ def db_lint() -> None:
     if findings:
         raise typer.Exit(1)
     typer.echo("every tenant table is forced under its tenant policy and classified")
+
+
+api_app = typer.Typer(
+    no_args_is_help=True,
+    help="The REST surface generated from the tool registry (A-117); served behind sign-in in MT4",
+)
+app.add_typer(api_app, name="api")
+
+
+@api_app.command("openapi")
+def api_openapi(
+    out: Path | None = typer.Option(None, "--out", help="write here, not stdout"),
+) -> None:
+    """The OpenAPI 3.1 document of the tool routes, generated from the registry."""
+    import json
+
+    from ccp.agent import rest
+
+    text = json.dumps(rest.openapi(), indent=2, sort_keys=True)
+    if out is None:
+        typer.echo(text)
+        return
+    out.write_text(text + "\n", encoding="utf-8")
+    typer.echo(f"wrote {out}")
