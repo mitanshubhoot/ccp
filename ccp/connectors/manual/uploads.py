@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from ccp.connectors.base import (
     ConnectorName,
+    PullError,
     SourceEvent,
     SourceKind,
     SyncReport,
@@ -80,8 +81,8 @@ class Manifest(BaseModel):
     uploads: list[ManifestEntry]
 
 
-class ManifestMissing(FileNotFoundError):
-    pass
+class ManifestMissing(PullError):
+    """A folder with no manifest cannot be read at all: the pull stops, as a failure (A-122)."""
 
 
 class ManualUploadConnector:

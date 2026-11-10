@@ -927,6 +927,26 @@ def _tenant(settings: Settings, tenant_id: str | None) -> TenantContext:
     return TenantContext.for_id(settings, chosen)
 
 
+@connectors_app.command("conformance")
+def connectors_conformance() -> None:
+    """Every live connector's recorded scenarios, offline, negative controls included
+    (A-122). Exits 1 when a scenario fails or a control goes uncaught."""
+    from ccp.connectors import conformance
+
+    suites, controls = conformance.default()
+    report = conformance.run(suites, controls)
+    for result in report.results:
+        typer.echo(f"{'ok  ' if result.passed else 'FAIL'} {result.suite:<7} {result.scenario}")
+        for problem in result.problems:
+            typer.echo(f"         {problem}")
+    for control, results in report.controls:
+        caught = sum(1 for r in results if not r.passed)
+        mark = "ok  " if caught else "BLIND"
+        typer.echo(f"{mark} control {control.name}: caught by {caught} scenario(s)")
+    if not report.green:
+        raise typer.Exit(1)
+
+
 @connectors_app.command("pull")
 def connectors_pull(
     connector: str = typer.Option(..., "--connector", help="github | hris | manual"),
