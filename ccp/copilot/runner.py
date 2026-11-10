@@ -37,6 +37,7 @@ from ccp.observability import steps
 from ccp.remediation import proposals
 from ccp.security import prompt_guard
 from ccp.storage import checkpoints
+from ccp.storage.db import agent_pool
 from ccp.storage.scoped import ScopedDB
 
 GRAPH = graph_module.GRAPH_NAME
@@ -111,6 +112,7 @@ class Session:
         )
         self.known_tests = tuple(sorted(knowledge.load().tests))
         self.pool = checkpoints.saver_pool(settings, db.tenant)
+        self.agent = agent_pool(settings)  # the tools' read-only role (A-115)
         self.turn_count = 0
         self.trajectory: list[str] = []
         self._tracker: BudgetTracker | None = None  # the current turn's run budget
@@ -128,13 +130,17 @@ class Session:
 
     def close(self) -> None:
         self.pool.close()
+        self.agent.close()
 
     def _graph(self, now: datetime, stream: Callable[[str], None] | None = None) -> Any:
         tracker = BudgetTracker(RunBudget.from_settings(self.settings))
         self._tracker = tracker
         tools = bind_tools(
             ToolContext(
-                self.db, self.providers.embedder, self.providers.reranker, self.providers.retrieval
+                ScopedDB(self.agent, self.db.tenant),
+                self.providers.embedder,
+                self.providers.reranker,
+                self.providers.retrieval,
             ),
             tuple(sorted(ALLOWLISTS[GRAPH])),
             gate=authz.Gate(f"graph:{GRAPH}", run_id=self.thread_id, log_db=self.db),
@@ -281,7 +287,10 @@ class Session:
         started = time.perf_counter()
         tools = bind_tools(
             ToolContext(
-                self.db, self.providers.embedder, self.providers.reranker, self.providers.retrieval
+                ScopedDB(self.agent, self.db.tenant),
+                self.providers.embedder,
+                self.providers.reranker,
+                self.providers.retrieval,
             ),
             ("get_framework_rollup",),
             gate=authz.Gate(f"graph:{GRAPH}", run_id=self.thread_id, log_db=self.db),

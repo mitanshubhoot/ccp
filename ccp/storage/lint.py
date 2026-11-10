@@ -123,9 +123,34 @@ def _columns(cur: psycopg.Cursor[Any], table: str) -> set[str]:
     return {str(r[0]) for r in rows}
 
 
-def lint(conn: psycopg.Connection[Any], app_role: str) -> list[Finding]:
+def _agent_role(cur: psycopg.Cursor[Any], agent_role: str) -> list[Finding]:
+    """The agent tools' role (A-115) reads and nothing more, and row security binds it."""
+    findings: list[Finding] = []
+    role = cur.execute(
+        "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = %s", (agent_role,)
+    ).fetchone()
+    if role is None:
+        return [Finding(agent_role, "the agent role does not exist")]
+    if role[0] or role[1]:
+        findings.append(Finding(agent_role, "the agent role is a superuser or bypasses RLS"))
+    rows = cur.execute(
+        "SELECT table_schema || '.' || table_name, privilege_type"
+        " FROM information_schema.role_table_grants WHERE grantee = %s"
+        " AND privilege_type IN ('INSERT', 'UPDATE', 'DELETE', 'TRUNCATE')"
+        " ORDER BY 1, 2",
+        (agent_role,),
+    ).fetchall()
+    findings.extend(Finding(str(t), f"the agent role holds {p}") for t, p in rows)
+    return findings
+
+
+def lint(
+    conn: psycopg.Connection[Any], app_role: str, agent_role: str | None = None
+) -> list[Finding]:
     findings: list[Finding] = []
     with conn.cursor() as cur:
+        if agent_role is not None:
+            findings.extend(_agent_role(cur, agent_role))
         for table, column, enabled, forced in _tenant_tables(cur):
             if table in DISPATCH:
                 extra = _columns(cur, table) ^ DISPATCH[table]

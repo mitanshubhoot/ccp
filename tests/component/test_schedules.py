@@ -112,14 +112,18 @@ def test_a_changed_schedule_moves_and_a_removed_one_is_disabled(
 ) -> None:
     settings, acme = own
     schedules.Scheduler(acme, settings).run_once()
-    before = _rows(acme)["clock"][1]
     changed = _with(
         acme,
         schedules=(ScheduleSpec(id="clock", job="clock", every="every 2 hours"),),
     )
+    synced_at = datetime.now(UTC)
     schedules.Scheduler(changed, settings).run_once()
     rows = _rows(acme)
-    assert rows["clock"][1] != before and rows["clock"][1].minute == 0
+    # the changed schedule takes its next slot from the new form (the next even hour); the
+    # old quarter-hour slot can coincide with it, so the slot itself is checked, not a change
+    every = acme.fetch_one("SELECT every FROM schedules WHERE schedule_id = 'clock'")
+    assert every == ("every 2 hours",)
+    assert rows["clock"][1] == schedules.next_slot("every 2 hours", "UTC", synced_at)
     assert rows["clock"][2] and not rows["unpark"][2] and not rows["full-run"][2]
 
 

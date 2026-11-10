@@ -102,6 +102,9 @@ class Settings(BaseSettings):
     # Storage
     database_url: str = "postgresql://ccp_app:ccp@localhost:5432/ccp"
     database_admin_url: str = "postgresql://postgres:postgres@localhost:5432/ccp"
+    # Agent tools read through their own read-only role (A-115). Unset: the application URL
+    # with the user `ccp_agent` (same host, database and password).
+    database_agent_url: str | None = None
     ccp_data_dir: Path = Path("data")
     ccp_tenants_file: Path = REPO_ROOT / "config" / "tenants.yaml"
     ccp_fixtures_dir: Path = REPO_ROOT / "fixtures"

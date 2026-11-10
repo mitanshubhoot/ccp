@@ -43,6 +43,7 @@ from ccp.llm.budget import BudgetTracker, RunBudget
 from ccp.observability import steps
 from ccp.remediation import proposals as proposal_store
 from ccp.storage import checkpoints
+from ccp.storage.db import Pools, agent_pool
 from ccp.storage.scoped import ScopedDB
 from ccp.types import VerdictStatus
 
@@ -76,8 +77,11 @@ def _build(
     run_id: str | None = None,
 ) -> tuple[Any, Any, BudgetTracker]:
     tracker = BudgetTracker(RunBudget.from_settings(settings))
+    agent = agent_pool(settings)
     tools = bind_tools(
-        ToolContext(db, providers.embedder, providers.reranker, providers.retrieval),
+        ToolContext(  # read-only: the agent role (A-115)
+            ScopedDB(agent, db.tenant), providers.embedder, providers.reranker, providers.retrieval
+        ),
         tuple(sorted(ALLOWLISTS[GRAPH])),
         gate=authz.Gate(f"graph:{GRAPH}", run_id=run_id, log_db=db),
     )
@@ -87,7 +91,7 @@ def _build(
     spec = graph_module.build_spec(db.tenant, tools, deps, now=now)
     pool = checkpoints.saver_pool(settings, db.tenant)
     saver = checkpoints.tenant_saver(pool, db.tenant)
-    return core.build_graph(spec, saver), pool, tracker
+    return core.build_graph(spec, saver), Pools(pool, agent), tracker
 
 
 def investigate(
