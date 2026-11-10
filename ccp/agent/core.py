@@ -421,8 +421,17 @@ def make_tool_loop(
     of sampling the model again. With a run log (A-109) every turn, tool result and the
     fence nonce are recorded as they happen, so a node restarted by a resume, in a new
     process, is served all of them and its requests come out the same."""
-    offered = [tools[n].spec.schema() for n in sorted(tools) if n in allowed]
     build_nonce = prompt_guard.new_nonce()  # without a run log: one fence per graph build
+
+    def offered_now(gate: Any) -> list[dict[str, Any]]:
+        """The tools offered this turn: act-class tools leave once the run is tainted."""
+        tainted = gate is not None and getattr(gate, "tainted", None) is not None
+        return [
+            tools[n].spec.schema()
+            for n in sorted(tools)
+            if n in allowed and not (tainted and getattr(tools[n].spec, "cls", "read") == "act")
+        ]
+
     memo: dict[str, Any] = {}  # request digest -> ChatTurn, for this graph build
 
     def node(state: AgentState) -> dict[str, Any]:
@@ -458,13 +467,14 @@ def make_tool_loop(
         )
         while reason is None:
             turn_no += 1
+            offered = offered_now(gate)
             digest = _request_digest(system, messages, offered, deps.model)
 
-            def sample() -> ChatTurn:
+            def sample(this_turn: list[dict[str, Any]] = offered) -> ChatTurn:
                 return llm.chat(
                     system=system,
                     messages=messages,
-                    tools=offered,
+                    tools=this_turn,
                     model=deps.model,
                     tracker=deps.tracker,
                     reasoning=deps.reasoning,

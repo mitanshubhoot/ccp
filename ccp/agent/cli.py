@@ -192,3 +192,18 @@ def replay(
         typer.echo(f"diverged: {report.diverged}", err=True)
         raise typer.Exit(1)
     typer.echo("every request matched the record")
+
+
+@app.command("lint")
+def lint() -> None:
+    """The Rule-of-Two lint over the tool policy (A-114): exits 1 when a principal could read
+    untrusted content, hold private data and change state."""
+    from ccp.agent import authz
+    from ccp.agent.tools import TOOL_SPECS
+
+    problems = authz.rule_of_two(TOOL_SPECS)
+    for problem in problems:
+        typer.echo(problem, err=True)
+    if problems:
+        raise typer.Exit(1)
+    typer.echo("rule of two: no principal reads untrusted content, holds private data and acts")

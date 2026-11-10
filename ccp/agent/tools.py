@@ -793,6 +793,14 @@ class BoundTool:
             return self._refuse(merged, f"invalid arguments: {exc.errors()[0].get('msg', exc)}")
         if self.gate is None:
             return {"is_error": True, "error": "not permitted: no policy gate", "denied": "none"}
+        if self.spec.cls == "act" and self.gate.tainted is not None:  # the Rule of Two (A-114)
+            return self._refuse(
+                args.model_dump(mode="json"),
+                f"not permitted: act tools are off once a run has read untrusted content"
+                f" ({self.gate.tainted})",
+                denied="taint",
+                tainted=True,
+            )
         decision = self.gate.decide(self.spec.name, self.spec.cls, args.model_dump(mode="json"))
         if not decision.permitted:
             return {
@@ -815,6 +823,8 @@ class BoundTool:
                 "malformed_result": True,
             }
         wrapped: dict[str, Any] = {"is_error": False, "result": result}
+        if self.spec.untrusted:  # this run has now read text a customer or a model wrote
+            self.gate.taint(f"{self.spec.name} returned untrusted content")
         if elapsed > self.spec.timeout_seconds:
             wrapped["timeout_exceeded"] = round(elapsed, 3)
         redactions = _redaction_count(result)

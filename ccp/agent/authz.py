@@ -14,6 +14,12 @@ permit is watched before it is switched on. Conditions (`when`) compare the call
 arguments with fixed values the model cannot widen. Any failure inside the check, a broken
 rule file included, is a deny, and a decision that cannot be logged is a deny: the check
 fails closed. A tool no rule could ever permit for a principal leaves its tool list.
+
+The Rule of Two (A-114): an agent may combine at most two of reading untrusted content,
+holding private data, and changing state. A run's gate is tainted by the first result that
+can carry text a customer or a model wrote; from then on act-class tools are refused and
+leave the tool list, while propose-class tools stay, because every proposal waits for a
+person. `rule_of_two` lints the rule table so such tool lists are not built at all.
 """
 
 from __future__ import annotations
@@ -160,6 +166,28 @@ def offered(principal: str, tools: Sequence[str], table: Sequence[Rule] | None =
     ]
 
 
+def rule_of_two(specs: Mapping[str, Any], table: Sequence[Rule] | None = None) -> list[str]:
+    """Meta's Rule of Two over every principal the rule table names: one whose tools can
+    read untrusted content and private data may not also change state with an act-class
+    tool. It may propose, because every proposal waits for a person. The taint flag removes
+    act tools at run time too; this lint keeps them off such lists in the first place."""
+    active = rules() if table is None else tuple(table)
+    principals = sorted({r.principal for r in active if not r.principal.endswith("*")})
+    problems: list[str] = []
+    for principal in principals:
+        tools = [specs[name] for name in offered(principal, sorted(specs), active)]
+        untrusted = [t.name for t in tools if t.untrusted]
+        private = [t.name for t in tools if t.scopes]
+        acting = [t.name for t in tools if t.cls == "act"]
+        if untrusted and private and acting:
+            problems.append(
+                f"{principal}: reads untrusted content ({untrusted[0]}) and private data"
+                f" ({private[0]}) and can act ({', '.join(acting)}); make those tools"
+                " propose-class, or take them off its list"
+            )
+    return problems
+
+
 def arguments_sha256(args: Mapping[str, Any]) -> str:
     return hashlib.sha256(json.dumps(args, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
@@ -175,6 +203,11 @@ class Gate:
     log_db: ScopedDB | None = None  # the decision log; tools never see it
     table: tuple[Rule, ...] | None = None  # tests pin a table; None reads the live rules
     decisions: list[tuple[str, Decision]] = field(default_factory=list)
+    tainted: str | None = None  # why act-class tools are off for the rest of the run (A-114)
+
+    def taint(self, reason: str) -> None:
+        if self.tainted is None:
+            self.tainted = reason
 
     def offered(self, tools: Sequence[str]) -> list[str]:
         return offered(self.principal, tools, self.table)
