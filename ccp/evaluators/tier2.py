@@ -96,6 +96,25 @@ def subject_entity(subject: str) -> str | None:
     return subject.split(":", 1)[1]
 
 
+def extraction_instruction(nonce: str, description: str) -> str:
+    """The instruction text of a tier 2 call. The fenced evidence travels beside it as a
+    document block, never inside it (A-98); replay rebuilds the call with this too."""
+    return (
+        f"{prompt_guard.fence_declaration(nonce)}\n\n{description}\n\n"
+        "Fill every field of the schema from the fenced evidence in the documents only."
+    )
+
+
+def subject_names(ctx: EvaluationContext, subject: str) -> tuple[str, ...]:
+    """What a quote must name to show the document is the subject's (A-98)."""
+    entity = subject_entity(subject)
+    if subject.startswith("person:") and entity:
+        person = hr_person_for(ctx, entity)
+        if person is not None:
+            return tuple(n for n in (person.display_name, person.employee_id) if n)
+    return ()
+
+
 def build_query(ctx: EvaluationContext, spec: TestSpec, subject: str) -> tuple[str, str]:
     """(retrieval query, a one-line subject description for the prompt)."""
     template = str(spec.parameters.get("retrieval_query") or spec.title)
@@ -254,10 +273,7 @@ def evaluate(
             created_at=ctx.now,
         )
     system = [SystemBlock(prompt.text), SystemBlock(_schema_block(meta.model), cache=True)]
-    user = (
-        f"{prompt_guard.fence_declaration(nonce)}\n\n{description}\n\n{framed.text}\n"
-        "Fill every field of the schema from the fenced evidence only."
-    )
+    user = extraction_instruction(nonce, description)  # the evidence goes beside it
 
     # 3. extract (no transaction is open here)
     tracker = BudgetTracker(RunBudget.from_settings(settings))
@@ -276,7 +292,12 @@ def evaluate(
     ) as s:
         s.model(model, prompt_version=spec.prompt_version, prompt_sha256=prompt.sha256)
         extraction = providers.llm.extract(
-            schema=meta.model, system=system, user=user, model=model, tracker=tracker
+            schema=meta.model,
+            system=system,
+            user=user,
+            model=model,
+            tracker=tracker,
+            documents=[framed.text],
         )
         s.usage(
             input_tokens=extraction.usage.input_tokens,
@@ -296,7 +317,10 @@ def evaluate(
 
     # 4. verify, 5. rule, 6. confidence
     verified = citations.verify_fields(
-        extraction.parsed, {cid: c.text for cid, c in shown.items()}, meta
+        extraction.parsed,
+        {cid: c.text for cid, c in shown.items()},
+        meta,
+        subject_names=subject_names(ctx, subject),
     )
     events += verified.events
     params = dict(spec.parameters)

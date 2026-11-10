@@ -16,6 +16,7 @@ of what every graph needs. Graph modules are short declarations over these facto
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -207,10 +208,13 @@ def make_structured_node(
     describe: Callable[[AgentState], str],
     require_chunks: bool = True,
     stream: bool = False,
+    documents: Callable[[AgentState], list[str]] | None = None,
 ) -> NodeFn:
     """Fenced evidence -> one structured call -> raw fields plus replay material. The model's
     output is re-validated against the schema; a mismatch (a stub, a provider quirk) is a
-    guardrail event and the bounding step downstream rejects what it cannot use."""
+    guardrail event and the bounding step downstream rejects what it cannot use. The evidence,
+    and any further ``documents`` (tool output), go as document blocks; ``describe`` holds the
+    instruction only (A-98)."""
 
     def node(state: AgentState) -> dict[str, Any]:
         chunks = select_chunks(state)
@@ -231,8 +235,9 @@ def make_structured_node(
         ]
         evidence = framed.text if shown else "(no fenced evidence was gathered)\n"
         user = (
-            f"{prompt_guard.fence_declaration(nonce)}\n\n{describe(state)}\n\n{evidence}\n"
-            "Fill every field of the schema from the fenced evidence and the system data only."
+            f"{prompt_guard.fence_declaration(nonce)}\n\n{describe(state)}\n\n"
+            "Fill every field of the schema from the fenced evidence in the documents and the"
+            " system data only."
         )
         extraction = deps.require().extract(
             schema=meta.model,
@@ -242,6 +247,7 @@ def make_structured_node(
             tracker=deps.tracker,
             reasoning=deps.reasoning,
             on_token=deps.stream if stream else None,
+            documents=[evidence, *(documents(state) if documents else [])],
         )
         steps.note_model_call(
             extraction.model,
@@ -295,7 +301,13 @@ def make_tool_loop(
         llm = deps.require()
         prompt = load_prompt(prompt_version)
         system = [SystemBlock(prompt.text, cache=True)]
-        messages: list[dict[str, Any]] = [{"role": "user", "content": goal(state)}]
+        nonce = prompt_guard.new_nonce()  # one fence for every tool result in this loop
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "user",
+                "content": f"{goal(state)}\n\n{prompt_guard.tool_fence_declaration(nonce)}",
+            }
+        ]
         updates: dict[str, Any] = {
             "messages": [],
             "tool_log": [],
@@ -364,7 +376,13 @@ def make_tool_loop(
                         "is_error": result.get("is_error", False),
                     }
                 )
-                messages.append(tool_result_message(call.id, result))
+                guarded = prompt_guard.guard_tool_result(
+                    call.name, json.dumps(result, default=str, ensure_ascii=False), nonce
+                )
+                updates["guardrail_events"].extend(
+                    e for e in guarded.events if not e.startswith("secret_redacted_in_tool_result")
+                )  # the tool seam already reported its own redactions above
+                messages.append(tool_result_message(call.id, result, guarded.content))
                 if calls_made >= max_calls:
                     updates["guardrail_events"].append(f"tool_loop_budget_exhausted:{name}")
                     break
@@ -466,10 +484,8 @@ def make_verify_node(name: str, plan: dict[str, tuple[str, str, SchemaMeta]]) ->
                     and citations.quote_supported(
                         str(cited.get("quote", "")), str(chunk.get("text", ""))
                     )
-                    and (
-                        scalar not in meta.value_in_quote
-                        or citations.value_in_quote(value, str(cited.get("quote", "")))
-                    )
+                    and citations.check_value(scalar, value, str(cited.get("quote", "")), meta)
+                    is None  # the tier 2 rules: every deciding field is checked (A-98)
                 )
                 records.append(
                     {

@@ -21,11 +21,11 @@ from ccp.copilot import schema as copilot_schema
 from ccp.evaluators import verdict as verdicts
 from ccp.evaluators.context import load_context
 from ccp.evaluators.extraction import schema_block, schema_model
-from ccp.evaluators.tier2 import build_query
+from ccp.evaluators.tier2 import build_query, extraction_instruction
 from ccp.investigation import schema as investigations
 from ccp.knowledge import graph as knowledge
 from ccp.llm.budget import BudgetTracker, RunBudget
-from ccp.llm.client import LLMClient, SystemBlock
+from ccp.llm.client import LLMClient, SystemBlock, with_documents
 from ccp.llm.prompts import load_prompt
 from ccp.policy import schema as policy_schema
 from ccp.security import prompt_guard
@@ -84,14 +84,27 @@ def _system_texts(request: dict[str, Any]) -> list[tuple[str, bool]]:
     return out
 
 
-def _user_text(request: dict[str, Any]) -> str | None:
+def user_text(request: dict[str, Any]) -> str | None:
+    """The first user turn as one text, its document blocks first (A-98): evidence travels
+    as documents, so replay must read them to find the fenced chunks."""
     if isinstance(request.get("user"), str):
-        return str(request["user"])
+        documents = [str(d) for d in request.get("documents") or []]
+        return "\n\n".join([*documents, str(request["user"])])
     messages = request.get("messages") or []
     if messages and isinstance(messages[0], dict):
         content = messages[0].get("content")
         if isinstance(content, str):
             return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "document":
+                    parts.append(str((block.get("source") or {}).get("data", "")))
+                elif block.get("type") == "text":
+                    parts.append(str(block.get("text", "")))
+            return "\n\n".join(parts)
     return None
 
 
@@ -156,7 +169,7 @@ def check_call(
             diff.append(f"schema {schema!r} is not registered")
         elif len(system) >= 2 and system[1][0] != schema_block(model_cls):
             diff.append(f"system[1] differs from the JSON schema block of {schema}")
-    user = _user_text(request)
+    user = user_text(request)
     fenced = 0
     if user is not None:
         blocks = prompt_guard.parse_fences(user)
@@ -258,7 +271,7 @@ def rebuild(db: ScopedDB, settings: Settings, record_id: str) -> ReplayReport:
                     db, settings, spec, verdict.trigger_observed_at, verdict.created_at
                 )
                 _, description = build_query(ctx, spec, verdict.subject)
-                stored_user = _user_text(request) or ""
+                stored_user = user_text(request) or ""
                 chunk_ids = [b.chunk_id for b in prompt_guard.parse_fences(stored_user)]
                 chunks = _chunk_texts(db, chunk_ids)
                 if all(c in chunks for c in chunk_ids):
@@ -276,10 +289,9 @@ def rebuild(db: ScopedDB, settings: Settings, record_id: str) -> ReplayReport:
                         ],
                         verdict.fence_nonce,
                     )
-                    declaration = prompt_guard.fence_declaration(verdict.fence_nonce)
-                    full_user = (
-                        f"{declaration}\n\n{description}\n\n{framed.text}\n"
-                        "Fill every field of the schema from the fenced evidence only."
+                    full_user = with_documents(
+                        extraction_instruction(verdict.fence_nonce, description),
+                        [framed.text],
                     )
             call = check_call(
                 db,
@@ -326,7 +338,7 @@ def execute(
     out: list[tuple[str, list[str]]] = []
     for call in report.calls:
         schema = call.schema
-        user = _user_text(call.request)
+        user = user_text(call.request)
         model = call.request.get("model") or call.model
         model_cls = schema_model(schema) if schema else None
         if model_cls is None or user is None or not model:

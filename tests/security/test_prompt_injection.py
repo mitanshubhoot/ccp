@@ -16,6 +16,7 @@ from ccp.evaluators.verdict import Verdict
 from ccp.knowledge import graph as knowledge
 from ccp.llm.budget import BudgetTracker, RunBudget
 from ccp.llm.client import StubLLMClient
+from ccp.replay.rebuild import user_text
 from ccp.retrieval import index
 from ccp.retrieval.config import RetrievalConfig
 from ccp.retrieval.embeddings import HashingEmbeddingClient
@@ -97,7 +98,7 @@ def test_boundary_break(world) -> None:  # type: ignore[no-untyped-def]
     finally:
         adversarial.unpoison(acme, chunk_id)
     assert verdict.fence_nonce and verdict.fence_nonce not in text  # this call's fence is new
-    user = str((verdict.request_json or {}).get("user") or "")
+    user = str(user_text(verdict.request_json or {}) or "")  # documents and instruction
     blocks = prompt_guard.parse_fences(user)
     assert blocks and {b.nonce for b in blocks} == {verdict.fence_nonce}
     poisoned = [b for b in blocks if b.chunk_id == chunk_id]

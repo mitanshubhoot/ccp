@@ -19,6 +19,7 @@ from ccp.evaluators.verdict import latest_per_subject
 from ccp.investigation import runner as investigator
 from ccp.policy import runner as policy
 from ccp.replay import rebuild as replay
+from ccp.replay.rebuild import user_text
 from ccp.retrieval import index
 from ccp.storage.scoped import ScopedDB
 from tests.component.test_copilot_stub import Stub
@@ -124,7 +125,7 @@ def test_a_changed_index_shows_in_the_diff(world) -> None:  # type: ignore[no-un
     report = replay.rebuild(acme, settings, ids["verdict"])
     chunk_ids = [
         line.split("chunk_id=")[1].split(" ")[0]
-        for line in str(report.calls[0].request.get("user", "")).splitlines()
+        for line in str(user_text(report.calls[0].request) or "").splitlines()
         if line.startswith("<<EVIDENCE-")
     ]
     assert chunk_ids

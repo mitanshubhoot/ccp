@@ -83,7 +83,10 @@ def test_value_must_appear_in_its_quote_for_text_and_date_fields() -> None:
         "within 3 days", "We acknowledge every report within 5 business days."
     )
     assert citations.value_in_quote("2026-03-14", "Completion date: 2026-03-14")
-    assert citations.value_in_quote(True, "anything") and citations.value_in_quote(None, "x")
+    # absence needs no support; a yes is never a literal span and has its own rule (A-98)
+    assert citations.value_in_quote(None, "x") and not citations.value_in_quote(True, "anything")
+    assert citations.value_supported("policy_exists", True, "# Security Policy") is True
+    assert citations.value_supported("policy_exists", True, "There is no policy.") is False
 
 
 def test_absent_values_need_no_citation_and_positive_claims_do() -> None:
@@ -96,9 +99,11 @@ def test_absent_values_need_no_citation_and_positive_claims_do() -> None:
 
 
 def test_hr3_verification_keeps_the_cited_values() -> None:
+    named = "Learner: Ana Torres (employee id E1058)"
+    chunks = {**CHUNKS, "c3": f"{named}\n{CHUNKS['c2']}"}
     parsed = TrainingRecordFields(
         subject_name_in_document=True,
-        subject_name_in_document_citation=Cited(chunk_id="c2", quote="Status: Completed"),
+        subject_name_in_document_citation=Cited(chunk_id="c3", quote=named),
         completion_status="completed",
         completion_status_citation=Cited(chunk_id="c2", quote="Status: Completed"),
         completion_date="2026-03-14",
@@ -106,9 +111,18 @@ def test_hr3_verification_keeps_the_cited_values() -> None:
         provider="KnowBe4",
         provider_citation=Cited(chunk_id="c2", quote="Provider: KnowBe4"),
     )
-    out = citations.verify_fields(parsed, CHUNKS, HR3)
+    out = citations.verify_fields(parsed, chunks, HR3, subject_names=("Ana Torres", "E1058"))
     assert out.values["completion_date"] == "2026-03-14" and out.values["provider"] == "KnowBe4"
     assert out.coverage == 1.0 and out.citation_rate == 1.0
+    # a yes for "the subject is named" needs a quote that names the subject (A-98)
+    unnamed = parsed.model_copy(
+        update={
+            "subject_name_in_document_citation": Cited(chunk_id="c2", quote="Status: Completed")
+        }
+    )
+    out = citations.verify_fields(unnamed, chunks, HR3, subject_names=("Ana Torres", "E1058"))
+    assert out.values["subject_name_in_document"] is None
+    assert any(e.startswith("citation_unsupported_value:subject_name") for e in out.events)
 
 
 # -- rules over every field combination ------------------------------------------------------

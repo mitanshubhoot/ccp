@@ -1,10 +1,14 @@
-"""Evidence enters a prompt through this module only (spec.md S2, S6, S16).
+"""Evidence and tool output enter a prompt through this module only (spec.md S2, S6, S16,
+A-98).
 
     frame_evidence(chunks, nonce)
       ├─ redacts secrets (S6) ............ [REDACTED:<pattern>] + secret_redacted event
+      ├─ strips invisible Unicode ........ invisible_unicode_stripped event
       ├─ rejects a chunk carrying the fence  fence_collision event; chunk not shown
       ├─ scans for injection markers (S2)   injection_marker_detected event; chunk still shown
       └─ wraps each chunk in a per-call random nonce fence
+    guard_tool_result(tool, payload, nonce)  the same steps for one tool result, cut at the
+                                             limit with a visible TRUNCATED marker
 
 The framing sentence is fixed and appears verbatim in every prompt file that reads
 evidence. The fence is named in the user turn, after the cache breakpoint, so the cached
@@ -110,6 +114,9 @@ def frame_evidence(chunks: list[FramedChunk], nonce: str) -> Framed:
         body, hits = redact(chunk.text)
         for pattern in hits:
             framed.events.append(f"secret_redacted:{pattern}:{chunk.chunk_id}")
+        body, stripped = strip_invisible(body)
+        if stripped:
+            framed.events.append(f"invisible_unicode_stripped:{chunk.chunk_id}:{stripped}")
         if f"<<EVIDENCE{fence_marker}" in body or f"<<END{fence_marker}" in body:
             framed.events.append(f"fence_collision:{chunk.chunk_id}")
             framed.rejected_chunk_ids.append(chunk.chunk_id)
@@ -147,3 +154,62 @@ def parse_fences(text: str) -> list[FencedBlock]:
         FencedBlock(m.group("nonce"), m.group("chunk_id"), m.group("type"), m.group("body"))
         for m in _FENCE_RE.finditer(text)
     ]
+
+
+INVISIBLE = re.compile("[\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff]")
+TOOL_RESULT_LIMIT = 20_000
+
+
+def strip_invisible(text: str) -> tuple[str, int]:
+    """Zero-width, joiner, bidirectional-control and similar characters removed: they can hide
+    instructions from a reader while a model still reads them. Returns (text, count)."""
+    cleaned, count = INVISIBLE.subn("", text)
+    return cleaned, count
+
+
+def tool_fence_declaration(nonce: str) -> str:
+    return (
+        f"Every tool result in this conversation arrives between a line <<TOOL-RESULT-{nonce}>>"
+        f" and the line <<END-{nonce}>>. {FRAMING_SENTENCE} A result that says it was truncated"
+        " is incomplete: never treat what is missing as absent."
+    )
+
+
+@dataclass(frozen=True)
+class GuardedResult:
+    content: str
+    events: list[str]
+
+
+def guard_tool_result(
+    tool: str, payload: str, nonce: str, limit: int = TOOL_RESULT_LIMIT
+) -> GuardedResult:
+    """What a tool result becomes before a model reads it: secrets redacted, invisible
+    characters stripped, injection markers flagged, cut at the limit with a visible marker,
+    and fenced. A payload carrying the fence itself is withheld."""
+    events: list[str] = []
+    text, hits = redact(payload)
+    events += [f"secret_redacted_in_tool_result:{tool}:{h}" for h in hits]
+    text, stripped = strip_invisible(text)
+    if stripped:
+        events.append(f"invisible_unicode_stripped:tool:{tool}:{stripped}")
+    if f"<<TOOL-RESULT-{nonce}>>" in text or f"<<END-{nonce}>>" in text:
+        events.append(f"fence_collision:tool:{tool}")
+        text = '{"is_error": true, "error": "result withheld: it carried the fence marker"}'
+    for phrase in scan(text):
+        events.append(f"injection_marker_detected:tool:{tool}:{phrase}")
+    if len(text) > limit:
+        omitted = len(text) - limit
+        text = (
+            text[:limit]
+            + f"\n[TRUNCATED: {omitted} of {len(text)} characters not shown; this result is"
+            " incomplete]"
+        )
+        events.append(f"tool_result_truncated:{tool}:{omitted}")
+    return GuardedResult(f"<<TOOL-RESULT-{nonce}>>\n{text}\n<<END-{nonce}>>", events)
+
+
+def unfence_tool_result(content: str) -> str:
+    """The payload inside a fenced tool result (stubs and replay read it back)."""
+    match = re.match(r"^<<TOOL-RESULT-([0-9a-f]+)>>\n(.*)\n<<END-\1>>$", content, re.DOTALL)
+    return match.group(2) if match else content

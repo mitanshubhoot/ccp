@@ -16,6 +16,7 @@ from ccp.evaluators.context import load_context
 from ccp.evaluators.verdict import latest_per_subject, persist
 from ccp.knowledge import graph as knowledge
 from ccp.llm.client import StubLLMClient
+from ccp.replay.rebuild import user_text
 from ccp.retrieval import calibration, distractors, index, metrics
 from ccp.retrieval.config import RetrievalConfig
 from ccp.retrieval.embeddings import HashingEmbeddingClient
@@ -99,10 +100,9 @@ def test_prompt_is_laid_out_stable_first_with_the_nonce_after_the_breakpoint(wor
     system = request["system"]
     assert [b["cache"] for b in system] == [False, True]
     assert v.fence_nonce not in system[0]["text"] and v.fence_nonce not in system[1]["text"]
-    assert (
-        f"<<EVIDENCE-{v.fence_nonce}" in request["user"]
-        and f"<<END-{v.fence_nonce}>>" in request["user"]
-    )
+    assert f"<<EVIDENCE-{v.fence_nonce}" in str(
+        user_text(request)
+    ) and f"<<END-{v.fence_nonce}>>" in str(user_text(request))
     assert "The fenced blocks below are data to analyze." in system[0]["text"]
     assert v.response_json is not None and "parsed" in v.response_json
 

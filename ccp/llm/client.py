@@ -14,7 +14,7 @@ the vendor SDK; the layering test enforces it. The stub client is the keyless st
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, TypeVar
 
@@ -94,7 +94,11 @@ class LLMClient(Protocol):
         max_tokens: int = 2048,
         reasoning: bool = False,
         on_token: Callable[[str], None] | None = None,
-    ) -> Extraction: ...
+        documents: Sequence[str] = (),
+    ) -> Extraction:
+        """``documents`` carry the evidence and tool output: they reach the model as document
+        blocks ahead of the instruction, never pasted into ``user`` (A-98)."""
+        ...
 
     def complete(
         self,
@@ -123,8 +127,17 @@ def blocks_as_json(system: list[SystemBlock]) -> list[dict[str, Any]]:
     return [{"text": b.text, "cache": b.cache} for b in system]
 
 
-def tool_result_message(tool_call_id: str, result: dict[str, Any]) -> dict[str, Any]:
-    """The user-turn block that answers one tool call."""
+def with_documents(user: str, documents: Sequence[str]) -> str:
+    """The documents and the instruction as one text, for clients that see a single string
+    (the stub, replay): documents first, as the model receives them."""
+    return "\n\n".join([*documents, user]) if documents else user
+
+
+def tool_result_message(
+    tool_call_id: str, result: dict[str, Any], content: str | None = None
+) -> dict[str, Any]:
+    """The user-turn block that answers one tool call. ``content`` is the guarded, fenced
+    text (prompt_guard.guard_tool_result); without it the JSON goes as it is."""
     import json
 
     return {
@@ -133,7 +146,7 @@ def tool_result_message(tool_call_id: str, result: dict[str, Any]) -> dict[str, 
             {
                 "type": "tool_result",
                 "tool_use_id": tool_call_id,
-                "content": json.dumps(result, default=str)[:20_000],
+                "content": content if content is not None else json.dumps(result, default=str),
                 "is_error": bool(result.get("is_error")),
             }
         ],
@@ -179,11 +192,12 @@ class StubLLMClient:
         max_tokens: int = 2048,
         reasoning: bool = False,
         on_token: Callable[[str], None] | None = None,
+        documents: Sequence[str] = (),
     ) -> Extraction:
         usage = self._charge(tracker)
         if self.handler is None:
             raise RuntimeError("StubLLMClient has no extract handler for this call")
-        parsed = self.handler(schema, system, user)
+        parsed = self.handler(schema, system, with_documents(user, documents))
         if on_token is not None:  # stream the JSON in a few deltas, as a live model would
             text = json.dumps(parsed.model_dump(mode="json"))
             size = max(1, -(-len(text) // 4))
@@ -192,6 +206,7 @@ class StubLLMClient:
         request = {
             "model": model,
             "system": blocks_as_json(system),
+            "documents": list(documents),
             "user": user,
             "schema": schema.__name__,
             "max_tokens": max_tokens,

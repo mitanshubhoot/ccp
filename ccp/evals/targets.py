@@ -125,7 +125,7 @@ def _providers(ctx: EvalContext) -> Any:
 def _support_precision(verdict: Any) -> float | None:
     """Fraction of extracted values whose cited quote contains the value (spec.md Layer 11);
     None when the verdict keeps no (value, citation) pairs."""
-    from ccp.evaluators.citations import value_in_quote
+    from ccp.evaluators.citations import value_in_quote, value_supported
 
     fields = verdict.extracted_fields or {}
     pairs = supported = 0
@@ -136,7 +136,9 @@ def _support_precision(verdict: Any) -> float | None:
         if not isinstance(citation, dict) or not citation.get("quote"):
             continue
         pairs += 1
-        supported += int(value_in_quote(value, str(citation["quote"])))
+        quote = str(citation["quote"])
+        by_rule = value_supported(name, value, quote)  # status words, as A-98 checks them
+        supported += int(by_rule if by_rule is not None else value_in_quote(value, quote))
     return round(supported / pairs, 4) if pairs else None
 
 

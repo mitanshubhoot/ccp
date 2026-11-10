@@ -233,7 +233,12 @@ def search_evidence(ctx: ToolContext, args: BaseModel) -> Any:
         config=ctx.retrieval,
         top_k=a.top_k,
     )
-    return {"chunks": [_chunk_dict(c) for c in result.chunks], "events": result.events}
+    return {
+        "chunks": [_chunk_dict(c) for c in result.chunks],
+        "events": result.events,
+        "embed_model": result.embed_model,  # which calibration its scores belong to
+        "rerank_model": result.rerank_model,
+    }
 
 
 def get_chunk(ctx: ToolContext, args: BaseModel) -> Any:

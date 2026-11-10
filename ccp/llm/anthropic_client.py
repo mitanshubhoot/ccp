@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, TypeVar, cast
 
 import anthropic
@@ -98,6 +98,22 @@ def _usage(model: str, raw: Any, *, batch: bool = False) -> Usage:
         batch=batch,
     )
     return Usage(input_tokens, output_tokens, cache_read, cache_write, usd)
+
+
+def _user_content(user: str, documents: Sequence[str]) -> str | list[dict[str, Any]]:
+    """Evidence and tool output as text document blocks ahead of the instruction, never
+    pasted into it (A-98); a call with no documents keeps the plain string."""
+    if not documents:
+        return user
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "document",
+            "source": {"type": "text", "media_type": "text/plain", "data": document},
+            "title": f"evidence {n}",
+        }
+        for n, document in enumerate(documents, start=1)
+    ]
+    return [*blocks, {"type": "text", "text": user}]
 
 
 def _require_price(model: str) -> None:
@@ -212,13 +228,14 @@ class AnthropicClient:
         max_tokens: int = 2048,
         reasoning: bool = False,
         on_token: Callable[[str], None] | None = None,
+        documents: Sequence[str] = (),
     ) -> Extraction:
         _require_price(model)
         params: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
             "system": system_param(system),
-            "messages": [{"role": "user", "content": user}],
+            "messages": [{"role": "user", "content": _user_content(user, documents)}],
             **sampling_params(model, reasoning=reasoning),
         }
         _room_for_thinking(params)
@@ -229,7 +246,9 @@ class AnthropicClient:
             response = self._with_retry(lambda: self._parse_or_malformed(params, schema))
         usage, parsed = self._settle(model, tracker, response)
         if parsed is None:  # one re-ask, then terminal (spec.md D9)
-            params["messages"] = [{"role": "user", "content": user + REASK_SUFFIX}]
+            params["messages"] = [
+                {"role": "user", "content": _user_content(user + REASK_SUFFIX, documents)}
+            ]
             response = self._with_retry(lambda: self._parse_or_malformed(params, schema))
             second, parsed = self._settle(model, tracker, response)
             usage = Usage(

@@ -28,15 +28,12 @@ def _context(user: str) -> dict[str, Any]:
     match = _VERDICT.search(user)
     if not match:
         return {}
-    text = match.group("json")
-    # the fenced evidence follows the JSON; cut at the framing sentence when present
-    cut = text.find("\n\nThe fenced blocks below")
-    if cut >= 0:
-        text = text[:cut]
+    # the JSON object comes first; whatever follows it (the instruction) is not read
     try:
-        return dict(json.loads(text))
+        parsed, _ = json.JSONDecoder().raw_decode(match.group("json"))
     except ValueError:
         return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
 
 
 def diagnose(schema: type[Any], system: list[SystemBlock], user: str) -> BaseModel:

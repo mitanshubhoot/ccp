@@ -204,6 +204,9 @@ def _on_tool_result(state: AgentState, tool: str, result: dict[str, Any]) -> dic
     return {"context": {_result_key(tool, payload): payload}}
 
 
+ANSWER_CONTEXT_LIMIT = 30_000  # characters of tool results the answer step may read
+
+
 def build_spec(
     tenant: TenantContext,
     tools: dict[str, BoundTool],
@@ -223,12 +226,18 @@ def build_spec(
         turn = turn_of(state)
         return [c for c in state.get("retrieved_chunks", {}).values() if c.get("turn") == turn]
 
+    def quoted_question(state: AgentState) -> str:
+        """The operator's words as one quoted line, invisible characters removed: a pasted
+        question cannot add lines to the instruction (A-98)."""
+        cleaned, _ = prompt_guard.strip_invisible(str(state.get("question") or ""))
+        return json.dumps(cleaned, ensure_ascii=False)
+
     def tool_results(state: AgentState) -> dict[str, Any]:
         return {k: v for k, v in (state.get("context") or {}).items() if ":" in k}
 
     def describe_question(state: AgentState) -> str:
         return (
-            f"Question: {state.get('question')}\n"
+            f"Question (the operator's words, quoted): {quoted_question(state)}\n"
             f"Known test ids: {', '.join(known_tests)}\n"
             "Frameworks: soc2, iso27001\n"
             "Classify the intent and pull out any test id, subject, or framework the question"
@@ -266,7 +275,7 @@ def build_spec(
         intent = state.get("intent") or "other"
         ctx = state.get("context") or {}
         return (
-            f"Question from the tenant's operator: {state.get('question')}\n"
+            f"Question from the tenant's operator (quoted): {quoted_question(state)}\n"
             f"Intent: {intent}\n"
             f"Hints: test_id={ctx.get('test_id')}, subject={ctx.get('subject_hint')},"
             f" framework={ctx.get('framework_id')}\n"
@@ -288,12 +297,13 @@ def build_spec(
 
     def describe_answer(state: AgentState) -> str:
         intent = state.get("intent") or "other"
-        results = json.dumps(tool_results(state), default=str, sort_keys=True)[:30000]
-        return (
-            f"Question: {state.get('question')}\n"
+        nonce = str(state.get("tool_nonce") or "")
+        return (  # the tool output is a document block, never part of this text (A-98)
+            f"Question (the operator's words, quoted): {quoted_question(state)}\n"
             f"Intent: {intent}\n"
             f"Contract: {CONTRACTS.get(intent, CONTRACTS['other'])}\n"
-            f"TOOL_RESULTS_JSON: {results}\n"
+            f"{prompt_guard.tool_fence_declaration(nonce)} The tool results are in the"
+            " documents, as one TOOL_RESULTS_JSON line.\n"
             "Answer the operator's question. Cite only quotes that appear verbatim in the fenced"
             " blocks, with their chunk ids. Requested actions must use the catalogue names and"
             " concrete targets, and carry the verdict_id they fix."
@@ -309,6 +319,7 @@ def build_spec(
             describe=describe_answer,
             require_chunks=False,
             stream=stream,
+            documents=lambda s: [str(s.get("tool_document") or "")],
         )
 
     # The status contract may drop sentences after generation, so a status answer is never
@@ -346,15 +357,23 @@ def build_spec(
                 got = res.get("result")
                 if not res.get("is_error") and isinstance(got, dict) and "chunk_id" in got:
                     fetched[chunk_id] = {**got, "turn": turn}
-        view: Any = {**state, "retrieved_chunks": {**known, **fetched}} if fetched else state
-        # tool results enter the prompt as system data outside the fence: scan them too
-        flagged = prompt_guard.scan(json.dumps(tool_results(state), default=str))
+        # the tool results go as one guarded, fenced document: redacted, invisible characters
+        # stripped, injection markers flagged, cut with a visible marker (A-98)
+        nonce = prompt_guard.new_nonce()
+        results = json.dumps(tool_results(state), default=str, sort_keys=True, ensure_ascii=False)
+        guarded = prompt_guard.guard_tool_result(
+            "tool_results", f"TOOL_RESULTS_JSON: {results}", nonce, limit=ANSWER_CONTEXT_LIMIT
+        )
+        view: Any = {
+            **state,
+            "retrieved_chunks": {**known, **fetched},
+            "tool_nonce": nonce,
+            "tool_document": guarded.content,
+        }
         inner = inner_answer_plain if state.get("intent") == "status" else inner_answer_streamed
         out = inner(view)
-        if flagged:
-            out.setdefault("guardrail_events", []).extend(
-                f"injection_marker_detected:tool_results:{phrase}" for phrase in flagged
-            )
+        if guarded.events:
+            out.setdefault("guardrail_events", []).extend(guarded.events)
         if fetched:
             out["retrieved_chunks"] = fetched
         if log:

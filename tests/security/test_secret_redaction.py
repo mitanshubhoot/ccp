@@ -22,6 +22,7 @@ from ccp.evaluators.verdict import latest_per_subject
 from ccp.llm.client import SystemBlock, ToolCall
 from ccp.observability import steps
 from ccp.observability.tracing import RecordingSink
+from ccp.replay.rebuild import user_text
 from ccp.retrieval import index
 from ccp.security.secrets_patterns import scan
 from ccp.storage.scoped import ScopedDB
@@ -118,7 +119,7 @@ def test_prompts_step_log_and_trace_payload_hold_only_the_redacted_form(world) -
     finally:
         steps.set_sink(None)
     calls = (turn.answer.request_json or {}).get("calls") or {}
-    answer_user = str(calls["answer"]["request"]["user"])
+    answer_user = str(user_text(calls["answer"]["request"]))  # documents too
     assert REDACTED in answer_user and "ghp_" not in answer_user  # the fenced evidence (S6)
     assert any(
         e.startswith("secret_redacted_in_tool_result:get_evidence_chunks:")

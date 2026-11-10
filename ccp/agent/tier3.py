@@ -68,7 +68,9 @@ def _build(
         tuple(sorted(ALLOWLISTS[GRAPH])),
     )
     deps = core.ModelDeps(providers.llm, settings.ccp_tier3_model, tracker, reasoning=True)
-    graph_spec = graph_module.build_spec(db.tenant, spec, tools, deps, now=now)
+    graph_spec = graph_module.build_spec(
+        db.tenant, spec, tools, deps, now=now, retrieval=providers.retrieval
+    )
     pool = checkpoints.saver_pool(settings, db.tenant)
     saver = PostgresSaver(cast(Any, pool))
     return core.build_graph(graph_spec, saver), saver, pool, tracker

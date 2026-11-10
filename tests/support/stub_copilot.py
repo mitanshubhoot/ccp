@@ -13,17 +13,21 @@ from ccp.evaluators.extraction.base import Cited
 from ccp.evaluators.extraction.copilot import CopilotAnswerDraft, IntentDraft, RequestedAction
 from ccp.evaluators.extraction.investigation import ProposalTarget
 from ccp.llm.client import SystemBlock, ToolCall
+from ccp.security.prompt_guard import unfence_tool_result
 from tests.support.stub_extractors import blocks
 
 _TEST = re.compile(r"\b((?:HR|GH)-\d)\b")
-_QUESTION = re.compile(r"^Question(?: from the tenant's operator)?: (?P<q>.*)$", re.MULTILINE)
+_QUESTION = re.compile(r"^Question[^:\n]*: (?P<q>.*)$", re.MULTILINE)
 _INTENT = re.compile(r"^Intent: (?P<i>\w+)", re.MULTILINE)
 _RESULTS = re.compile(r"^TOOL_RESULTS_JSON: (?P<json>.*)$", re.MULTILINE)
 
 
 def _question(text: str) -> str:
     match = _QUESTION.search(text)
-    return match.group("q").strip() if match else ""
+    if not match:
+        return ""
+    raw = match.group("q").strip()
+    return str(json.loads(raw)) if raw.startswith('"') else raw  # quoted since A-98
 
 
 def classify(schema: type[Any], system: list[SystemBlock], user: str) -> BaseModel:
@@ -63,7 +67,8 @@ def _tool_results(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for block in content:
             if isinstance(block, dict) and block.get("type") == "tool_result":
                 try:
-                    out.append(json.loads(str(block.get("content") or "{}")))
+                    content = unfence_tool_result(str(block.get("content") or "{}"))
+                    out.append(json.loads(content))
                 except json.JSONDecodeError:
                     out.append({})
     return out

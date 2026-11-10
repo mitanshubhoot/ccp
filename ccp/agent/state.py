@@ -58,6 +58,8 @@ class AgentState(TypedDict, total=False):
     context: Annotated[dict[str, Any] | None, keep_last]  # investigator: what is known
     mode: Annotated[str | None, keep_last]  # policy: gap | draft
     question: Annotated[str | None, keep_last]  # copilot: the operator's question this turn
+    tool_nonce: Annotated[str | None, keep_last]  # copilot: the fence of the answer's tool output
+    tool_document: Annotated[str | None, keep_last]  # copilot: that output, guarded and fenced
     intent: Annotated[str | None, keep_last]  # copilot: explain | status | missing | act | other
     turn: Annotated[int | None, keep_last]  # copilot: 1-based turn within the session thread
     final: Annotated[dict[str, Any] | None, keep_last]  # non-verdict graphs' output

@@ -30,6 +30,7 @@ from ccp.evaluators.thresholds import interrupt_threshold
 from ccp.evaluators.verdict import Verdict, evaluation_key
 from ccp.knowledge.graph import TestSpec
 from ccp.retrieval.chunker import CHUNKER_VERSION
+from ccp.retrieval.config import RetrievalConfig, quality_from_thresholds
 from ccp.tenancy import TenantContext
 from ccp.types import VerdictStatus
 
@@ -143,13 +144,51 @@ def _fetch_newest(tools: dict[str, BoundTool], evidence_type: str, node: str) ->
     return node_fn
 
 
+def _top_score(chunk: dict[str, Any]) -> float:
+    scores = chunk.get("scores") or {}
+    rerank = scores.get("rerank_score")
+    return float(rerank if rerank is not None else scores.get("fused_score") or 0.0)
+
+
+def measured_retrieval(state: AgentState, retrieval: RetrievalConfig | None) -> float | None:
+    """The weakest required type decides (A-98): fetched directly as the newest of its type
+    counts 1.0; found by the search fallback, the calibrated quality of its best score (None
+    while uncalibrated); not found, 0."""
+    qualities: list[float] = []
+    for evidence_type in (CRITICAL, REVIEW):
+        chunks = _chunks_of(state, evidence_type)
+        searched = [c for c in chunks if c.get("found_by") == "search"]
+        if not chunks:
+            qualities.append(0.0)
+        elif not searched:
+            qualities.append(1.0)
+        else:
+            first = searched[0]
+            thresholds = (
+                retrieval.thresholds_for(str(first.get("embed_model")), first.get("rerank_model"))
+                if retrieval is not None
+                else None
+            )
+            quality = quality_from_thresholds(max(_top_score(c) for c in searched), thresholds)
+            if quality is None:
+                return None
+            qualities.append(quality)
+    return min(qualities)
+
+
 def _on_search_result(state: AgentState, tool: str, result: dict[str, Any]) -> dict[str, Any]:
     if result.get("is_error"):
         return {}
     chunks = {}
     coverage: dict[str, bool] = {}
-    for c in result.get("result", {}).get("chunks", []):
-        chunks[str(c["chunk_id"])] = dict(c)
+    found = result.get("result", {})
+    for c in found.get("chunks", []):
+        chunks[str(c["chunk_id"])] = {  # found by similarity: its score is measured
+            **dict(c),
+            "found_by": "search",
+            "embed_model": found.get("embed_model"),
+            "rerank_model": found.get("rerank_model"),
+        }
         coverage[str(c.get("evidence_type"))] = True
     return {"retrieved_chunks": chunks, "evidence_coverage": coverage}
 
@@ -161,6 +200,7 @@ def build_spec(
     deps: ModelDeps,
     *,
     now: datetime,
+    retrieval: RetrievalConfig | None = None,
 ) -> GraphSpec:
     assert spec.prompt_version and spec.extraction_schema
     systems_meta = schema_for("CriticalSystemsFields")
@@ -230,7 +270,7 @@ def build_spec(
         conf = confidence.compute(
             coverage=float(stats["coverage"]),
             citation_rate=float(stats["citation_rate"]),
-            retrieval_quality=None if state.get("fallback_used") else 1.0,
+            retrieval_quality=measured_retrieval(state, retrieval),
             injection=injection,
             unresolved_evidence_type=unresolved,
         )

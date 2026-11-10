@@ -87,6 +87,7 @@ def test_stub_client_charges_the_tracker_and_records_the_request() -> None:
         {
             "model": "claude-haiku-4-5",
             "system": [{"text": "sys", "cache": True}],
+            "documents": [],
             "user": "usr",
             "schema": "_Fields",
             "max_tokens": 2048,
