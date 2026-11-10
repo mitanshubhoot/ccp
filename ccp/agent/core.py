@@ -519,6 +519,13 @@ def make_tool_loop(
                         updates["guardrail_events"].append(
                             f"secret_redacted_in_tool_result:{call.name}:{result['redactions']}"
                         )
+                    for signal in ("malformed_result", "rate_limited", "timeout_exceeded"):
+                        if result.get(signal):  # the gateway's own findings (A-112)
+                            updates["guardrail_events"].append(f"tool_{signal}:{call.name}")
+                    if result.get("missing"):
+                        updates["guardrail_events"].append(
+                            f"tool_data_missing:{call.name}:{result['missing']}"
+                        )
                     if result.get("fixed_argument"):
                         updates["guardrail_events"].append(
                             f"tool_argument_fixed:{call.name}:{result['fixed_argument']}"

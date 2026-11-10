@@ -3,7 +3,8 @@ is asked and how its tools answer it. A change to any part is a new bundle, so a
 a model call and a replay can say exactly which bundle they ran.
 
     prompts       every prompt file under ccp/llm/prompts/, by name and content
-    tools         every tool's name, description and argument schema, as the model sees it
+    tools         every tool's whole declaration: what the model sees, its output schema,
+                  class, scopes, limits and version (A-112)
     tool errors   the fixed error texts a tool or the loop returns to the model
     allowlists    which graph may call which tool
 """
@@ -25,6 +26,9 @@ TOOL_ERRORS: dict[str, str] = {
     "invalid_arguments": "invalid arguments: {message}",
     "not_found": "not found",
     "withheld": "result withheld: it carried the fence marker",
+    "missing": "no {what} ... (the data the tool needs is absent)",
+    "rate_limited": "{tool} may be called at most {n} times in a run",
+    "malformed_result": "{tool} returned a malformed result",
     "truncated": (
         "[TRUNCATED: {omitted} of {total} characters not shown; this result is incomplete]"
     ),
@@ -36,7 +40,7 @@ def parts() -> list[str]:
     for path in sorted(PROMPTS_DIR.glob("*.md")):
         out.append(f"prompt {path.name} {hashlib.sha256(path.read_bytes()).hexdigest()}")
     for name in sorted(TOOL_SPECS):
-        out.append(f"tool {name} {json.dumps(TOOL_SPECS[name].schema(), sort_keys=True)}")
+        out.append(f"tool {name} {json.dumps(TOOL_SPECS[name].contract(), sort_keys=True)}")
     for key in sorted(TOOL_ERRORS):
         out.append(f"tool_error {key} {TOOL_ERRORS[key]}")
     for graph in sorted(ALLOWLISTS):

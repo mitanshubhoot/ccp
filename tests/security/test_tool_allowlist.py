@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from ccp.agent import core
 from ccp.agent.allowlists import ALLOWLISTS, ToolNotAllowed, check_allowlist
 from ccp.agent.core import ModelDeps, NodePolicies
-from ccp.agent.tools import TOOL_SPECS, BoundTool, SearchEvidenceArgs, ToolSpec
+from ccp.agent.tools import TOOL_SPECS, BoundTool, SearchEvidenceArgs, SearchEvidenceOut, ToolSpec
 from ccp.llm.budget import BudgetTracker, RunBudget
 from ccp.llm.client import StubLLMClient
 from tests.support.stub_agent import stub_chat_off_list_tool
@@ -45,7 +45,7 @@ def test_a_hallucinated_tool_call_is_refused_and_never_dispatched() -> None:  # 
         fired.append("side effect")
         return {"ok": "yes"}
 
-    spec = ToolSpec("search_evidence", "x", SearchEvidenceArgs)
+    spec = ToolSpec("search_evidence", "x", SearchEvidenceArgs, SearchEvidenceOut)
     tools = {"search_evidence": BoundTool(spec, sentinel, None)}  # type: ignore[arg-type]
     deps = ModelDeps(
         StubLLMClient(chat_handler=stub_chat_off_list_tool),

@@ -100,7 +100,10 @@ def build_spec(
             current = tools["get_current_state"].call(
                 {"test_id": test_id, "subject_key": subject_key}
             )
-            context["current_state"] = current.get("result")
+            context["current_state"] = current.get("result") or {  # absent, said so
+                "error": current.get("error"),
+                "missing": current.get("missing"),
+            }
             log.append(
                 {
                     "node": "load_context",

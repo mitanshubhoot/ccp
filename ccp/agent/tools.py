@@ -1,18 +1,26 @@
-"""Read-only tools for every graph (spec.md Layer 8 "Tools, all read-only, with scope").
+"""The typed tool registry (spec.md Layer 8, A-112): the one source of truth for every tool.
 
 Every tool takes its tenant from the closure created when the graph is built, never from
 an argument the model can set: no tool schema has a `tenant_id` field and every schema
 forbids extra fields, so a model passing one gets a validation error, not another tenant.
 This module imports nothing with a side effect (tests/unit/test_layering.py); each tool
 only reads through ScopedDB.
+
+Each tool declares, besides its argument schema: an output schema the gateway checks every
+result against; a class (read, propose or act, set here and never taken from a hint); the
+tenant data it reads (scopes); whether its result can carry text a customer or a model
+wrote (untrusted); a per-run call limit; a time limit; and a version. Absent data is an
+error that says what is missing, so an empty list is never read as "nothing wrong".
+`BoundTool.call` is the gateway every call goes through, whoever makes it.
 """
 
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -92,17 +100,194 @@ class GetInvestigationArgs(_Args):
     verdict_id: str
 
 
+# -- output schemas: what each tool returns; the gateway checks every result (A-112) -------
+
+
+class _Out(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChunkOut(_Out):
+    chunk_id: str
+    evidence_entity_id: str
+    evidence_type: str
+    subject_entity_id: str | None
+    page: int | None
+    source_ref: str
+    text: str
+    redactions: list[str]
+    scores: dict[str, Any] | None = None
+
+
+class SearchEvidenceOut(_Out):
+    chunks: list[ChunkOut]
+    events: list[str]
+    embed_model: str | None
+    rerank_model: str | None
+
+
+class EvidenceRowOut(_Out):
+    evidence_entity_id: str
+    title: str | None
+    issued_at: str
+    subject_entity_id: str | None
+    source_ref: str | None
+
+
+class ListEvidenceOut(_Out):
+    evidence: list[EvidenceRowOut]
+
+
+class ChunksOut(_Out):
+    chunks: list[ChunkOut]
+
+
+class AssetOut(_Out):
+    entity_id: str
+    name: str
+    asset_type: str
+    tags: list[str]
+
+
+class ListAssetsOut(_Out):
+    assets: list[AssetOut]
+
+
+class AccountOut(_Out):
+    entity_id: str
+    display_name: str | None
+    emails: list[str]
+    handles: dict[str, Any]
+    employment_status: str
+    account_kind: str
+
+
+class PersonOut(_Out):
+    canonical_person_id: str
+    accounts: list[AccountOut]
+
+
+class StateOut(_Out):
+    status: str
+    valid_from: str
+    verdict_id: str
+    reason: str
+
+
+class VerdictOut(_Out):
+    verdict_id: str
+    test_id: str
+    subject_key: str
+    status: str
+    reasoning: str
+    confidence: float
+    tier: int
+    model: str | None
+    citations: list[dict[str, Any]]
+    retrieved_chunk_ids: list[str]
+    evidence_refs: list[str]
+
+
+class FindingOut(_Out):
+    subject_key: str
+    test_id: str
+    status: str
+    verdict_id: str
+
+
+class FindingsOut(_Out):
+    findings: list[FindingOut]
+
+
+class GrantOut(_Out):
+    entity_id: str
+    asset_entity_id: str
+    role: str | None
+    state: str
+    state_effective_at: str
+    connector: str
+
+
+class GrantsOut(_Out):
+    grants: list[GrantOut]
+
+
+class RequirementOut(_Out):
+    framework: str
+    requirement_id: str
+    title: str
+    intent: str
+
+
+class ControlOut(_Out):
+    control_id: str
+    title: str
+    description: str
+    requirements: list[RequirementOut]
+    tests: list[str]
+
+
+class RollupRowOut(_Out):
+    requirement_id: str
+    state: str
+    blocking_test_id: str | None
+    blocking_subject_key: str | None
+    counts: dict[str, int]
+
+
+class RollupOut(_Out):
+    framework_id: str
+    no_evaluations_yet: bool
+    requirements: list[RollupRowOut]
+
+
+class InvestigationOut(_Out):
+    verdict_id: str
+    investigation_id: str
+    root_cause: str | None
+    root_cause_category: str | None
+    missing_evidence: Any
+    proposed_actions: Any
+    citations: Any
+    confidence: float | None
+    created_at: str
+
+
+ToolClass = Literal["read", "propose", "act"]
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
     description: str
     args: type[BaseModel]
+    output: type[BaseModel]  # every result is checked against it at the gateway
+    cls: ToolClass = "read"  # read, propose or act: set here, never trusted from a hint
+    scopes: tuple[str, ...] = ()  # the tenant data it reads
+    untrusted: bool = False  # its result can carry text a customer or a model wrote
+    max_calls: int = 8  # per run
+    timeout_seconds: float = 10.0
+    version: str = "1"
 
     def schema(self) -> dict[str, Any]:
+        """The tool as the model sees it."""
         return {
             "name": self.name,
             "description": self.description,
             "input_schema": self.args.model_json_schema(),
+        }
+
+    def contract(self) -> dict[str, Any]:
+        """The whole declaration: what the bundle hash and the REST surface are built from."""
+        return {
+            **self.schema(),
+            "output_schema": self.output.model_json_schema(),
+            "class": self.cls,
+            "scopes": list(self.scopes),
+            "untrusted": self.untrusted,
+            "max_calls": self.max_calls,
+            "timeout_seconds": self.timeout_seconds,
+            "version": self.version,
         }
 
 
@@ -111,66 +296,101 @@ _SPECS: tuple[ToolSpec, ...] = (
         "search_evidence",
         "Hybrid search over this tenant's evidence chunks of one type.",
         SearchEvidenceArgs,
+        SearchEvidenceOut,
+        scopes=("evidence",),
+        untrusted=True,
+        max_calls=6,
+        timeout_seconds=20.0,
     ),
     ToolSpec(
         "get_chunk",
         "Full text and metadata of one chunk by id (this tenant only).",
         GetChunkArgs,
+        ChunkOut,
+        scopes=("evidence",),
+        untrusted=True,
+        max_calls=12,
     ),
     ToolSpec(
         "list_evidence",
         "Evidence rows of one type: id, title, issued_at, subject; newest first.",
         ListEvidenceArgs,
+        ListEvidenceOut,
+        scopes=("evidence",),
+        untrusted=True,
     ),
     ToolSpec(
         "get_evidence_chunks",
         "Every chunk of one evidence row, in order, with page numbers.",
         GetEvidenceChunksArgs,
+        ChunksOut,
+        scopes=("evidence",),
+        untrusted=True,
     ),
     ToolSpec(
         "list_assets",
         "This tenant's assets: id, name, type, tags; optionally filtered by tag.",
         ListAssetsArgs,
+        ListAssetsOut,
+        scopes=("inventory",),
     ),
     ToolSpec(
         "get_person",
         "Merged view of one person: names, emails, handles, status, linked accounts.",
         GetPersonArgs,
+        PersonOut,
+        scopes=("people",),
+        untrusted=True,  # names and handles come from the customer's systems
     ),
     ToolSpec(
         "get_current_state",
         "Current compliance state of one (test, subject).",
         GetCurrentStateArgs,
+        StateOut,
+        scopes=("state",),
     ),
     ToolSpec(
         "get_verdict",
         "One verdict: status, reasoning, verified citations, chunk ids, tier, model.",
         GetVerdictArgs,
+        VerdictOut,
+        scopes=("verdicts",),
+        untrusted=True,  # reasoning and quotes were written from evidence
     ),
     ToolSpec(
         "list_findings",
         "Current compliance-state rows, optionally by status or test.",
         ListFindingsArgs,
+        FindingsOut,
+        scopes=("state",),
     ),
     ToolSpec(
         "get_access_grants",
         "Latest observation of every grant held by one canonical person.",
         GetAccessGrantsArgs,
+        GrantsOut,
+        scopes=("people", "access"),
     ),
     ToolSpec(
         "get_control",
         "A control's text, its requirements under both frameworks, its tests.",
         GetControlArgs,
+        ControlOut,
     ),
     ToolSpec(
         "get_framework_rollup",
         "Per-requirement state counts and failing subjects for one framework.",
         GetFrameworkRollupArgs,
+        RollupOut,
+        scopes=("state",),
     ),
     ToolSpec(
         "get_investigation",
         "The investigation recorded for one verdict, if any.",
         GetInvestigationArgs,
+        InvestigationOut,
+        scopes=("verdicts",),
+        untrusted=True,
     ),
 )
 TOOL_SPECS: dict[str, ToolSpec] = {s.name: s for s in _SPECS}
@@ -187,6 +407,11 @@ class ToolContext:
 
 
 ToolFn = Callable[[ToolContext, BaseModel], Any]
+
+
+def missing(what: str, detail: str) -> dict[str, Any]:
+    """Data the tool needs is absent: an error that names it, never an empty list (A-112)."""
+    return {"error": detail, "missing": what}
 
 
 def _redacted_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -222,6 +447,14 @@ def _chunk_dict(c: hybrid.RetrievedChunk) -> dict[str, Any]:
     )
 
 
+def _holds_chunks(ctx: ToolContext, evidence_type: str) -> bool:
+    row = ctx.db.fetch_one(
+        "SELECT 1 FROM chunks WHERE evidence_type = %s AND NOT is_distractor LIMIT 1",
+        (evidence_type,),
+    )
+    return row is not None
+
+
 def search_evidence(ctx: ToolContext, args: BaseModel) -> Any:
     a = SearchEvidenceArgs.model_validate(args.model_dump())
     result = hybrid.retrieve(
@@ -233,6 +466,8 @@ def search_evidence(ctx: ToolContext, args: BaseModel) -> Any:
         config=ctx.retrieval,
         top_k=a.top_k,
     )
+    if not result.chunks and not _holds_chunks(ctx, a.evidence_type.value):
+        return missing(a.evidence_type.value, f"no {a.evidence_type.value} evidence is held")
     return {
         "chunks": [_chunk_dict(c) for c in result.chunks],
         "events": result.events,
@@ -265,6 +500,8 @@ def get_chunk(ctx: ToolContext, args: BaseModel) -> Any:
 def list_evidence(ctx: ToolContext, args: BaseModel) -> Any:
     a = ListEvidenceArgs.model_validate(args.model_dump())
     rows = repository.current_evidence(ctx.db, a.evidence_type)
+    if not rows:
+        return missing(a.evidence_type.value, f"no {a.evidence_type.value} evidence is held")
     ordered = sorted(rows, key=lambda e: (e.issued_at or e.observed_at, e.entity_id), reverse=True)
     return {
         "evidence": [
@@ -287,6 +524,8 @@ def get_evidence_chunks(ctx: ToolContext, args: BaseModel) -> Any:
         " text FROM chunks WHERE evidence_entity_id = %s AND NOT is_distractor ORDER BY ordinal",
         (a.evidence_entity_id,),
     )
+    if not rows:
+        return missing("chunks", f"no chunks are held for {a.evidence_entity_id}")
     keys = (
         "chunk_id",
         "evidence_entity_id",
@@ -302,6 +541,8 @@ def get_evidence_chunks(ctx: ToolContext, args: BaseModel) -> Any:
 def list_assets(ctx: ToolContext, args: BaseModel) -> Any:
     a = ListAssetsArgs.model_validate(args.model_dump())
     assets = repository.current_assets(ctx.db)
+    if not assets:
+        return missing("assets", "no assets are held: no inventory has been pulled")
     return {
         "assets": [
             {
@@ -345,7 +586,7 @@ def get_current_state(ctx: ToolContext, args: BaseModel) -> Any:
     subject_key = a.subject_key if "|" in a.subject_key else f"{a.test_id}|{a.subject_key}"
     row = bitemporal.current_state(ctx.db, subject_key)
     if row is None:
-        return {"state": "no_evaluations_yet"}
+        return missing("evaluation", f"no evaluation of {subject_key} yet")
     return {
         "status": row.status.value,
         "valid_from": row.valid_from.isoformat(),
@@ -379,6 +620,8 @@ def get_verdict(ctx: ToolContext, args: BaseModel) -> Any:
 def list_findings(ctx: ToolContext, args: BaseModel) -> Any:
     a = ListFindingsArgs.model_validate(args.model_dump())
     rows = bitemporal.heads(ctx.db)
+    if not rows:
+        return missing("evaluations", "no evaluations yet: nothing has been assessed")
     return {
         "findings": [
             {
@@ -399,6 +642,11 @@ def get_access_grants(ctx: ToolContext, args: BaseModel) -> Any:
     links = resolver.canonical_map(ctx.db)
     members = {pid for pid, canonical in links.items() if canonical == a.canonical_person_id}
     members.add(a.canonical_person_id)
+    grants = repository.current_grants(ctx.db)
+    if not grants:
+        return missing("grants", "no access grants are held: no access source has been pulled")
+    if not any(p.entity_id in members for p in repository.current_persons(ctx.db)):
+        return {"error": "not found"}
     return {
         "grants": [
             {
@@ -409,7 +657,7 @@ def get_access_grants(ctx: ToolContext, args: BaseModel) -> Any:
                 "state_effective_at": g.state_effective_at.isoformat(),
                 "connector": g.source_connector,
             }
-            for g in repository.current_grants(ctx.db)
+            for g in grants
             if g.person_entity_id in members
         ]
     }
@@ -509,9 +757,19 @@ class BoundTool:
     _fn: ToolFn
     _ctx: ToolContext
     fixed_args: dict[str, Any] | None = None  # a graph may pin an argument (policy_document)
+    _calls: list[int] = field(default_factory=lambda: [0])  # this run's calls
 
     def call(self, raw_args: dict[str, Any]) -> dict[str, Any]:
-        """Validate the model's arguments (extra fields forbidden), run, wrap the result."""
+        """The gateway (A-112): the per-run call limit, the arguments validated (extra fields
+        forbidden), the run, and the result checked against the tool's output schema."""
+        if self._calls[0] >= self.spec.max_calls:
+            return {
+                "is_error": True,
+                "error": f"{self.spec.name} may be called at most {self.spec.max_calls} times"
+                " in a run",
+                "rate_limited": True,
+            }
+        self._calls[0] += 1
         merged = dict(raw_args)
         for key, value in (self.fixed_args or {}).items():
             if key in merged and merged[key] != value:
@@ -528,10 +786,22 @@ class BoundTool:
                 "is_error": True,
                 "error": f"invalid arguments: {exc.errors()[0].get('msg', exc)}",
             }
+        started = time.monotonic()
         result = self._fn(self._ctx, args)
+        elapsed = time.monotonic() - started
         if isinstance(result, dict) and result.get("error"):
             return {"is_error": True, **result}
+        try:
+            self.spec.output.model_validate(result)
+        except ValidationError:  # a tool bug: the model never sees a malformed result
+            return {
+                "is_error": True,
+                "error": f"{self.spec.name} returned a malformed result",
+                "malformed_result": True,
+            }
         wrapped: dict[str, Any] = {"is_error": False, "result": result}
+        if elapsed > self.spec.timeout_seconds:
+            wrapped["timeout_exceeded"] = round(elapsed, 3)
         redactions = _redaction_count(result)
         if redactions:
             wrapped["redactions"] = redactions
