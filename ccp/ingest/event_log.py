@@ -258,6 +258,21 @@ def claim(
     return sorted((LogRecord.from_row(r) for r in rows), key=lambda r: r.offset)
 
 
+def claim_offset(
+    cur: psycopg.Cursor[Any], offset: int, lease_seconds: float, owner: str = ""
+) -> LogRecord | None:
+    """Claim one named record if it is due and nobody holds it: the process that queued a
+    job can be its first worker (A-110). None when it is not claimable now."""
+    row = cur.execute(
+        f'{_TAKE} WHERE e."offset" = %(offset)s AND {_DUE}'
+        ' AND e."offset" IN (SELECT "offset" FROM event_log WHERE "offset" = %(offset)s'
+        " FOR UPDATE SKIP LOCKED)"
+        f" RETURNING {_QUALIFIED}",
+        {"offset": offset, "lease": lease_seconds, "owner": owner or None},
+    ).fetchone()
+    return LogRecord.from_row(row) if row else None
+
+
 def live_claims(cur: psycopg.Cursor[Any], topic: str, lease_seconds: float) -> int:
     """Records of the tenant's topic held under a live lease (A-105, A-107)."""
     row = cur.execute(

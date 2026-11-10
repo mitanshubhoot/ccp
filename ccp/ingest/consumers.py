@@ -322,6 +322,12 @@ class ParallelConsumer(ABC):
             )
         if not records:
             return 0
+        self.work(records)
+        return len(records)
+
+    def work(self, records: list[LogRecord]) -> None:
+        """Handle records this consumer has claimed, under a heartbeat that keeps their
+        leases (A-105)."""
         with LeaseKeeper(self._db, records, self.visibility_seconds) as keeper:
             for record in records:
                 if keeper.lost(record.offset):
@@ -329,7 +335,6 @@ class ParallelConsumer(ABC):
                     continue
                 self._process(record)
                 keeper.release(record.offset)
-        return len(records)
 
     def next_due(self) -> datetime | None:
         """When a record of this topic next falls due for the tenant (A-106): a pending one

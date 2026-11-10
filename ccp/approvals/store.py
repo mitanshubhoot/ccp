@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
+import psycopg
 from ulid import ULID
 
 from ccp.storage.scoped import ScopedDB
@@ -124,7 +126,10 @@ def record_event(
     note: str | None = None,
     *,
     decision: dict[str, Any] | None = None,
+    within: Callable[[psycopg.Cursor[Any]], None] | None = None,
 ) -> Approval:
+    """Append one event. `within` runs in the same transaction, so whatever it writes (the
+    apply job of a decision, A-110) commits with the event or not at all."""
     if not reviewer or not reviewer.strip():
         raise ValueError("a reviewer name is required")
     current = get(db, approval_id)
@@ -167,6 +172,8 @@ def record_event(
                     db.tenant.settings.label_consent,
                 ),
             )
+        if within is not None:
+            within(cur)
     updated = get(db, approval_id)
     assert updated is not None
     return updated

@@ -57,8 +57,9 @@ def _tier3_outcome(result: decisions.DecisionOutcome, rejected: bool) -> Outcome
     if result.verdict is None or result.error is not None:
         return Outcome(
             result.approval,
-            f"decision recorded; resume failed: {result.error}. Run"
-            f" `ccp approvals resume {result.approval.approval_id}` to apply it",
+            f"decision recorded; resume failed: {result.error}. Its apply job retries it"
+            " (`ccp worker run --consumer applies`), or run"
+            f" `ccp approvals resume {result.approval.approval_id}` to apply it now",
             ok=False,
         )
     if rejected:
