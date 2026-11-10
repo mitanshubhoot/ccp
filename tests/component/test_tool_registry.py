@@ -18,6 +18,7 @@ import pytest
 from pydantic import BaseModel
 
 from ccp.agent import bundle, tools
+from ccp.agent.authz import Gate, Rule
 from ccp.agent.tools import TOOL_SPECS, BoundTool, ToolContext, ToolSpec, bind_tools
 from ccp.compliance_state import writer as state_writer
 from ccp.config import Settings
@@ -70,7 +71,7 @@ def test_the_bundle_hash_covers_the_whole_declaration(monkeypatch: pytest.Monkey
 @pytest.mark.db
 def test_every_result_matches_its_output_schema(world: tuple[ScopedDB, ScopedDB]) -> None:
     acme, _ = world
-    bound = bind_tools(_ctx(acme), tuple(sorted(TOOL_SPECS)))
+    bound = bind_tools(_ctx(acme), tuple(sorted(TOOL_SPECS)), gate=Gate("graph:copilot"))
     chunk = acme.fetch_one("SELECT chunk_id, evidence_entity_id FROM chunks LIMIT 1")
     verdict = acme.fetch_one("SELECT verdict_id, test_id, subject_key FROM verdicts LIMIT 1")
     person = acme.fetch_one("SELECT entity_id FROM persons LIMIT 1")
@@ -105,7 +106,7 @@ def test_absent_data_is_an_error_that_names_it_never_an_empty_list(
     world: tuple[ScopedDB, ScopedDB],
 ) -> None:
     _, empty = world
-    bound = bind_tools(_ctx(empty), tuple(sorted(TOOL_SPECS)))
+    bound = bind_tools(_ctx(empty), tuple(sorted(TOOL_SPECS)), gate=Gate("graph:copilot"))
     expected = {
         "list_findings": ({}, "evaluations"),
         "list_assets": ({}, "assets"),
@@ -129,7 +130,12 @@ def test_the_gateway_refuses_a_malformed_result_and_counts_calls() -> None:
 
     spec = ToolSpec("probe", "a probe", tools.GetControlArgs, Out, max_calls=2)
     replies: list[Any] = [{"value": "not a number"}, {"value": 3}, {"value": 4}]
-    probe = BoundTool(spec, lambda ctx, args: replies.pop(0), _ctx(None))  # type: ignore[arg-type]
+    probe = BoundTool(
+        spec,
+        lambda ctx, args: replies.pop(0),
+        _ctx(None),  # type: ignore[arg-type]
+        gate=Gate("test:probe", table=(Rule(id="t", principal="test:probe", tools=("probe",)),)),
+    )
     bad = probe.call({"control_id": "x"})
     assert bad == {
         "is_error": True,

@@ -24,6 +24,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from ccp.agent.authz import Decision, Gate
 from ccp.identity import resolver
 from ccp.knowledge import graph as knowledge
 from ccp.knowledge import rollup as knowledge_rollup
@@ -757,34 +758,48 @@ class BoundTool:
     _fn: ToolFn
     _ctx: ToolContext
     fixed_args: dict[str, Any] | None = None  # a graph may pin an argument (policy_document)
+    gate: Gate | None = None  # policy.check and its log (A-113); none: every call is refused
     _calls: list[int] = field(default_factory=lambda: [0])  # this run's calls
 
+    def _refuse(self, args: dict[str, Any], reason: str, **extra: Any) -> dict[str, Any]:
+        """A call that never runs still gets a logged decision: a deny."""
+        if self.gate is not None:
+            self.gate.record(self.spec.name, self.spec.cls, args, Decision("deny", None, reason))
+        return {"is_error": True, "error": reason, **extra}
+
     def call(self, raw_args: dict[str, Any]) -> dict[str, Any]:
-        """The gateway (A-112): the per-run call limit, the arguments validated (extra fields
-        forbidden), the run, and the result checked against the tool's output schema."""
+        """The gateway (A-112, A-113): the per-run call limit, the arguments validated (extra
+        fields forbidden), `policy.check` decided and logged, the run, and the result checked
+        against the tool's output schema."""
         if self._calls[0] >= self.spec.max_calls:
-            return {
-                "is_error": True,
-                "error": f"{self.spec.name} may be called at most {self.spec.max_calls} times"
-                " in a run",
-                "rate_limited": True,
-            }
+            return self._refuse(
+                raw_args,
+                f"{self.spec.name} may be called at most {self.spec.max_calls} times in a run",
+                rate_limited=True,
+            )
         self._calls[0] += 1
         merged = dict(raw_args)
         for key, value in (self.fixed_args or {}).items():
             if key in merged and merged[key] != value:
-                return {
-                    "is_error": True,
-                    "error": f"argument {key} is fixed to {value!r} in this graph",
-                    "fixed_argument": key,
-                }
+                return self._refuse(
+                    merged,
+                    f"argument {key} is fixed to {value!r} in this graph",
+                    fixed_argument=key,
+                )
             merged[key] = value
         try:
             args = self.spec.args.model_validate(merged)
         except ValidationError as exc:
+            return self._refuse(merged, f"invalid arguments: {exc.errors()[0].get('msg', exc)}")
+        if self.gate is None:
+            return {"is_error": True, "error": "not permitted: no policy gate", "denied": "none"}
+        decision = self.gate.decide(self.spec.name, self.spec.cls, args.model_dump(mode="json"))
+        if not decision.permitted:
             return {
                 "is_error": True,
-                "error": f"invalid arguments: {exc.errors()[0].get('msg', exc)}",
+                "error": f"not permitted: {decision.reason}",
+                "denied": decision.rule_id or "default",
+                "policy": decision.effect,
             }
         started = time.monotonic()
         result = self._fn(self._ctx, args)
@@ -812,11 +827,17 @@ def bind_tools(
     ctx: ToolContext,
     names: tuple[str, ...],
     fixed: dict[str, dict[str, Any]] | None = None,
+    *,
+    gate: Gate,
 ) -> dict[str, BoundTool]:
+    """The tools a run may use, each behind the gateway. A tool `policy.check` could never
+    permit this principal leaves the list (A-113)."""
     unknown = sorted(set(names) - set(TOOL_SPECS))
     if unknown:
         raise KeyError(f"unknown tools {unknown}")
+    permitted = set(gate.offered(names))
     return {
-        name: BoundTool(TOOL_SPECS[name], TOOL_FNS[name], ctx, (fixed or {}).get(name))
+        name: BoundTool(TOOL_SPECS[name], TOOL_FNS[name], ctx, (fixed or {}).get(name), gate)
         for name in names
+        if name in permitted
     }

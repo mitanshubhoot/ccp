@@ -24,6 +24,7 @@ from hypothesis import strategies as st
 from pydantic import BaseModel
 
 from ccp.agent import bundle, core
+from ccp.agent.authz import Gate
 from ccp.agent.core import StopReason, model_stop, stop_reason
 from ccp.agent.tools import TOOL_SPECS, ToolContext, bind_tools
 from ccp.approvals import store as approvals
@@ -247,7 +248,7 @@ def test_every_tool_keeps_its_contract(world: tuple[Settings, ScopedDB], name: s
     settings, acme = world
     assert name in EXAMPLES, f"add a contract example for the new tool {name}"
     ctx = ToolContext(acme, HashingEmbeddingClient(), None, RetrievalConfig())
-    tool = bind_tools(ctx, (name,))[name]
+    tool = bind_tools(ctx, (name,), gate=Gate("graph:copilot"))[name]
     ok = tool.call(EXAMPLES[name])
     assert isinstance(ok.get("is_error"), bool)
     json.dumps(ok, default=str)  # every result can be fenced and sent

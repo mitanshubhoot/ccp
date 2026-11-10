@@ -30,6 +30,7 @@ from langgraph.types import RetryPolicy
 from pydantic import ValidationError
 
 from ccp.agent.allowlists import check_allowlist
+from ccp.agent.authz import DENIALS_STOP, Decision
 from ccp.agent.bundle import bundle_sha256
 from ccp.agent.runlog import RunLog
 from ccp.agent.state import AgentState
@@ -327,6 +328,7 @@ class StopReason(StrEnum):
     truncated = "truncated"
     loop_call = "loop_repeat_call"
     loop_result = "loop_repeat_result"
+    policy_denials = "policy_denials"  # three calls in a row refused by policy.check (A-113)
 
 
 LOOP_REPEATS = 3  # the same call, or the same result running, this many times is a loop
@@ -450,6 +452,10 @@ def make_tool_loop(
         history: list[tuple[str, str, str, bool]] = []  # (tool, arguments, result digest, error)
         reason: StopReason | None = None
         turn_no = 0
+        denied_run = 0  # calls refused by policy.check in a row (A-113)
+        gate = next(
+            (g for g in (getattr(t, "gate", None) for t in tools.values()) if g is not None), None
+        )
         while reason is None:
             turn_no += 1
             digest = _request_digest(system, messages, offered, deps.model)
@@ -499,8 +505,19 @@ def make_tool_loop(
                 calls_made += 1
                 deps.tracker.tool_call()
                 if call.name not in tools or call.name not in allowed:
-                    result = {"is_error": True, "error": "tool not permitted in this graph"}
+                    result = {
+                        "is_error": True,
+                        "error": "tool not permitted in this graph",
+                        "denied": "not_on_list",
+                    }
                     updates["guardrail_events"].append(f"tool_not_permitted:{call.name}")
+                    if gate is not None:  # refused before the gateway: decided and logged here
+                        gate.record(
+                            call.name,
+                            "unknown",
+                            call.arguments,
+                            Decision("deny", None, "not on this graph's tool list"),
+                        )
                 else:
                     bound = tools[call.name]
                     if log is not None:  # recorded, so a resumed loop sees the same result
@@ -529,6 +546,10 @@ def make_tool_loop(
                     if result.get("fixed_argument"):
                         updates["guardrail_events"].append(
                             f"tool_argument_fixed:{call.name}:{result['fixed_argument']}"
+                        )
+                    if result.get("policy"):
+                        updates["guardrail_events"].append(
+                            f"tool_policy_{result['policy']}:{call.name}:{result.get('denied')}"
                         )
                     merged = on_result(state, call.name, result)
                     updates["retrieved_chunks"].update(merged.get("retrieved_chunks", {}))
@@ -560,8 +581,12 @@ def make_tool_loop(
                         bool(result.get("is_error")),
                     )
                 )
-                if calls_made >= max_calls:
+                denied_run = denied_run + 1 if result.get("denied") else 0
+                if denied_run >= DENIALS_STOP or calls_made >= max_calls:
                     break
+            if denied_run >= DENIALS_STOP:  # a model that keeps asking for what it may not have
+                reason = StopReason.policy_denials
+                break
             reason = stop_reason(history, calls_made, max_calls)
         if reason is not StopReason.normal:
             updates["guardrail_events"].append(f"tool_loop_stopped:{name}:{reason.value}")

@@ -23,7 +23,7 @@ from typing import Any
 
 import psycopg
 
-from ccp.agent import core, threads
+from ccp.agent import authz, core, threads
 from ccp.agent.allowlists import ALLOWLISTS
 from ccp.agent.graphs import investigator as graph_module
 from ccp.agent.tools import ToolContext, bind_tools
@@ -69,12 +69,17 @@ def thread_id_of(db: ScopedDB, verdict_id: str) -> str:
 
 
 def _build(
-    db: ScopedDB, settings: Settings, providers: Providers, now: datetime
+    db: ScopedDB,
+    settings: Settings,
+    providers: Providers,
+    now: datetime,
+    run_id: str | None = None,
 ) -> tuple[Any, Any, BudgetTracker]:
     tracker = BudgetTracker(RunBudget.from_settings(settings))
     tools = bind_tools(
         ToolContext(db, providers.embedder, providers.reranker, providers.retrieval),
         tuple(sorted(ALLOWLISTS[GRAPH])),
+        gate=authz.Gate(f"graph:{GRAPH}", run_id=run_id, log_db=db),
     )
     deps = core.ModelDeps(
         providers.llm, settings.investigator_model, tracker, reasoning=True, log_db=db
@@ -106,7 +111,7 @@ def investigate(
         threads.create(db, thread_id, GRAPH, verdict.test_id, verdict.subject_key)
     else:  # a retried job: continue its own run from the last checkpoint
         threads.mark_running(db, thread_id)
-    graph, pool, tracker = _build(db, settings, providers, moment)
+    graph, pool, tracker = _build(db, settings, providers, moment, run_id=thread_id)
     config = {"configurable": {"thread_id": thread_id}}
     initial: dict[str, Any] = {
         "tenant_id": db.tenant.tenant_id,

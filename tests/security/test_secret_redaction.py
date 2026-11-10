@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from ccp.agent import tier3 as _tier3  # noqa: F401 - registers tier 3
+from ccp.agent.authz import Gate
 from ccp.agent.tools import ToolContext, bind_tools
 from ccp.compliance_state import writer as state_writer
 from ccp.config import Settings
@@ -68,6 +69,7 @@ def test_tool_results_carry_only_the_redacted_form(world) -> None:  # type: igno
     tools = bind_tools(
         ToolContext(acme, providers.embedder, providers.reranker, providers.retrieval),
         ("get_chunk", "get_evidence_chunks", "search_evidence"),
+        gate=Gate("graph:copilot"),
     )
     got = tools["get_chunk"].call({"chunk_id": chunk_id})
     assert not got["is_error"] and got["redactions"] >= 1

@@ -15,7 +15,7 @@ from typing import Any
 
 from ulid import ULID
 
-from ccp.agent import core, threads
+from ccp.agent import authz, core, threads
 from ccp.agent.allowlists import ALLOWLISTS
 from ccp.agent.graphs import copilot as graph_module
 from ccp.agent.tools import ToolContext, bind_tools
@@ -137,6 +137,7 @@ class Session:
                 self.db, self.providers.embedder, self.providers.reranker, self.providers.retrieval
             ),
             tuple(sorted(ALLOWLISTS[GRAPH])),
+            gate=authz.Gate(f"graph:{GRAPH}", run_id=self.thread_id, log_db=self.db),
         )
         deps = core.ModelDeps(
             self.providers.llm,
@@ -283,6 +284,7 @@ class Session:
                 self.db, self.providers.embedder, self.providers.reranker, self.providers.retrieval
             ),
             ("get_framework_rollup",),
+            gate=authz.Gate(f"graph:{GRAPH}", run_id=self.thread_id, log_db=self.db),
         )
         context: dict[str, Any] = {}
         tool_log: list[dict[str, Any]] = []

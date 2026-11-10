@@ -21,7 +21,7 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command
 from ulid import ULID
 
-from ccp.agent import core, threads
+from ccp.agent import authz, core, threads
 from ccp.agent.allowlists import ALLOWLISTS
 from ccp.agent.graphs import tier3 as graph_module
 from ccp.agent.runlog import ReplayDiverged
@@ -69,11 +69,13 @@ def _build(
     providers: Providers,
     now: datetime,
     replay_of: str | None = None,
+    run_id: str | None = None,
 ) -> tuple[Any, PostgresSaver, Any, BudgetTracker]:
     tracker = BudgetTracker(RunBudget.from_settings(settings))
     tools = bind_tools(
         ToolContext(db, providers.embedder, providers.reranker, providers.retrieval),
         tuple(sorted(ALLOWLISTS[GRAPH])),
+        gate=authz.Gate(f"graph:{GRAPH}", run_id=run_id, log_db=db),
     )
     deps = core.ModelDeps(
         providers.llm,
@@ -218,7 +220,7 @@ def evaluate(
         run_id = str(ULID())
         thread_id = checkpoints.thread_id_for(tenant, spec.test_id, subject_key, run_id)
         threads.create(db, thread_id, GRAPH, spec.test_id, subject_key, evaluation_key=key)
-    graph, _saver, pool, tracker = _build(db, settings, spec, providers, ctx.now)
+    graph, _saver, pool, tracker = _build(db, settings, spec, providers, ctx.now, run_id=thread_id)
     config = {"configurable": {"thread_id": thread_id}}
     initial: dict[str, Any] = {
         "tenant_id": tenant.tenant_id,
@@ -309,7 +311,9 @@ def pending_payload_sha256(
         return None
     spec = knowledge.load().tests[row.test_id]
     active = providers or Providers.from_settings(settings)
-    graph, _saver, pool, _tracker = _build(db, settings, spec, active, datetime.now(UTC))
+    graph, _saver, pool, _tracker = _build(
+        db, settings, spec, active, datetime.now(UTC), run_id=thread_id
+    )
     try:
         waiting = _interrupt_payload(graph.get_state({"configurable": {"thread_id": thread_id}}))
     finally:
@@ -344,7 +348,7 @@ def resume(
     spec = knowledge.load().tests[row.test_id]
     moment = now or datetime.now(UTC)
     active = providers or Providers.from_settings(settings)
-    graph, _saver, pool, tracker = _build(db, settings, spec, active, moment)
+    graph, _saver, pool, tracker = _build(db, settings, spec, active, moment, run_id=thread_id)
     config = {"configurable": {"thread_id": thread_id}}
     trajectory = list(row.trajectory)
     try:
@@ -466,10 +470,10 @@ def replay(
         retrieval=active.retrieval,
     )
     moment = datetime.fromisoformat(str(initial["now"]))
-    graph, _saver, pool, _tracker = _build(
-        db, settings, spec, replaying, moment, replay_of=thread_id
-    )
     scratch = f"{db.tenant.tenant_id}:replay:{row.test_id}:{ULID()}"
+    graph, _saver, pool, _tracker = _build(
+        db, settings, spec, replaying, moment, replay_of=thread_id, run_id=scratch
+    )
     trajectory: list[str] = []
     diverged: str | None = None
     served = 0

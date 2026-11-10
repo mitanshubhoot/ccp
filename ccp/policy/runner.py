@@ -12,7 +12,7 @@ from typing import Any
 
 from ulid import ULID
 
-from ccp.agent import core, threads
+from ccp.agent import authz, core, threads
 from ccp.agent.allowlists import ALLOWLISTS
 from ccp.agent.graphs import policy as graph_module
 from ccp.agent.tools import ToolContext, bind_tools
@@ -75,13 +75,18 @@ def other_tenant_tokens(settings: Settings, tenant_id: str) -> list[str]:
 
 
 def _build(
-    db: ScopedDB, settings: Settings, providers: Providers, now: datetime
+    db: ScopedDB,
+    settings: Settings,
+    providers: Providers,
+    now: datetime,
+    run_id: str | None = None,
 ) -> tuple[Any, Any, BudgetTracker]:
     tracker = BudgetTracker(RunBudget.from_settings(settings))
     tools = bind_tools(
         ToolContext(db, providers.embedder, providers.reranker, providers.retrieval),
         tuple(sorted(ALLOWLISTS[GRAPH])),
         fixed={"search_evidence": {"evidence_type": "policy_document"}},
+        gate=authz.Gate(f"graph:{GRAPH}", run_id=run_id, log_db=db),
     )
     deps = core.ModelDeps(providers.llm, settings.policy_model, tracker, reasoning=True, log_db=db)
     spec = graph_module.build_spec(
@@ -110,7 +115,7 @@ def _run(
         raise KeyError(f"unknown control {control_id!r}")
     budget_gate.check_daily_budget(db, now)  # ParkedError past the cap, before any row exists
     thread_id = checkpoints.thread_id_for(db.tenant, f"policy-{mode}", control_id, str(ULID()))
-    graph, pool, tracker = _build(db, settings, providers, now)
+    graph, pool, tracker = _build(db, settings, providers, now, run_id=thread_id)
     threads.create(db, thread_id, GRAPH, "policy", control_id)
     config = {"configurable": {"thread_id": thread_id}}
     initial: dict[str, Any] = {

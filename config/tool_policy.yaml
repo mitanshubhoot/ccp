@@ -1,0 +1,21 @@
+# Tool permissions (spec.md A-113), checked by policy.check (ccp/agent/authz.py) on every
+# tool call, whoever makes it.
+#
+# Default deny: a call no rule permits is refused. The base rules are not here: each graph
+# type (graph:tier3, graph:investigator, graph:policy, graph:copilot) may call the tools on
+# its own list in ccp/agent/allowlists.py, and the Policy Agent may search policy documents
+# only. The rules below are added to those.
+#
+#   id         a name the decision log records
+#   principal  graph:<type>, api:<role>, or a prefix ending in * (api:*)
+#   tools      tool names, or [*]
+#   effect     permit, deny or ask; an enforced deny wins, then ask, then permit
+#   mode       enforce, or log_only: decides nothing, but a denied call it would have
+#              permitted names it in the log, so a new permit is watched before it is on
+#   when       argument: [allowed values], compared with the validated arguments
+rules:
+  # Readers of the REST surface (A-117): watched before they are switched on.
+  - id: api-readers
+    principal: "api:reader"
+    tools: [list_findings, get_current_state, get_verdict, get_control, get_framework_rollup]
+    mode: log_only

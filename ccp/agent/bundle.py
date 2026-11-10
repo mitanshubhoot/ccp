@@ -15,6 +15,7 @@ import hashlib
 import json
 from functools import lru_cache
 
+from ccp.agent import authz
 from ccp.agent.allowlists import ALLOWLISTS
 from ccp.agent.tools import TOOL_SPECS
 from ccp.llm.prompts import PROMPTS_DIR
@@ -45,6 +46,11 @@ def parts() -> list[str]:
         out.append(f"tool_error {key} {TOOL_ERRORS[key]}")
     for graph in sorted(ALLOWLISTS):
         out.append(f"allowlist {graph} {sorted(ALLOWLISTS[graph])}")
+    try:  # who may call what is part of what a run is (A-113)
+        table = [r.model_dump(mode="json") for r in authz.rules()]
+    except Exception as exc:  # a broken rule file denies every call; the bundle says so
+        table = [{"error": f"{type(exc).__name__}"}]
+    out.append(f"policy {json.dumps(table, sort_keys=True)}")
     return out
 
 

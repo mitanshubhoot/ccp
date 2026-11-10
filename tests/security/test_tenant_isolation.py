@@ -22,6 +22,7 @@ import typer
 
 from ccp.agent import tier3
 from ccp.agent.allowlists import ALLOWLISTS
+from ccp.agent.authz import Gate
 from ccp.agent.cli import _guarded_tenant
 from ccp.agent.tools import ToolContext, bind_tools
 from ccp.compliance_state import reader
@@ -68,6 +69,7 @@ def test_agent_cannot_reach_other_tenant(world) -> None:  # type: ignore[no-unty
     tools = bind_tools(
         ToolContext(acme, providers.embedder, providers.reranker, providers.retrieval),
         tuple(sorted(ALLOWLISTS["copilot"])),
+        gate=Gate("graph:copilot"),
     )
     # a search seeded for the other tenant's data returns only this tenant's chunks
     found = tools["search_evidence"].call(
