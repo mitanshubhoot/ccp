@@ -273,11 +273,16 @@ def drain(
 
 
 def requeue_parked(db: ScopedDB, topic: str = "evaluations") -> int:
-    return db.execute(
-        "UPDATE event_log SET status = 'pending', last_error = NULL"
-        " WHERE topic = %s AND status = 'parked'",
-        (topic,),
-    )
+    with db.transaction() as cur:
+        cur.execute(
+            "UPDATE event_log SET status = 'pending', last_error = NULL"
+            " WHERE topic = %s AND status = 'parked'",
+            (topic,),
+        )
+        moved = cur.rowcount
+        if moved:
+            event_log.notify(cur, db.tenant.tenant_id, topic)
+    return moved
 
 
 def parked_count(db: ScopedDB, topic: str = "evaluations") -> int:

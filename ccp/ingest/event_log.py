@@ -43,6 +43,22 @@ _COLUMNS = (
 _RELEASE = "lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL"
 _QUALIFIED = ", ".join(f"e.{c.strip()}" for c in _COLUMNS.split(","))
 BACKOFF_CAP_SECONDS = 900.0
+# Producers notify workers on this channel when a record appears (A-106): '<tenant>:<topic>'.
+CHANNEL = "ccp_work"
+
+
+def notify(cur: psycopg.Cursor[Any], tenant_id: str, topic: str) -> None:
+    """Wake the workers of `topic` when this transaction commits. Postgres sends nothing
+    for a rolled-back transaction and folds repeats within one transaction into one."""
+    cur.execute("SELECT pg_notify(%s, %s)", (CHANNEL, f"{tenant_id}:{topic}"))
+
+
+def try_lock(cur: psycopg.Cursor[Any], key: str) -> bool:
+    """A lock on `key` held until this transaction ends; False when another holds it."""
+    row = cur.execute(
+        "SELECT pg_try_advisory_xact_lock(hashtextextended(%s, 0))", (key,)
+    ).fetchone()
+    return bool(row and row[0])
 
 
 def backoff_seconds(n: int, base: float) -> float:
@@ -105,7 +121,7 @@ def append(
     ref: str,
 ) -> int:
     """Append one record and return its offset. A record on an ordered topic also takes
-    the next seq of its tenant's topic."""
+    the next seq of its tenant's topic. The topic's workers are notified at commit."""
     seq = _next_seq(cur, tenant_id, topic) if kind_of(topic) is TopicKind.ordered else None
     row = cur.execute(
         "INSERT INTO event_log (tenant_id, topic, partition_key, source_ts, ref, seq)"
@@ -113,6 +129,7 @@ def append(
         (tenant_id, topic, partition_key, source_ts, ref, seq),
     ).fetchone()
     assert row is not None
+    notify(cur, tenant_id, topic)
     return int(row[0])
 
 
@@ -308,9 +325,12 @@ def requeue_dead(cur: psycopg.Cursor[Any], offset: int) -> bool:
     """A dead parallel record goes back to pending with fresh attempts."""
     row = cur.execute(
         "UPDATE event_log SET status = 'pending', attempts = 0, deferrals = 0, claimed_at = NULL,"
-        ' next_attempt_at = NULL WHERE "offset" = %s AND status = \'dead\' RETURNING "offset"',
+        " next_attempt_at = NULL WHERE \"offset\" = %s AND status = 'dead'"
+        " RETURNING tenant_id, topic",
         (offset,),
     ).fetchone()
+    if row is not None:
+        notify(cur, str(row[0]), str(row[1]))
     return row is not None
 
 

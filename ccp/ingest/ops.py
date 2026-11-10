@@ -88,9 +88,15 @@ def replay(
 
 
 def unpark(db: ScopedDB, topic: str = "evaluations") -> int:
-    """Parked records go back to pending; they park again if the cause still holds."""
-    return db.execute(
-        "UPDATE event_log SET status = 'pending', last_error = NULL, next_attempt_at = NULL"
-        " WHERE topic = %s AND status = 'parked'",
-        (topic,),
-    )
+    """Parked records go back to pending; they park again if the cause still holds. The
+    topic's workers are woken (A-106)."""
+    with db.transaction() as cur:
+        cur.execute(
+            "UPDATE event_log SET status = 'pending', last_error = NULL, next_attempt_at = NULL"
+            " WHERE topic = %s AND status = 'parked'",
+            (topic,),
+        )
+        moved = cur.rowcount
+        if moved:
+            event_log.notify(cur, db.tenant.tenant_id, topic)
+    return moved

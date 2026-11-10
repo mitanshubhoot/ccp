@@ -29,6 +29,7 @@ import os
 import socket
 import threading
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any
 
 import psycopg
@@ -81,8 +82,11 @@ class OrderedConsumer(ABC):
 
     def run_once(self, batch_size: int = 100) -> int:
         """Handle the next batch in (source_ts, seq) order. Returns the records completed
-        (handled, or skipped as dead); 0 when nothing is due. The cursor is a seq (A-104)."""
+        (handled, or skipped as dead); 0 when nothing is due, or when another worker is
+        running this consumer for this tenant (A-106). The cursor is a seq (A-104)."""
         with self._db.transaction() as cur:
+            if not event_log.try_lock(cur, f"ordered:{self.cursor_name}:{self.topic}"):
+                return 0  # one worker at a time per (consumer, tenant): no shared batches
             last = event_log.read_cursor(cur, self.cursor_name, self.topic)
             records = event_log.fetch_after(cur, self.topic, last, batch_size)
             if not records:
@@ -129,6 +133,21 @@ class OrderedConsumer(ABC):
             if cursor > last:
                 event_log.advance_cursor(cur, self.cursor_name, self.topic, cursor)
         return completed
+
+    def next_due(self) -> datetime | None:
+        """When this consumer next has work for the tenant, once run_once returned 0: never
+        (None) when it is caught up; else the end of a retry backoff, or now."""
+        with self._db.transaction() as cur:
+            last = event_log.read_cursor(cur, self.cursor_name, self.topic)
+            if event_log.committed_seq(cur, self.topic) <= last:
+                return None
+            row = cur.execute(
+                "SELECT min(next_attempt_at), now() FROM ordered_failures"
+                " WHERE consumer = %s AND topic = %s AND status = 'retrying'",
+                (self.name, self.topic),
+            ).fetchone()
+        assert row is not None
+        return row[0] if row[0] is not None else row[1]  # type: ignore[no-any-return]
 
     def replay(self, offset: int, replayed_by: str) -> str:
         """Re-run a dead record for this consumer: 'done' when it now succeeds, 'failed'
@@ -281,6 +300,18 @@ class ParallelConsumer(ABC):
                 self._process(record)
                 keeper.release(record.offset)
         return len(records)
+
+    def next_due(self) -> datetime | None:
+        """When a record of this topic next falls due for the tenant (A-106): a pending one
+        now or when its backoff ends, a claimed one when its lease runs out; None when
+        nothing is pending or claimed."""
+        row = self._db.fetch_one(
+            "SELECT min(CASE WHEN status = 'pending' THEN coalesce(next_attempt_at, now())"
+            " ELSE coalesce(lease_expires_at, claimed_at + make_interval(secs => %s)) END)"
+            " FROM event_log WHERE topic = %s AND status IN ('pending', 'claimed')",
+            (self.visibility_seconds, self.topic),
+        )
+        return row[0] if row else None
 
     def _lost(self, record: LogRecord, when: str) -> None:
         self.lost_leases += 1

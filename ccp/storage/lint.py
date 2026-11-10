@@ -9,6 +9,10 @@ For every table that holds tenant data (a `tenant_id` column in `public`, or the
   4. the table is classified: insert-only or operational. A new table that is neither fails
      the lint until someone decides which it is.
 A deliberately permissive policy (`USING (true)`) is its negative control in the tests.
+
+Dispatch tables (A-106) are the one exception: workers read them across tenants, so they
+carry no row-level security, and the lint instead pins their columns to ids and times, so
+no tenant data can be added to them unnoticed.
 """
 
 from __future__ import annotations
@@ -65,6 +69,10 @@ OPERATIONAL: frozenset[str] = frozenset(
         "checkpoints.checkpoint_writes",
     }
 )
+# Cross-tenant dispatch metadata (A-106): no row-level security, and exactly these columns.
+DISPATCH: dict[str, frozenset[str]] = {
+    "work_hints": frozenset({"tenant_id", "consumer", "ready_at", "served_at"}),
+}
 
 
 @dataclass(frozen=True)
@@ -102,10 +110,30 @@ def _policies(cur: psycopg.Cursor[Any], table: str) -> list[tuple[str, str, str,
     return [(str(r[0]), str(r[1]), str(r[2]), r[3]) for r in rows]
 
 
+def _columns(cur: psycopg.Cursor[Any], table: str) -> set[str]:
+    rows = cur.execute(
+        "SELECT column_name FROM information_schema.columns"
+        " WHERE table_schema = 'public' AND table_name = %s",
+        (table,),
+    ).fetchall()
+    return {str(r[0]) for r in rows}
+
+
 def lint(conn: psycopg.Connection[Any], app_role: str) -> list[Finding]:
     findings: list[Finding] = []
     with conn.cursor() as cur:
         for table, column, enabled, forced in _tenant_tables(cur):
+            if table in DISPATCH:
+                extra = _columns(cur, table) ^ DISPATCH[table]
+                if extra:
+                    findings.append(
+                        Finding(
+                            table,
+                            f"dispatch table columns differ from {sorted(DISPATCH[table])}:"
+                            f" {sorted(extra)}",
+                        )
+                    )
+                continue
             if not (enabled and forced):
                 findings.append(Finding(table, "row-level security is not enabled and forced"))
             predicate = TENANT_PREDICATE if column == "tenant_id" else THREAD_PREDICATE

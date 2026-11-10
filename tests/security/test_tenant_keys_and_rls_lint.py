@@ -21,7 +21,7 @@ from ccp.config import Settings
 from ccp.retrieval import cache
 from ccp.storage import checkpoints
 from ccp.storage.db import app_pool, app_role_and_password, scratch_database
-from ccp.storage.lint import INSERT_ONLY, OPERATIONAL, lint
+from ccp.storage.lint import DISPATCH, INSERT_ONLY, OPERATIONAL, lint
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
 
@@ -50,7 +50,8 @@ def test_the_lint_passes_and_covers_every_tenant_table(migrated: Settings) -> No
                 " WHERE n.nspname = 'public' AND c.relkind = 'r' AND a.attname = 'tenant_id'"
             ).fetchall()
         }
-    assert tables and tables <= INSERT_ONLY | OPERATIONAL  # every tenant table is classified
+    # every tenant table is classified
+    assert tables and tables <= INSERT_ONLY | OPERATIONAL | set(DISPATCH)
 
 
 def test_a_permissive_policy_fails_the_lint(migrated: Settings) -> None:

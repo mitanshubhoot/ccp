@@ -133,11 +133,14 @@ def test_an_empty_tenant_reads_as_no_evaluations_yet(world) -> None:  # type: ig
 
 
 def test_no_tenant_predicate_in_sql_outside_scoped_py() -> None:
-    """Hygiene, not the guarantee (RLS is): application SQL never filters by tenant itself."""
+    """Hygiene, not the guarantee (RLS is): application SQL never filters by tenant itself.
+    The one exception is the dispatcher, which claims work hints across tenants by design
+    (A-106): work_hints holds ids and times only, and the catalogue lint pins its columns."""
     pattern = re.compile(r"WHERE[^\n\"']*tenant_id\s*=", re.IGNORECASE)
+    allowed = {REPO / "ccp" / "storage" / "scoped.py", REPO / "ccp" / "ingest" / "dispatch.py"}
     offenders = sorted(
         str(path.relative_to(REPO))
         for path in (REPO / "ccp").rglob("*.py")
-        if path.name != "scoped.py" and pattern.search(path.read_text(encoding="utf-8"))
+        if path not in allowed and pattern.search(path.read_text(encoding="utf-8"))
     )
     assert offenders == []
