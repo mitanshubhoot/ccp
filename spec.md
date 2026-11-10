@@ -1,6 +1,6 @@
 # Compliance Automation Platform, Teaching-Scale Reference Build
 
-Specification, version 1.3, 2026-09-11. No implementation code exists yet.
+Specification, version 1.3, 2026-09-11. The reference build in this repository implements it (phases 1 to 17, section 21); choices made while building are recorded as assumptions in section 22.
 
 Version 1.1 added the target system shape (section 2) and the four components it calls
 for: a customer upload path with PDF text extraction, an Investigator agent, a Policy
@@ -1448,8 +1448,9 @@ guarantees by construction. The core exposes factories, not a DSL.
 - When the tier 3 wrapper sees the graph stopped at `gate`, it opens an approval item
   of kind `tier3_interrupt` in the shared approval stage (Layer 16) carrying the thread
   id and the interrupt payload. `ccp approvals approve <id>` is what performs the resume
-  below; the `ccp agent resume` command remains as the lower-level entry point and both
-  go through the same `Command(resume=...)` call.
+  below; `ccp agent resume` does the same for a thread id. Both record the decision on
+  the approval item first, and the resume reads it from there, after checking that the
+  item shows the interrupt the thread is waiting on (A-95).
 - Resume from a **separate process**:
 
   ```
@@ -1572,7 +1573,10 @@ All of these must hold or the runner refuses and logs why:
    approval cannot be reused for an edited proposal)
 
 The runner records the pre-state (permission level) in the proposal row before acting,
-and exposes `python -m ccp remediate rollback <proposal_id>` which re-invites. Nothing
+and exposes `python -m ccp remediate rollback <proposal_id> [--live]`, which re-invites
+with the recorded permission. A rollback waits for its own `remediation_rollback`
+approval, bound to the permission it restores, and live it needs all five gates with
+`restore <login> to <org>/<repo>` as the typed confirmation (A-95). Nothing
 in this module deletes a repo, a branch, a file, or an org.
 
 ### Re-evaluate
@@ -2032,13 +2036,14 @@ that satisfies a model-evaluated control with no human in between.
 ### What it does
 
 One place where every pause and every action in the system waits for a person. It is
-the "HITL / APPROVAL" box in the target shape. Four kinds of item flow through it,
+the "HITL / APPROVAL" box in the target shape. Five kinds of item flow through it,
 all with the same CLI:
 
 | Kind | Opened by | Approving does | Rejecting does |
 |---|---|---|---|
-| `tier3_interrupt` | tier 3 wrapper (Layer 8) | resumes the graph with `approve`, or `override` with a status, or `regather` | resumes with `override` to `needs_review` and a note |
+| `tier3_interrupt` | tier 3 wrapper (Layer 8) | records the decision (`approve`, or `override` with a status, or `regather`), then resumes the graph from it | records `override` to `needs_review` with the note, then resumes |
 | `remediation` | Investigator runner or the rule fallback (Layers 14, 10) | makes gate 5 true; the operator still runs `remediate execute` with gates 1 to 4 | marks the proposal `rejected`; re-evaluation does not run |
+| `remediation_rollback` | `remediate rollback` on an executed or simulated proposal (Layer 10) | makes the rollback's gate 5 true; live, gates 1 to 4 still apply | the proposal stays as it is |
 | `policy_draft` | Policy runner (Layer 15) | marks the draft approved; nothing else happens automatically | draft stays on disk, marked rejected |
 | `evidence_request` | Investigator runner | closed by the human after uploading; the upload itself triggers re-evaluation | closed with a note |
 
@@ -2063,13 +2068,15 @@ CREATE TABLE approval_events (
   event         TEXT NOT NULL,          -- opened | approved | rejected | changes_requested | closed
   reviewer      TEXT NOT NULL,
   note          TEXT,
+  decision      TEXT,                   -- the decision a deciding event carries (A-95)
   recorded_at   TEXT NOT NULL
 );
 ```
 
 CLI: `ccp approvals list [--kind ...] [--open]`, `show <id>`, `approve <id> --reviewer
 <name> [--note ...]`, `reject <id> --reviewer <name> --note ...`,
-`request-changes <id> ...`. Every command takes the tenant from `--tenant` or
+`request-changes <id> ...`, `resume <id>` (applies a recorded tier 3 decision whose
+resume failed), and `audit`. Every command takes the tenant from `--tenant` or
 `CCP_TENANT` and goes through `ScopedDB`.
 
 ### The one thing that never waits here
@@ -2312,6 +2319,7 @@ Numbered so they can be corrected by reference.
 - **A-92** (Phase 17) CI runs without keys, so AI-tier tests and keyed golden cases skip cleanly and the keyless golden run must pass. The nightly workflow runs the golden and adversarial suites with the keys, under `CCP_RUN_BUDGET_USD` per run and a job-level cost cap read from `latest.json`, then judge calibration, and uploads the report and the calibration file as artifacts. "Full pytest green with a key" is therefore asserted nightly, not on every push. The README's honest-limits section lists what this pass does not do.
 - **A-93** (Review of phases 13 to 17) What the post-build review changed, so the layers above read as built: (1) the Langfuse sink links observations through the SDK's `trace_context` (`trace_id`, `parent_span_id`) and the client is constructed with the secrets patterns as its `mask`, so tracing works against SDK 4.x and every serialised payload is redacted, not only the fields the step logger redacts itself; (2) every model call an agent node or the judge makes is attributed to the enclosing step (`steps.note_model_call`), so `ccp.cost_usd` and the eval cost column cover tier 3, the Investigator, the Policy Agent, the Copilot, and the judge, not only tier 2, and the runner reads a case's usage from the bytes its steps appended rather than by timestamp; (3) eval targets that open their own connections or write files (checkpoint pools, budgets, drafts) receive run-scoped settings pointing at the scratch database and directory, never the working database the command was started against; (4) the Anthropic client treats an answer the SDK cannot parse as a malformed answer (one re-ask, then terminal) instead of a provider error, keeps thinking blocks verbatim in the assistant turn of a tool loop, records a non-tool stop reason as a guardrail event, raises `max_tokens` to at least 8192 whenever thinking is on (the cap bounds thinking and the answer together, so a 2048-token cap would cut a live reasoning model off mid-JSON), and never replays a stream once a token has reached the caller; judge calibration gives every judge call a fresh budget tracker from the same budget, because one run budget cannot cover the eighty-odd calls a calibration makes; (5) the Copilot draws a fresh fence nonce per turn, validates requested actions before the durable answer row so a rejection is stored on it, scans tool results for injection phrases (they enter the prompt outside the fence), creates its thread row on the first question, and the terminal strips control sequences and lone surrogates from everything a model or a document wrote; (6) adversarial cases do not enter the reliability curve, an attack whose poisoned chunk the model never saw is not an attempt, the suggested interrupt threshold never drops below 0.5 and `--apply` refuses to lower the gate without `--allow-lower`, a regressed run is never promoted to `latest.json`, the unit row counts a crashed pytest as a failure, and a case skipped in the baseline that now fails is reported as a first failure (informational); (7) `policy_drafts` gained its indexes and the approval foreign key, `copilot_answers` (tenant, thread, turn) is unique, and draft files are written with LF bytes, the draft id in the file name, and exclusive creation so the recorded hash is the file's hash and two drafts of one control at one recorded moment never collide. CI workflows carry `permissions: contents: read` and the nightly keys are scoped to the two model-calling steps.
 - **A-94** (Review of phases 13 to 17, decided) Four judgement calls the review raised, decided as follows: (1) the tenant daily budget (A-11) covers every model call made on the tenant's behalf, not only the AI verdict tiers: the Copilot checks it before a turn and, when it is exhausted, answers from computed state alone (the framework rollups through the read tool, no model call, `budget_exhausted:daily` on the answer) and says so; the Policy Agent and the Investigator check it before creating a thread and raise the same `ParkedError` the queue uses (the CLIs print `parked:` and exit 3); the Copilot, the Policy Agent, the Investigator, and tier 3 record what a run spent in the ledger under the run's step id. (2) The S9 scrub matches whole words only, any case, and its events reference the removed token by an eight-character hash (`token_ref`), never by the other tenant's name; single words of a tenant's display name that name nobody in particular (`GENERIC_NAME_WORDS`) are not tokens on their own, while the whole display name, the GitHub org, and the tenant id always are. (3) `ccp evals regress --strict` also fails on a case that first runs and fails or a new case that fails; the nightly job restores the last good `latest.json` from the Actions cache, regresses against it strictly, and only a passing run can become the next baseline. (4) The LangChain callback handler is gone: LangGraph node entries and exits reach Langfuse only as the step observations the step logger emits (every node is a step), so nothing beyond the step log's inputs, outputs, and metadata leaves the machine; A-86's sentence about the callback handler is superseded.
+- **A-95** (Near-term fix NT2, fail-closed approvals) Every path that acts on a person's decision now fails closed. (1) A tier 3 decision is recorded on its approval item before the graph resumes (`approval_events.decision`), and `tier3.resume` takes no decision argument: it reads the decision from the named approval item, which must belong to the thread, and refuses unless the item's payload hash equals the hash of the interrupt the thread is waiting on, so a decision applies only to what the reviewer was shown. A failed resume or a failed commit leaves the decision recorded, and `ccp approvals resume <id>` applies it later, once. (2) The gate holds the draft as `needs_review` (event `no_decision`) when the decision is missing, names an unknown action, has no reviewer, or carries a status without an override; nothing defaults to approve. (3) `ccp agent resume` records the decision on the thread's single open approval item through the same path as `ccp approvals approve`, which supersedes A-35's lower-level entry point; a regather that leads back to the gate opens a new approval item. (4) Items other than `tier3_interrupt` take a plain approve only: `--decision` or `--status` on them is refused, not ignored. (5) A rollback is an action: it needs its own `remediation_rollback` item, bound to the proposal's hash and the permission it restores; a live rollback is a dry run without `--live` and needs all five gates, with `restore <login> to <org>/<repo>` typed. An approval binds to its payload, so an edited rollback opens a new request, and the old approval neither applies to it nor is revoked by it. A proposal with no recorded prior permission is not rolled back, because restoring a guessed `write` could grant more than was removed. (6) `ccp approvals audit` lists tier 3 decisions recorded but not applied and threads that applied a decision no one recorded; `ccp remediate audit` lists proposals that acted without a matching approval. Both exit 1 on any finding.
 
 ---
 

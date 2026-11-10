@@ -1,16 +1,17 @@
 """``ccp agent ...``: run, inspect, and resume graph threads from a separate process
-(spec.md Layer 8 "Checkpointing and the interrupt")."""
+(spec.md Layer 8 "Checkpointing and the interrupt"). ``resume`` goes through the approval
+stage like ``ccp approvals approve``: the decision is recorded on the thread's open approval
+item first, and the graph resumes from that record (A-95)."""
 
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 
 import typer
 
-from ccp.agent import threads, tier3
+from ccp.agent import decisions, threads
+from ccp.approvals import store as approvals
 from ccp.config import Settings
-from ccp.evaluators import runner as evaluations
 from ccp.observability import steps
 from ccp.storage import checkpoints, db
 from ccp.storage.scoped import ScopedDB
@@ -122,30 +123,48 @@ def resume(
     note: str | None = typer.Option(None, "--note"),
     tenant: str | None = typer.Option(None, "--tenant"),
 ) -> None:
-    """Continue an interrupted thread with a human decision; persists the resulting verdict."""
-    if decision not in ("approve", "override", "regather"):
-        raise typer.BadParameter("decision must be approve, override, or regather")
-    if decision == "override" and not status:
-        raise typer.BadParameter("--status is required with override")
-    if not reviewer.strip():
-        raise typer.BadParameter("a reviewer name is required")
+    """Record a decision on the thread's open approval item, then resume from it; persists
+    the resulting verdict."""
+    try:
+        chosen = decisions.build(decision, reviewer, note, status)
+    except decisions.InvalidDecision as exc:
+        raise typer.BadParameter(str(exc)) from None
     settings = _settings()
     ctx = _guarded_tenant(settings, thread, tenant)
-    payload = {
-        "action": decision,
-        "reviewer": reviewer,
-        "note": note,
-        "status": status,
-        "decided_at": datetime.now(UTC).isoformat(),
-    }
     pool = db.app_pool(settings)
     try:
         scoped = ScopedDB(pool, ctx)
-        verdict = tier3.resume(scoped, settings, thread, payload)
-        inserted = evaluations.commit_verdict(scoped, verdict)
+        waiting = [
+            i
+            for i in approvals.list_items(scoped, decisions.KIND, open_only=True)
+            if i.ref_id == thread
+        ]
+        if len(waiting) != 1:
+            typer.echo(
+                f"refused: thread {thread!r} has {len(waiting)} open approval items; decide one"
+                " with `ccp approvals approve <id>`",
+                err=True,
+            )
+            raise typer.Exit(2)
+        item = waiting[0]
+        try:
+            result = decisions.decide(
+                scoped, settings, item.approval_id, event="approved", decision=chosen
+            )
+        except (LookupError, ValueError, decisions.PayloadChanged) as exc:
+            typer.echo(f"refused: {exc}", err=True)
+            raise typer.Exit(2) from None
     finally:
         pool.close()
+    if result.verdict is None or result.error is not None:
+        typer.echo(
+            f"{thread}: decision recorded on {item.approval_id}; resume failed: {result.error}."
+            f" Run `ccp approvals resume {item.approval_id}` to apply it"
+        )
+        raise typer.Exit(1)
+    verdict = result.verdict
     typer.echo(
-        f"{thread}: {verdict.status.value} (verdict {verdict.verdict_id}, inserted={inserted})"
+        f"{thread}: {verdict.status.value} (verdict {verdict.verdict_id},"
+        f" inserted={result.inserted}, approval {item.approval_id})"
     )
     typer.echo(verdict.reasoning)

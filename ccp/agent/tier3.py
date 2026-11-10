@@ -1,13 +1,14 @@
 """The tier 3 wrapper (spec.md Layer 7 "Tier 3", Layer 8): builds the workflow graph for one
 tenant, runs it under a thread id of ``{tenant}:{test}:{subject}:{run_id}``, and converts the
 final state to a Verdict. When the graph stops at the gate the wrapper returns a real
-needs_review verdict at once, records the thread as interrupted, and a separate process
-resumes it later (``ccp agent resume``). Importing this module registers tier 3.
+needs_review verdict at once, records the thread as interrupted, opens an approval item, and a
+separate process resumes it later from the decision recorded on that item (A-95).
 
     evaluate(...)  ──► build ──► stream (trajectory) ──► get_state
-                                     ├─ interrupted ──► needs_review verdict, thread interrupted
+                                     ├─ interrupted ──► needs_review verdict, approval item opened
                                      └─ finished    ──► Verdict from state, thread finished
-    resume(...)    ──► same graph, Command(update=trigger, resume=decision) ──► Verdict
+    resume(...)    ──► recorded decision, unchanged payload ──► Command(resume=...) ──► Verdict
+                                     └─ regather back to the gate ──► a new approval item
 """
 
 from __future__ import annotations
@@ -40,10 +41,22 @@ from ccp.tenancy import TenantContext
 from ccp.types import VerdictStatus
 
 GRAPH = graph_module.GRAPH_NAME
+APPROVAL_KIND: approvals.Kind = "tier3_interrupt"
 
 
 class ThreadTenantMismatch(RuntimeError):
     """A thread id from another tenant was presented; refused before any saver access."""
+
+
+class PayloadChanged(RuntimeError):
+    """The thread's pending interrupt is not the one the reviewer was shown."""
+
+
+def _check_tenant(db: ScopedDB, thread_id: str) -> None:
+    if checkpoints.tenant_of_thread(thread_id) != db.tenant.tenant_id:
+        raise ThreadTenantMismatch(
+            f"thread {thread_id!r} does not belong to tenant {db.tenant.tenant_id!r}"
+        )
 
 
 def _build(
@@ -76,6 +89,11 @@ def _interrupt_payload(snapshot: Any) -> dict[str, Any] | None:
         for item in getattr(task, "interrupts", ()) or ():
             return dict(getattr(item, "value", {}) or {})
     return None
+
+
+def item_payload(thread_id: str, interrupt: dict[str, Any]) -> dict[str, Any]:
+    """What the approval item shows the reviewer; its hash binds the decision to it."""
+    return {"thread_id": thread_id, **interrupt}
 
 
 def _interrupted_verdict(
@@ -203,9 +221,7 @@ def evaluate(
                     values,
                 )
                 threads.mark_interrupted(db, thread_id, payload, trajectory)
-                approvals.open_item(
-                    db, "tier3_interrupt", thread_id, {"thread_id": thread_id, **payload}
-                )
+                approvals.open_item(db, APPROVAL_KIND, thread_id, item_payload(thread_id, payload))
                 return verdict
             final = values.get("final_verdict")
             if not final:
@@ -220,25 +236,61 @@ def evaluate(
         pool.close()
 
 
+def _recorded_decision(db: ScopedDB, thread_id: str, approval_id: str) -> approvals.Approval:
+    """The named approval item, which must be this thread's and hold a recorded decision."""
+    item = approvals.get(db, approval_id)
+    if item is None or item.kind != APPROVAL_KIND or item.ref_id != thread_id:
+        raise LookupError(f"approval {approval_id!r} is not an item of thread {thread_id!r}")
+    if not item.is_decided or item.decision is None:
+        raise LookupError(
+            f"thread {thread_id!r} has no recorded reviewer decision on {approval_id!r}; decide"
+            " it with `ccp approvals approve` or `ccp approvals reject`"
+        )
+    return item
+
+
+def pending_payload_sha256(
+    db: ScopedDB, settings: Settings, thread_id: str, providers: Providers | None = None
+) -> str | None:
+    """The hash of the item payload for the interrupt the thread is waiting on, or None."""
+    _check_tenant(db, thread_id)
+    row = threads.get(db, thread_id)
+    if row is None or not row.test_id:
+        return None
+    spec = knowledge.load().tests[row.test_id]
+    active = providers or Providers.from_settings(settings)
+    graph, _saver, pool, _tracker = _build(db, settings, spec, active, datetime.now(UTC))
+    try:
+        waiting = _interrupt_payload(graph.get_state({"configurable": {"thread_id": thread_id}}))
+    finally:
+        pool.close()
+    return None if waiting is None else approvals.payload_hash(item_payload(thread_id, waiting))
+
+
 def resume(
     db: ScopedDB,
     settings: Settings,
     thread_id: str,
-    decision: dict[str, Any],
     providers: Providers | None = None,
     now: datetime | None = None,
+    *,
+    approval_id: str,
+    retry: bool = False,
 ) -> Verdict:
-    """Continue an interrupted thread from a separate process. The decision becomes the
-    trigger of the resulting verdict (reason human_decision), so its key never collides
-    with the interrupted verdict's."""
-    if checkpoints.tenant_of_thread(thread_id) != db.tenant.tenant_id:
-        raise ThreadTenantMismatch(
-            f"thread {thread_id!r} does not belong to tenant {db.tenant.tenant_id!r}"
-        )
+    """Continue an interrupted thread with the decision recorded on approval ``approval_id``;
+    there is no way to pass a decision in, and the item's payload must be the interrupt the
+    thread is waiting on. The decision becomes the trigger of the resulting verdict (reason
+    human_decision), so its key never collides with the interrupted verdict's. ``retry``
+    also picks up a thread whose earlier resume failed, or one that finished but whose
+    verdict was not stored (the final state is read back)."""
+    _check_tenant(db, thread_id)
     row = threads.get(db, thread_id)
-    if row is None or row.status != "interrupted":
+    allowed = ("interrupted", "failed", "finished") if retry else ("interrupted",)
+    if row is None or row.status not in allowed:
         raise LookupError(f"thread {thread_id!r} is not waiting for a decision")
     assert row.test_id and row.subject_key
+    item = _recorded_decision(db, thread_id, approval_id)
+    decision = dict(item.decision or {})
     spec = knowledge.load().tests[row.test_id]
     moment = now or datetime.now(UTC)
     active = providers or Providers.from_settings(settings)
@@ -250,24 +302,49 @@ def resume(
             "tier3.resume",
             layer="agent",
             tenant=db.tenant,
-            inputs={"thread_id": thread_id, "decision": decision.get("action")},
+            inputs={
+                "thread_id": thread_id,
+                "decision": decision.get("action"),
+                "approval_id": item.approval_id,
+                "retry": retry,
+            },
         ) as s:
-            command: Command[Any] = Command(
-                update={
-                    "trigger_observed_at": moment.isoformat(),
-                    "trigger_reason": "human_decision",
-                    "now": moment.isoformat(),
-                },
-                resume=decision,
-            )
-            trajectory += _run(graph, command, config)
+            before = graph.get_state(config)
+            waiting = _interrupt_payload(before)
+            if waiting is not None:
+                shown = approvals.payload_hash(item_payload(thread_id, waiting))
+                if shown != item.payload_sha256:
+                    raise PayloadChanged(
+                        f"thread {thread_id!r} is waiting on a payload that approval"
+                        f" {item.approval_id!r} did not show"
+                    )
+                command: Command[Any] = Command(
+                    update={
+                        "trigger_observed_at": moment.isoformat(),
+                        "trigger_reason": "human_decision",
+                        "now": moment.isoformat(),
+                    },
+                    resume=decision,
+                )
+                trajectory += _run(graph, command, config)
+            elif not retry:
+                raise LookupError(f"thread {thread_id!r} is not waiting at the gate")
+            else:  # past the gate already: it must have applied exactly this decision
+                if dict(before.values or {}).get("human_decision") != decision:
+                    raise PayloadChanged(
+                        f"thread {thread_id!r} went past the gate with a decision other than"
+                        f" the one recorded on {item.approval_id!r}"
+                    )
+                if before.next:  # a node after the gate failed; finish the run
+                    trajectory += _run(graph, None, config)
             budget_gate.record_spend(db, tracker.usd, tracker.tokens, s.step_id, moment)
             snapshot = graph.get_state(config)
             payload = _interrupt_payload(snapshot)
             values = dict(snapshot.values or {})
             s.set_output({"trajectory": trajectory, "interrupted": payload is not None})
-            if payload is not None:  # regather led back to the gate
+            if payload is not None:  # regather led back to the gate: a new decision is needed
                 threads.mark_interrupted(db, thread_id, payload, trajectory)
+                approvals.open_item(db, APPROVAL_KIND, thread_id, item_payload(thread_id, payload))
                 return _interrupted_verdict(
                     db.tenant,
                     spec,
@@ -280,7 +357,10 @@ def resume(
                     moment,
                     values,
                 )
-            verdict = Verdict.model_validate(values["final_verdict"])
+            final = values.get("final_verdict")
+            if not final:
+                raise RuntimeError("graph finished without a final verdict")
+            verdict = Verdict.model_validate(final)
             threads.mark_finished(db, thread_id, verdict.verdict_id, trajectory, decision)
             return verdict
     except Exception as exc:

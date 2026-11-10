@@ -126,12 +126,52 @@ def test_all_five_gates_make_exactly_one_call_and_record_the_pre_state(
     assert result.proposal.executed_call is not None and result.proposal.executed_call[
         "result"
     ] == {"status_code": 204}
-    rolled = runner.rollback(acme, settings, proposal_id, github=github)
+    # a rollback is an action too: its own approval first, then all five gates when live
+    live_settings = settings.model_copy(update={"ccp_remediation_live": True})
+    restore = "restore jsmith to acme-example/platform"
+    calls_before = len(github.calls)
+    first = runner.rollback(
+        acme,
+        live_settings,
+        proposal_id,
+        live=True,
+        confirm=lambda p: restore,
+        github=github,
+        config=ALLOWED,
+    )
+    assert first.mode == "refused" and "gate5:approval" in first.detail
+    assert len(github.calls) == calls_before
+    undo = approvals.for_ref(acme, "remediation_rollback", proposal_id)
+    assert undo is not None and undo.is_open and undo.payload["restore_permission"] == "write"
+    approvals.record_event(acme, undo.approval_id, "approved", "security-lead", "undo it")
+    dry = runner.rollback(acme, live_settings, proposal_id, github=github, config=ALLOWED)
+    assert dry.mode == "dry_run" and len(github.calls) == calls_before
+    wrong = runner.rollback(
+        acme,
+        live_settings,
+        proposal_id,
+        live=True,
+        confirm=lambda p: "remove jsmith from acme-example/platform",
+        github=github,
+        config=ALLOWED,
+    )
+    assert wrong.mode == "refused" and "gate4:confirmation" in wrong.detail
+    assert len(github.calls) == calls_before
+    rolled = runner.rollback(
+        acme,
+        live_settings,
+        proposal_id,
+        live=True,
+        confirm=lambda p: restore,
+        github=github,
+        config=ALLOWED,
+    )
     assert (
         rolled.mode == "rolled_back"
         and github.calls[-1]["method"] == "PUT"
         and github.calls[-1]["permission"] == "write"
     )
+    assert runner.audit(acme) == []
 
 
 def test_an_edited_proposal_fails_the_payload_hash_check(

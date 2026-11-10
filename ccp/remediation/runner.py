@@ -6,7 +6,9 @@ execute(db, settings, id,     dry run by default: computes the exact call, recor
                               the pre-state captured first
 simulate(db, settings, id)    fixture mode: gate 5 only, marks the proposal simulated (nothing
                               real exists to change); the test-only fixture hook applies it
-rollback(db, settings, id)    re-invite with the recorded prior permission
+rollback(db, settings, id,    re-invite with the recorded prior permission, behind its own
+         live=False)          approval item (kind remediation_rollback) and, live, all five gates
+audit(db)                     proposals that acted without a matching approval
 """
 
 from __future__ import annotations
@@ -24,6 +26,8 @@ from ccp.remediation import actions, gates, github_admin, targets
 from ccp.remediation import proposals as proposal_store
 from ccp.remediation.proposals import Proposal
 from ccp.storage.scoped import ScopedDB
+
+ROLLBACK_KIND: approvals.Kind = "remediation_rollback"
 
 
 @dataclass
@@ -219,11 +223,7 @@ def simulate(db: ScopedDB, settings: Settings, proposal_id: str) -> ExecutionRes
     ) as s:
         if proposal.status in ("executed", "rolled_back", "rejected", "simulated"):
             return ExecutionResult(proposal, "refused", f"proposal is {proposal.status}")
-        if (
-            approval is None
-            or approval.state != "approved"
-            or approval.payload_sha256 != proposal.current_hash()
-        ):
+        if not gates.approval_matches(approval, proposal.current_hash()):
             updated = proposal_store.update(
                 db, proposal_id, status="refused", refusal="gate5:approval"
             )
@@ -244,8 +244,16 @@ def rollback(
     db: ScopedDB,
     settings: Settings,
     proposal_id: str,
+    *,
+    live: bool = False,
+    confirm: Callable[[str], str] | None = None,
     github: github_admin.GitHubAdmin | None = None,
+    config: gates.RemediationConfig | None = None,
 ) -> ExecutionResult:
+    """A rollback is an action like any other (A-95): it needs its own approved
+    remediation_rollback item bound to the proposal and the permission it restores. The
+    first call opens that item and refuses. A simulated proposal then needs only the
+    approval; a live one is a dry run without --live and needs all five gates with it."""
     proposal = proposal_store.get(db, proposal_id)
     if proposal is None:
         raise LookupError(f"no proposal {proposal_id!r}")
@@ -256,37 +264,121 @@ def rollback(
     if not proposal.reversible:
         return ExecutionResult(proposal, "refused", f"{proposal.action} is not reversible")
     org = db.tenant.settings.github_org
+    payload = gates.rollback_payload(proposal)
+    expected = approvals.payload_hash(payload)
+    approval = approvals.approved_for(db, ROLLBACK_KIND, proposal_id, expected)
     with steps.step(
         "remediate.rollback",
         layer="remediation",
         tenant=db.tenant,
-        inputs={"proposal_id": proposal_id},
+        inputs={"proposal_id": proposal_id, "mode": "live" if live else "dry_run"},
     ) as s:
+        if not gates.approval_matches(approval, expected):
+            item_id = _request_rollback(db, proposal_id, payload)
+            s.event("refused:gate5:approval")
+            s.set_output({"mode": "refused", "approval_id": item_id})
+            return ExecutionResult(
+                proposal,
+                "refused",
+                f"missing gates: gate5:approval; rollback approval {item_id} is waiting for a"
+                " reviewer",
+            )
         if proposal.status == "simulated":
             updated = proposal_store.update(db, proposal_id, status="rolled_back")
+            _close_requests(db, proposal_id)
             s.set_output({"mode": "rolled_back", "simulated": True})
             return ExecutionResult(updated, "rolled_back", "simulated proposal rolled back")
-        permission = str((proposal.pre_state or {}).get("permission") or "write")
+        permission = (proposal.pre_state or {}).get("permission")
+        if not permission:  # restoring a guessed permission could grant more than was removed
+            s.event("refused:no_pre_state")
+            return ExecutionResult(
+                proposal, "refused", "no recorded prior permission; nothing to restore"
+            )
         repo = proposal.target.get("repo", "")
         owner, _, repo_name = repo.partition("/")
+        login = proposal.target.get("login", "")
+        call = github_admin.plan_add_collaborator(
+            owner or org, repo_name or repo, login, str(permission)
+        )
+        if not live:
+            s.set_output({"mode": "dry_run", "call": call.as_dict()})
+            return ExecutionResult(proposal, "dry_run", f"would call {call.method} {call.path}")
+        confirmation = (
+            confirm(f"type `{gates.rollback_phrase(org, repo_name or repo, login)}` to proceed: ")
+            if confirm
+            else None
+        )
+        check = gates.check(
+            settings,
+            proposal,
+            org=org,
+            live_flag=live,
+            confirmation=confirmation,
+            approval=approval,
+            config=config,
+            rollback=True,
+        )
+        if not check.passed:
+            for gate in check.missing:
+                s.event(f"refused:{gate}")
+            s.set_output({"mode": "refused", "missing": list(check.missing)})
+            return ExecutionResult(proposal, "refused", check.describe())
         if github is None:
             if settings.github_token is None:
                 return ExecutionResult(proposal, "refused", "GITHUB_TOKEN is not set")
             github = github_admin.LiveGitHubAdmin(settings.github_token.get_secret_value())
-        call = github_admin.plan_add_collaborator(
-            owner or org, repo_name or repo, proposal.target["login"], permission
-        )
-        result = github.add_collaborator(
-            owner or org, repo_name or repo, proposal.target["login"], permission
-        )
+        result = github.add_collaborator(owner or org, repo_name or repo, login, str(permission))
         updated = proposal_store.update(
             db,
             proposal_id,
             status="rolled_back",
             executed_call={**call.as_dict(), "result": result},
         )
+        _close_requests(db, proposal_id)
         s.set_output({"mode": "rolled_back", "call": call.as_dict()})
         return ExecutionResult(updated, "rolled_back", f"re-invited with {permission}")
+
+
+def _request_rollback(db: ScopedDB, proposal_id: str, payload: dict[str, Any]) -> str:
+    """Open a rollback request for this payload. An open request for another payload is
+    closed first: the reviewer must see what the rollback would now do."""
+    current = approvals.for_ref(db, ROLLBACK_KIND, proposal_id)
+    if current is not None and current.is_open:
+        if current.payload_sha256 == approvals.payload_hash(payload):
+            return current.approval_id
+        approvals.record_event(
+            db, current.approval_id, "closed", "system", "superseded: the rollback payload changed"
+        )
+    return approvals.open_item(db, ROLLBACK_KIND, proposal_id, payload)
+
+
+def _close_requests(db: ScopedDB, proposal_id: str) -> None:
+    for item in approvals.items_for_ref(db, ROLLBACK_KIND, proposal_id):
+        if item.is_open:
+            approvals.record_event(db, item.approval_id, "closed", "system", "rolled back")
+
+
+def audit(db: ScopedDB) -> list[str]:
+    """Proposals that acted without a matching approval: every simulated, executed, or rolled
+    back proposal needs an approved remediation item for its current payload, and every
+    rolled back one also an approved remediation_rollback item for its rollback payload."""
+    problems: list[str] = []
+    for proposal in proposal_store.list_all(db):
+        if proposal.status not in ("simulated", "executed", "rolled_back"):
+            continue
+        item = approvals.for_ref(db, "remediation", proposal.proposal_id)
+        if not gates.approval_matches(item, proposal.current_hash()):
+            problems.append(
+                f"proposal {proposal.proposal_id} is {proposal.status} without approval"
+            )
+        if proposal.status == "rolled_back":
+            expected = approvals.payload_hash(gates.rollback_payload(proposal))
+            undo = approvals.approved_for(db, ROLLBACK_KIND, proposal.proposal_id, expected)
+            if not gates.approval_matches(undo, expected):
+                problems.append(
+                    f"proposal {proposal.proposal_id} was rolled back without a rollback approval"
+                )
+    return problems
 
 
 def describe(proposal: Proposal, org: str) -> dict[str, Any]:

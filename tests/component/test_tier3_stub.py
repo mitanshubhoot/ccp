@@ -13,8 +13,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from ccp.agent import threads, tier3
+from ccp.agent import decisions, threads, tier3
 from ccp.agent.graphs.tier3 import TRAJECTORY_HAPPY
+from ccp.approvals import store as approvals
 from ccp.config import Settings
 from ccp.evaluators import registry, runner
 from ccp.evaluators.context import load_context
@@ -234,19 +235,28 @@ def test_resume_approve_keeps_the_draft_status(world) -> None:  # type: ignore[n
     finally:
         index.refresh(acme, settings, providers.embedder, contextual_enrichment=False)
     thread_id = (v.request_json or {})["thread_id"]
-    final = tier3.resume(
-        acme, settings, thread_id, {"action": "approve", "reviewer": "auditor"}, providers, now=NOW
+    item = approvals.for_ref(acme, "tier3_interrupt", thread_id)
+    assert item is not None and item.is_open
+    with pytest.raises(LookupError, match="no recorded reviewer decision"):
+        tier3.resume(acme, settings, thread_id, providers, approval_id=item.approval_id)
+    assert _thread_of(acme, v).status == "interrupted"
+    result = decisions.decide(
+        acme,
+        settings,
+        item.approval_id,
+        event="approved",
+        decision=decisions.build("approve", "auditor"),
+        providers=providers,
+        now=NOW,
     )
+    final = result.verdict
+    assert result.resumed and final is not None
     assert final.status is VerdictStatus.needs_review and "human_approved" in final.guardrail_events
     assert "approved as needs_review by auditor" in final.reasoning
     with pytest.raises(LookupError):
-        tier3.resume(
-            acme, settings, thread_id, {"action": "approve", "reviewer": "again"}, providers
-        )
+        tier3.resume(acme, settings, thread_id, providers, approval_id=item.approval_id)
     with pytest.raises(tier3.ThreadTenantMismatch):
-        tier3.resume(
-            dbs["globex"], settings, thread_id, {"action": "approve", "reviewer": "x"}, providers
-        )
+        tier3.resume(dbs["globex"], settings, thread_id, providers, approval_id=item.approval_id)
 
 
 def test_full_run_routes_hr4_through_the_registry_and_is_idempotent(world) -> None:  # type: ignore[no-untyped-def]

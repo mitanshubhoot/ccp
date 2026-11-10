@@ -116,7 +116,9 @@ def test_thread_id_tenant_guard(world) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(typer.BadParameter, match="belongs to tenant 'globex'"):
         _guarded_tenant(settings, foreign, "acme")
     with pytest.raises(tier3.ThreadTenantMismatch):
-        tier3.resume(dbs["acme"], settings, foreign, {"action": "approve", "reviewer": "x"})
+        tier3.resume(dbs["acme"], settings, foreign, approval_id="any")
+    with pytest.raises(tier3.ThreadTenantMismatch):
+        tier3.pending_payload_sha256(dbs["acme"], settings, foreign)
 
 
 @pytest.mark.db

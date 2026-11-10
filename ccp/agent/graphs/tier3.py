@@ -4,7 +4,8 @@
           -> verify_citations -> compare -> gate -> finalize -> END
     fetch_* -> gather_fallback (only when the direct fetch found nothing) -> extract_*
     gate    -> fetch_latest_review on a "regather" decision; interrupt() when the draft
-               needs a human (status needs_review or confidence below the threshold)
+               needs a human (status needs_review or confidence below the threshold); a
+               missing or malformed decision holds the draft as needs_review (A-95)
 
 Predictable steps get a workflow; the tool loop exists only as a fallback and its use is a
 guardrail event. Nothing here persists anything: the wrapper in ccp/agent/tier3.py writes.
@@ -47,6 +48,49 @@ TRAJECTORY_HAPPY = (
     "gate",
     "finalize",
 )
+
+
+DECISION_ACTIONS = ("approve", "override", "regather")
+NO_DECISION = "no valid reviewer decision; held for review"
+
+
+def apply_decision(
+    draft: dict[str, Any], decision: Any
+) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    """Apply a reviewer decision to the draft, failing closed: only a known action from a
+    named reviewer changes anything, and anything else holds the draft as needs_review.
+    Nothing defaults to approve. Returns (draft, human_decision, guardrail events)."""
+    draft = dict(draft)
+    received = dict(decision) if isinstance(decision, dict) else {}
+    action = received.get("action")
+    reviewer = str(received.get("reviewer") or "").strip()
+    note = str(received.get("note") or "")
+    status = received.get("status")
+    new_status: str | None = None
+    valid = action in DECISION_ACTIONS and bool(reviewer)
+    if valid and action == "override":
+        try:
+            new_status = VerdictStatus(str(status)).value
+        except ValueError:
+            valid = False
+    elif valid and status is not None:
+        valid = False  # a status means an override; anything else is ambiguous
+    if not valid:
+        draft["status"] = VerdictStatus.needs_review.value
+        draft["reasons"] = list(draft.get("reasons", [])) + [NO_DECISION]
+        return draft, {"action": "none", "received": received}, ["no_decision"]
+    if action == "override":
+        draft["status"] = new_status
+        draft["reasons"] = list(draft.get("reasons", [])) + [
+            f"human override by {reviewer}: {note or 'no note'}"
+        ]
+        return draft, received, [f"human_override:{new_status}"]
+    if action == "regather":
+        return draft, received, ["human_regather"]
+    draft["reasons"] = list(draft.get("reasons", [])) + [
+        f"approved as {draft.get('status')} by {reviewer}"
+    ]
+    return draft, received, ["human_approved"]
 
 
 def _chunks_of(state: AgentState, evidence_type: str) -> list[dict[str, Any]]:
@@ -227,26 +271,8 @@ def build_spec(
             "threshold": interrupt_threshold(),
         }
         decision = interrupt(payload)  # no side effects above this line: the node re-runs on resume
-        decision = dict(decision or {})
-        action = str(decision.get("action", "approve"))
-        reviewer = str(decision.get("reviewer", "unknown"))
-        note = str(decision.get("note") or "")
-        events: list[str] = []
-        if action == "override":
-            new_status = VerdictStatus(str(decision["status"])).value
-            draft["status"] = new_status
-            draft["reasons"] = list(draft.get("reasons", [])) + [
-                f"human override by {reviewer}: {note or 'no note'}"
-            ]
-            events.append(f"human_override:{new_status}")
-        elif action == "regather":
-            events.append("human_regather")
-        else:
-            draft["reasons"] = list(draft.get("reasons", [])) + [
-                f"approved as {draft.get('status')} by {reviewer}"
-            ]
-            events.append("human_approved")
-        return {"human_decision": decision, "draft_verdict": draft, "guardrail_events": events}
+        draft, applied, events = apply_decision(draft, decision)
+        return {"human_decision": applied, "draft_verdict": draft, "guardrail_events": events}
 
     def finalize(state: AgentState) -> dict[str, Any]:
         draft = dict(state.get("draft_verdict") or {})

@@ -1,5 +1,6 @@
 """Approval items and their events (spec.md Layer 16). Append-only: the state of an item is
-its latest event, read through the approval_status view."""
+its latest event, read through the approval_status view. A deciding event carries the exact
+decision as given (A-95), so whatever acts on it later reads the decision from here."""
 
 from __future__ import annotations
 
@@ -13,10 +14,19 @@ from ulid import ULID
 
 from ccp.storage.scoped import ScopedDB
 
-Kind = Literal["tier3_interrupt", "remediation", "policy_draft", "evidence_request"]
+Kind = Literal[
+    "tier3_interrupt", "remediation", "remediation_rollback", "policy_draft", "evidence_request"
+]
 Event = Literal["opened", "approved", "rejected", "changes_requested", "closed"]
-KINDS: tuple[Kind, ...] = ("tier3_interrupt", "remediation", "policy_draft", "evidence_request")
+KINDS: tuple[Kind, ...] = (
+    "tier3_interrupt",
+    "remediation",
+    "remediation_rollback",
+    "policy_draft",
+    "evidence_request",
+)
 OPEN_STATES = ("opened", "changes_requested")
+DECIDED_STATES = ("approved", "rejected")
 
 
 def payload_hash(payload: dict[str, Any]) -> str:
@@ -37,32 +47,43 @@ class Approval:
     reviewer: str
     note: str | None
     decided_at: datetime
+    decision: dict[str, Any] | None = None
 
     @property
     def is_open(self) -> bool:
         return self.state in OPEN_STATES
 
+    @property
+    def is_decided(self) -> bool:
+        return self.state in DECIDED_STATES
+
 
 _COLUMNS = (
     "approval_id, tenant_id, kind, ref_id, payload, payload_sha256, opened_at, state, reviewer,"
-    " note, decided_at"
+    " note, decided_at, decision"
 )
 
 
+def _json(value: Any) -> Any:
+    return json.loads(value) if isinstance(value, str) else value
+
+
 def _row(r: tuple[Any, ...]) -> Approval:
-    payload = json.loads(r[4]) if isinstance(r[4], str) else dict(r[4])
+    payload = _json(r[4])
+    decision = _json(r[11])
     return Approval(
         approval_id=str(r[0]),
         tenant_id=str(r[1]),
         kind=str(r[2]),
         ref_id=str(r[3]),
-        payload=payload,
+        payload=dict(payload),
         payload_sha256=str(r[5]),
         opened_at=r[6],
         state=str(r[7]),
         reviewer=str(r[8]),
         note=r[9],
         decided_at=r[10],
+        decision=dict(decision) if decision is not None else None,
     )
 
 
@@ -96,19 +117,34 @@ def open_item(
 
 
 def record_event(
-    db: ScopedDB, approval_id: str, event: Event, reviewer: str, note: str | None = None
+    db: ScopedDB,
+    approval_id: str,
+    event: Event,
+    reviewer: str,
+    note: str | None = None,
+    *,
+    decision: dict[str, Any] | None = None,
 ) -> Approval:
     if not reviewer or not reviewer.strip():
         raise ValueError("a reviewer name is required")
     current = get(db, approval_id)
     if current is None:
         raise LookupError(f"no approval item {approval_id!r}")
-    if event in ("approved", "rejected") and not current.is_open:
+    if event in DECIDED_STATES and not current.is_open:
         raise ValueError(f"approval {approval_id!r} is already {current.state}")
     db.execute(
-        "INSERT INTO approval_events (event_id, approval_id, tenant_id, event, reviewer, note)"
-        " VALUES (%s, %s, %s, %s, %s, %s)",
-        (str(ULID()), approval_id, db.tenant.tenant_id, event, reviewer.strip(), note),
+        "INSERT INTO approval_events"
+        " (event_id, approval_id, tenant_id, event, reviewer, note, decision)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        (
+            str(ULID()),
+            approval_id,
+            db.tenant.tenant_id,
+            event,
+            reviewer.strip(),
+            note,
+            json.dumps(decision, default=str) if decision is not None else None,
+        ),
     )
     updated = get(db, approval_id)
     assert updated is not None
@@ -125,10 +161,29 @@ def get(db: ScopedDB, approval_id: str) -> Approval | None:
 def for_ref(db: ScopedDB, kind: str, ref_id: str) -> Approval | None:
     row = db.fetch_one(
         f"SELECT {_COLUMNS} FROM approval_status WHERE kind = %s AND ref_id = %s"
-        " ORDER BY opened_at DESC LIMIT 1",
+        " ORDER BY opened_at DESC, approval_id DESC LIMIT 1",
         (kind, ref_id),
     )
     return _row(row) if row else None
+
+
+def items_for_ref(db: ScopedDB, kind: str, ref_id: str) -> list[Approval]:
+    """Every item of one kind for one ref, oldest first."""
+    rows = db.fetch_all(
+        f"SELECT {_COLUMNS} FROM approval_status WHERE kind = %s AND ref_id = %s"
+        " ORDER BY opened_at, approval_id",
+        (kind, ref_id),
+    )
+    return [_row(r) for r in rows]
+
+
+def approved_for(db: ScopedDB, kind: str, ref_id: str, payload_sha256: str) -> Approval | None:
+    """The newest approved item for exactly this payload: an approval binds to what it
+    showed, so a request for a different payload neither uses nor revokes it."""
+    for item in reversed(items_for_ref(db, kind, ref_id)):
+        if item.state == "approved" and item.payload_sha256 == payload_sha256:
+            return item
+    return None
 
 
 def list_items(db: ScopedDB, kind: str | None = None, open_only: bool = False) -> list[Approval]:
@@ -146,11 +201,17 @@ def list_items(db: ScopedDB, kind: str | None = None, open_only: bool = False) -
 
 def history(db: ScopedDB, approval_id: str) -> list[dict[str, Any]]:
     rows = db.fetch_all(
-        "SELECT event, reviewer, note, recorded_at FROM approval_events WHERE approval_id = %s"
-        " ORDER BY recorded_at, event_id",
+        "SELECT event, reviewer, note, recorded_at, decision FROM approval_events"
+        " WHERE approval_id = %s ORDER BY recorded_at, event_id",
         (approval_id,),
     )
     return [
-        {"event": str(r[0]), "reviewer": str(r[1]), "note": r[2], "recorded_at": r[3].isoformat()}
+        {
+            "event": str(r[0]),
+            "reviewer": str(r[1]),
+            "note": r[2],
+            "recorded_at": r[3].isoformat(),
+            "decision": _json(r[4]),
+        }
         for r in rows
     ]

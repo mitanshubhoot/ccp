@@ -42,7 +42,7 @@ otherwise); `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` for traces.
 | Evaluate | `ccp evaluate run` and `clock`, `ccp state current`, `history`, `asof`, `ccp report` |
 | Retrieval | `ccp index rebuild`, `refresh`, `stats`, `distractors`, `calibrate`, `search` |
 | Agents | `ccp agent pending` and `resume`, `ccp investigate run`, `ccp policy gap` and `draft`, `ccp copilot --tenant acme [--ask "..."]` |
-| Human decisions | `ccp approvals list`, `approve`, `reject`; `ccp remediate propose`, `execute`, `simulate`, `rollback`, `reevaluate` |
+| Human decisions | `ccp approvals list`, `show`, `approve`, `reject`, `resume`, `audit`; `ccp remediate propose`, `execute`, `rollback`, `audit` (rollbacks need their own approval) |
 | Evals | `ccp evals run [--suite all]`, `calibrate`, `regress`, `capture <trace_id>`, `threshold` |
 | Replay | `ccp replay <id> [--execute]` for a verdict, investigation, gap report, or copilot answer |
 
