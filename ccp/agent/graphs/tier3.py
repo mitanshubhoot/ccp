@@ -26,6 +26,7 @@ from ccp.agent.state import AgentState
 from ccp.agent.tools import BoundTool
 from ccp.evaluators import confidence, rules
 from ccp.evaluators.extraction import schema_for
+from ccp.evaluators.rule_versions import rule_stamp
 from ccp.evaluators.thresholds import interrupt_threshold
 from ccp.evaluators.verdict import Verdict, evaluation_key
 from ccp.knowledge.graph import TestSpec
@@ -335,8 +336,15 @@ def build_spec(
         )
         verdict = Verdict(
             evaluation_key=evaluation_key(
-                tenant.tenant_id, spec.test_id, subject_key, trigger, spec.prompt_version, model
+                tenant.tenant_id,
+                spec.test_id,
+                subject_key,
+                trigger,
+                spec.prompt_version,
+                model,
+                rule=rule_stamp(spec, tenant.settings),
             ),
+            rule_version=rule_stamp(spec, tenant.settings),
             tenant_id=tenant.tenant_id,
             test_id=spec.test_id,
             subject_key=subject_key,

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from ccp.config import Settings
+from ccp.evaluators.rule_versions import rule_stamp
 from ccp.evaluators.verdict import TriggerReason, Verdict, evaluation_key
 from ccp.identity import resolver
 from ccp.knowledge.graph import TestSpec
@@ -87,6 +88,7 @@ class EvaluationContext:
                 self.trigger_observed_at,
                 None,
                 None,
+                rule=rule_stamp(self.spec, self.tenant.settings),
             ),
             tenant_id=self.tenant.tenant_id,
             test_id=self.spec.test_id,
@@ -102,6 +104,7 @@ class EvaluationContext:
             trigger_reason=self.reason,
             valid_from=valid_from,
             created_at=self.now,
+            rule_version=rule_stamp(self.spec, self.tenant.settings),
         )
 
 

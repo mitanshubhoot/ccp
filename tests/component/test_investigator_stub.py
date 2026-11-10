@@ -14,6 +14,7 @@ from ccp.agent.graphs.investigator import TRAJECTORY
 from ccp.approvals import store as approvals
 from ccp.config import Settings
 from ccp.evaluators import runner as evaluations
+from ccp.evaluators.rule_versions import rule_stamp
 from ccp.evaluators.tier2 import Providers
 from ccp.evaluators.verdict import Verdict, evaluation_key, latest_per_subject, persist
 from ccp.investigation import runner, schema
@@ -126,7 +127,13 @@ def test_needs_review_from_a_queued_identity_link_is_identity_unresolved(world) 
     settings, acme, providers = world
     queued = Verdict(
         evaluation_key=evaluation_key(
-            "acme", "HR-1", "HR-1|person:hris:person:E1017", NOW, None, None
+            "acme",
+            "HR-1",
+            "HR-1|person:hris:person:E1017",
+            NOW,
+            None,
+            None,
+            rule=rule_stamp(knowledge.load().tests["HR-1"], acme.tenant.settings),
         ),
         tenant_id=acme.tenant.tenant_id,
         test_id="HR-1",

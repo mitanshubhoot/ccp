@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ccp.compliance_state import writer
+from ccp.compliance_state.run import prepare_changes
 from ccp.config import Settings
 from ccp.connectors.base import Connector
 from ccp.evaluators import runner as evaluations
@@ -38,6 +39,7 @@ def reevaluate(
     with steps.step("remediate.reevaluate", layer="remediation", tenant=db.tenant) as s:
         landed, _duplicates = land_events(db, RawZone(settings.raw_dir), connector.pull(db.tenant))
         normalized = normalize_all(db, settings)
+        prepare_changes(db, settings, providers or Providers.from_settings(settings))
         impact = ImpactConsumer(db)
         while impact.run_once():
             pass

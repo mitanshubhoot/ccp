@@ -11,8 +11,10 @@ import pytest
 from ccp.config import Settings
 from ccp.evaluators import clock, runner
 from ccp.evaluators.impact import EvaluationRequest, enqueue
+from ccp.evaluators.rule_versions import rule_stamp
 from ccp.evaluators.verdict import Verdict, evaluation_key, latest_per_subject, persist
 from ccp.ingest import event_log
+from ccp.knowledge import graph as knowledge
 from ccp.normalize import repository
 from ccp.storage.scoped import ScopedDB
 from ccp.types import VerdictStatus
@@ -22,6 +24,10 @@ pytestmark = pytest.mark.db
 
 NOW = datetime(2026, 9, 11, 12, tzinfo=UTC)
 YUKI = "person:hris:person:G2005"
+
+
+def _stamp(settings: Settings, tenant: str, test_id: str) -> str:
+    return rule_stamp(knowledge.load().tests[test_id], settings.load_tenants()[tenant])
 
 
 @pytest.fixture(scope="module")
@@ -55,7 +61,15 @@ def test_same_record_processed_twice_writes_once(
     record = _claim_one(globex, offset)
     consumer.handle(record)  # first delivery
     consumer.handle(record)  # redelivery after a crash between handle and mark_done
-    key = evaluation_key("globex", "HR-5", "HR-5|tenant", NOW, None, None)
+    key = evaluation_key(
+        "globex",
+        "HR-5",
+        "HR-5|tenant",
+        NOW,
+        None,
+        None,
+        rule=_stamp(settings, "globex", "HR-5"),
+    )
     assert globex.fetch_one("SELECT count(*) FROM verdicts WHERE evaluation_key = %s", (key,)) == (
         1,
     )
@@ -101,7 +115,15 @@ def test_clock_supersedes_a_stale_pass(world: tuple[Settings, dict[str, ScopedDB
     globex = dbs["globex"]
     stale_created = NOW - timedelta(days=45)  # HR-1 revalidates every 30 days
     stale = Verdict(
-        evaluation_key=evaluation_key("globex", "HR-1", f"HR-1|{YUKI}", stale_created, None, None),
+        evaluation_key=evaluation_key(
+            "globex",
+            "HR-1",
+            f"HR-1|{YUKI}",
+            stale_created,
+            None,
+            None,
+            rule=_stamp(settings, "globex", "HR-1"),
+        ),
         tenant_id=globex.tenant.tenant_id,
         test_id="HR-1",
         subject_key=f"HR-1|{YUKI}",
@@ -139,7 +161,7 @@ def test_clock_supersedes_a_stale_pass(world: tuple[Settings, dict[str, ScopedDB
 def test_clock_flags_stale_evidence_by_max_age(
     world: tuple[Settings, dict[str, ScopedDB]],
 ) -> None:
-    _, dbs = world
+    settings, dbs = world
     globex = dbs["globex"]
     evidence = globex.fetch_one(
         "SELECT entity_id, observed_at FROM current_evidence"
@@ -149,7 +171,13 @@ def test_clock_flags_stale_evidence_by_max_age(
     recent = NOW - timedelta(days=1)
     verdict = Verdict(
         evaluation_key=evaluation_key(
-            "globex", "GH-4", "GH-4|tenant", recent, "gh4_extract_v1", "m"
+            "globex",
+            "GH-4",
+            "GH-4|tenant",
+            recent,
+            "gh4_extract_v1",
+            "m",
+            rule=_stamp(settings, "globex", "GH-4"),
         ),
         tenant_id=globex.tenant.tenant_id,
         test_id="GH-4",

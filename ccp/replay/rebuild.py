@@ -43,6 +43,8 @@ class ReplayCall:
     diff: tuple[str, ...]
     request: dict[str, Any] = field(repr=False)
     response: Any = field(repr=False, default=None)
+    # the index has changed since the call: reported, never a replay failure (A-101)
+    drift: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,8 @@ class ReplayReport:
             )
             for line in call.diff:
                 lines.append(f"    - {line}")
+            for line in call.drift:
+                lines.append(f"    ~ {line} (index changed since the call)")
         lines.append(
             "  request diff: " + ("empty" if not self.diff else f"{len(self.diff)} line(s)")
         )
@@ -82,6 +86,27 @@ def _system_texts(request: dict[str, Any]) -> list[tuple[str, bool]]:
         else:
             out.append((str(block), False))
     return out
+
+
+def request_parts(request: dict[str, Any]) -> tuple[str | None, list[str]]:
+    """(the instruction, the documents) of a stored request, in either shape: the stub's
+    `user` and `documents`, or the API's first message with its document blocks."""
+    if isinstance(request.get("user"), str):
+        return str(request["user"]), [str(d) for d in request.get("documents") or []]
+    messages = request.get("messages") or []
+    if not messages or not isinstance(messages[0], dict):
+        return None, []
+    content = messages[0].get("content")
+    if isinstance(content, str):
+        return content, []
+    documents: list[str] = []
+    texts: list[str] = []
+    for block in content if isinstance(content, list) else []:
+        if isinstance(block, dict) and block.get("type") == "document":
+            documents.append(str((block.get("source") or {}).get("data", "")))
+        elif isinstance(block, dict) and block.get("type") == "text":
+            texts.append(str(block.get("text", "")))
+    return ("\n\n".join(texts) if texts else None), documents
 
 
 def user_text(request: dict[str, Any]) -> str | None:
@@ -144,9 +169,12 @@ def check_call(
     nonce: str | None,
     full_user: str | None = None,
 ) -> ReplayCall:
-    """Rebuild what the references allow (prompt, schema block, fenced evidence, and the
-    whole user text when the caller can reproduce it) and diff against the stored request."""
+    """Rebuild what the references allow (prompt, schema block, and the whole user text
+    when the caller can reproduce it) and diff against the stored request. The fenced
+    evidence is the text stored with the request (A-101): a chunk that has changed or left
+    the index since is drift, reported beside the diff, and the replay still passes."""
     diff: list[str] = []
+    drift: list[str] = []
     system = _system_texts(request)
     if prompt_version:
         try:
@@ -183,7 +211,7 @@ def check_call(
             chunk_id = block.chunk_id
             chunk = chunks.get(chunk_id)
             if chunk is None:
-                diff.append(f"chunk {chunk_id} is no longer in the index")
+                drift.append(f"chunk {chunk_id} is no longer in the index")
                 continue
             framed = prompt_guard.frame_evidence(
                 [
@@ -200,7 +228,7 @@ def check_call(
             )
             rebuilt = prompt_guard.parse_fences(framed.text)
             if not rebuilt or rebuilt[0].body != block.body:
-                diff.append(f"chunk {chunk_id}: the fenced text differs from the indexed text")
+                drift.append(f"chunk {chunk_id}: the fenced text differs from the indexed text")
         if full_user is not None and full_user != user:
             diff.append("the rebuilt user text differs from the stored request")
     return ReplayCall(
@@ -212,6 +240,7 @@ def check_call(
         diff=tuple(diff),
         request=request,
         response=response,
+        drift=tuple(drift),
     )
 
 
@@ -271,28 +300,10 @@ def rebuild(db: ScopedDB, settings: Settings, record_id: str) -> ReplayReport:
                     db, settings, spec, verdict.trigger_observed_at, verdict.created_at
                 )
                 _, description = build_query(ctx, spec, verdict.subject)
-                stored_user = user_text(request) or ""
-                chunk_ids = [b.chunk_id for b in prompt_guard.parse_fences(stored_user)]
-                chunks = _chunk_texts(db, chunk_ids)
-                if all(c in chunks for c in chunk_ids):
-                    framed = prompt_guard.frame_evidence(
-                        [
-                            FramedChunk(
-                                cid,
-                                str(chunks[cid]["text"]),
-                                str(chunks[cid]["evidence_type"]),
-                                chunks[cid]["subject_entity_id"],
-                                chunks[cid]["page"],
-                                str(chunks[cid]["source_ref"] or ""),
-                            )
-                            for cid in chunk_ids
-                        ],
-                        verdict.fence_nonce,
-                    )
-                    full_user = with_documents(
-                        extraction_instruction(verdict.fence_nonce, description),
-                        [framed.text],
-                    )
+                _, stored_documents = request_parts(request)
+                full_user = with_documents(
+                    extraction_instruction(verdict.fence_nonce, description), stored_documents
+                )
             call = check_call(
                 db,
                 name="extract",
@@ -338,7 +349,7 @@ def execute(
     out: list[tuple[str, list[str]]] = []
     for call in report.calls:
         schema = call.schema
-        user = user_text(call.request)
+        user, documents = request_parts(call.request)
         model = call.request.get("model") or call.model
         model_cls = schema_model(schema) if schema else None
         if model_cls is None or user is None or not model:
@@ -351,6 +362,7 @@ def execute(
             user=user,
             model=str(model).removeprefix("stub:"),
             tracker=BudgetTracker(RunBudget.from_settings(settings)),
+            documents=documents,
         )
         before = _response_fields(call.response)
         after = extraction.parsed.model_dump(mode="json")

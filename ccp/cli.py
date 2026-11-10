@@ -192,7 +192,8 @@ def evaluate_run(
                 f"index: {refreshed.chunks} chunks ({refreshed.upserted} upserted,"
                 f" {refreshed.unchanged} unchanged) embed_model={refreshed.embed_model}"
             )
-        if impact:
+        if impact:  # the change path: link new accounts to people before the impact step (A-101)
+            resolver.resolve_tenant(scoped)
             consumer = impact_step.ImpactConsumer(scoped)
             while consumer.run_once():
                 pass

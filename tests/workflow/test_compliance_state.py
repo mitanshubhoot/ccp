@@ -13,8 +13,10 @@ import pytest
 from ccp.compliance_state import reader, run, writer
 from ccp.config import Settings
 from ccp.evaluators import runner as evaluations
+from ccp.evaluators.rule_versions import rule_stamp
 from ccp.evaluators.tier2 import Providers
 from ccp.evaluators.verdict import Verdict, evaluation_key, latest_per_subject
+from ccp.knowledge import graph as knowledge
 from ccp.retrieval.config import RetrievalConfig
 from ccp.retrieval.embeddings import HashingEmbeddingClient
 from ccp.storage.db import app_pool, scratch_database
@@ -98,7 +100,13 @@ def _verdict(
 ) -> Verdict:
     return Verdict(
         evaluation_key=evaluation_key(
-            db.tenant.tenant_id, "HR-1", subject_key, trigger, None, None
+            db.tenant.tenant_id,
+            "HR-1",
+            subject_key,
+            trigger,
+            None,
+            None,
+            rule=rule_stamp(knowledge.load().tests["HR-1"], db.tenant.settings),
         ),
         tenant_id=db.tenant.tenant_id,
         test_id="HR-1",

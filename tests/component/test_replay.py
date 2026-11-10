@@ -120,7 +120,9 @@ def test_re_execution_against_the_stub_reproduces_the_response(world) -> None:  
     assert results == [("extract", [])]
 
 
-def test_a_changed_index_shows_in_the_diff(world) -> None:  # type: ignore[no-untyped-def]
+def test_a_changed_document_is_drift_and_the_replay_still_passes(world) -> None:  # type: ignore[no-untyped-def]
+    """A-101: replay works from the fenced text stored with the request; an index that has
+    changed since is reported as drift, and the stored call re-executes unchanged."""
     settings, acme, _, ids = world
     report = replay.rebuild(acme, settings, ids["verdict"])
     chunk_ids = [
@@ -134,7 +136,12 @@ def test_a_changed_index_shows_in_the_diff(world) -> None:  # type: ignore[no-un
     )
     try:
         changed = replay.rebuild(acme, settings, ids["verdict"])
-        assert any("fenced text differs" in line for line in changed.diff)
+        assert changed.diff == []
+        drift = [line for call in changed.calls for line in call.drift]
+        assert any("fenced text differs" in line for line in drift)
+        assert "index changed since the call" in changed.format()
+        llm = world[2].llm
+        assert replay.execute(acme, settings, ids["verdict"], llm) == [("extract", [])]
     finally:
         acme.execute(
             "UPDATE chunks SET text = left(text, length(text) - 9) WHERE chunk_id = %s",

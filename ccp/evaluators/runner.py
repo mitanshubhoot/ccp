@@ -14,12 +14,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import lru_cache
 
-from ccp.config import Settings
+from ccp.config import Settings, TenantSettings
 from ccp.evaluators import deterministic, registry, tier2
 from ccp.evaluators import verdict as verdicts
 from ccp.evaluators.budget_gate import check_daily_budget
 from ccp.evaluators.context import load_context
 from ccp.evaluators.impact import EvaluationRequest, enqueue
+from ccp.evaluators.rule_versions import rule_stamp
 from ccp.evaluators.verdict import TriggerReason, Verdict, evaluation_key
 from ccp.ingest import event_log
 from ccp.ingest.consumers import ParallelConsumer, ParkedError
@@ -109,6 +110,10 @@ def commit_verdict(db: ScopedDB, verdict: Verdict) -> bool:
     return inserted
 
 
+def cached_tenant_settings(tenant_id: str, settings: Settings) -> TenantSettings:
+    return settings.load_tenants()[tenant_id]
+
+
 def expected_key(settings: Settings, tenant_id: str, request: EvaluationRequest) -> str:
     """The evaluation key the routed tier will use, known before it runs."""
     spec = cached_graph().tests[request.test_id]
@@ -120,6 +125,7 @@ def expected_key(settings: Settings, tenant_id: str, request: EvaluationRequest)
         request.trigger_observed_at,
         spec.prompt_version if spec.tier in (2, 3) else None,
         model,
+        rule=rule_stamp(spec, cached_tenant_settings(tenant_id, settings)),
     )
 
 

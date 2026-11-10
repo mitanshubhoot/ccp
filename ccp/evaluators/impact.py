@@ -146,6 +146,18 @@ def _person_tests(db: ScopedDB, entity_id: str, trigger: datetime) -> list[Evalu
     return [EvaluationRequest(t, subject, trigger) for t in ("HR-1", "GH-1")]
 
 
+# What a change to each table can trigger (A-101). `requests_for_entity` emits only these,
+# and every test must be reachable from some table, or it could never run on the change
+# path; tests/unit/test_impact_reach.py fails CI on a test with no trigger.
+IMPACT_REACH: dict[str, frozenset[str]] = {
+    "persons": frozenset({"HR-1", "GH-1"}),
+    "person_links": frozenset({"HR-1", "GH-1"}),
+    "access_grants": frozenset({"HR-1", "GH-1", "GH-2"}),
+    "assets": frozenset({"GH-2", "GH-3", "HR-4"}),
+    "evidence": frozenset({"GH-4", "GH-5", "HR-2", "HR-3", "HR-4", "HR-5"}),
+}
+
+
 def requests_for_entity(
     db: ScopedDB, table: str, entity_id: str, observed_at: datetime
 ) -> list[EvaluationRequest]:

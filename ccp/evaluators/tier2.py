@@ -19,6 +19,7 @@ from ccp.evaluators import budget_gate, citations, confidence, registry, rules
 from ccp.evaluators.context import EvaluationContext
 from ccp.evaluators.deterministic.common import hr_person_for
 from ccp.evaluators.extraction import schema_block, schema_for
+from ccp.evaluators.rule_versions import rule_stamp
 from ccp.evaluators.verdict import TriggerReason, Verdict, evaluation_key
 from ccp.knowledge.graph import TestSpec
 from ccp.llm.budget import BudgetTracker, RunBudget
@@ -159,6 +160,7 @@ def evaluate(
     prompt = load_prompt(spec.prompt_version)
     model = settings.ccp_tier2_model
     subject_key = f"{spec.test_id}|{subject}"
+    stamp = rule_stamp(spec, ctx.tenant.settings)
     key = evaluation_key(
         ctx.tenant.tenant_id,
         spec.test_id,
@@ -166,6 +168,7 @@ def evaluate(
         ctx.trigger_observed_at,
         spec.prompt_version,
         model,
+        rule=stamp,
     )
     evidence_type = spec.evidence_types[0].value
     query, description = build_query(ctx, spec, subject)
@@ -214,6 +217,7 @@ def evaluate(
         )
         return Verdict(
             evaluation_key=key,
+            rule_version=stamp,
             tenant_id=ctx.tenant.tenant_id,
             test_id=spec.test_id,
             subject_key=subject_key,
@@ -252,6 +256,7 @@ def evaluate(
         )
         return Verdict(
             evaluation_key=key,
+            rule_version=stamp,
             tenant_id=ctx.tenant.tenant_id,
             test_id=spec.test_id,
             subject_key=subject_key,
@@ -343,6 +348,7 @@ def evaluate(
     reasoning = "; ".join(decision.reasons) + f". {description}. {conf.summary()}"
     return Verdict(
         evaluation_key=key,
+        rule_version=stamp,
         tenant_id=ctx.tenant.tenant_id,
         test_id=spec.test_id,
         subject_key=subject_key,

@@ -63,6 +63,7 @@ class Verdict(BaseModel):
     request_json: dict[str, Any] | None = None
     response_json: dict[str, Any] | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    rule_version: str | None = None  # "<rule version>:<parameters hash>" (A-101)
 
     @property
     def subject(self) -> str:
@@ -77,7 +78,11 @@ def evaluation_key(
     trigger_observed_at: datetime,
     prompt_version: str | None,
     model: str | None,
+    *,
+    rule: str,
 ) -> str:
+    """``rule`` is the rule stamp (rule version and parameters hash, A-101): a corrected
+    rule or changed parameters over the same data is a new evaluation."""
     material = "|".join(
         [
             tenant_id,
@@ -86,6 +91,7 @@ def evaluation_key(
             trigger_observed_at.astimezone(UTC).isoformat(),
             prompt_version or "",
             model or "",
+            rule,
         ]
     )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
@@ -96,8 +102,9 @@ _COLUMNS = (
     " evidence_refs, confidence, confidence_cap, model_confidence, tier, model, prompt_version,"
     " retrieved_chunk_ids, guardrail_events, extracted_fields, chunker_version, schema_version,"
     " fence_nonce, trigger_observed_at, trigger_reason, valid_from, request_json, response_json,"
-    " created_at"
+    " created_at, rule_version"
 )
+_PLACEHOLDERS = ",".join(["%s"] * (_COLUMNS.count(",") + 1))
 
 
 def persist(db: ScopedDB, verdict: Verdict) -> bool:
@@ -110,8 +117,7 @@ def insert(cur: psycopg.Cursor[Any], verdict: Verdict) -> bool:
     """`persist` inside the caller's transaction, so the verdict and its announcement on the
     verdicts topic commit together or not at all (A-97)."""
     row = cur.execute(
-        f"INSERT INTO verdicts ({_COLUMNS})"
-        " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+        f"INSERT INTO verdicts ({_COLUMNS}) VALUES ({_PLACEHOLDERS})"
         " ON CONFLICT (evaluation_key) DO NOTHING RETURNING verdict_id",
         (
             verdict.verdict_id,
@@ -141,6 +147,7 @@ def insert(cur: psycopg.Cursor[Any], verdict: Verdict) -> bool:
             json.dumps(verdict.request_json, default=str) if verdict.request_json else None,
             json.dumps(verdict.response_json, default=str) if verdict.response_json else None,
             verdict.created_at,
+            verdict.rule_version,
         ),
     ).fetchone()
     return row is not None
@@ -179,6 +186,7 @@ def _from_row(r: tuple[Any, ...]) -> Verdict:
         request_json=_load(r[24]) if r[24] is not None else None,
         response_json=_load(r[25]) if r[25] is not None else None,
         created_at=r[26],
+        rule_version=r[27],
     )
 
 

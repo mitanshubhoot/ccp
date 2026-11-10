@@ -46,6 +46,22 @@ class RunReport:
     heads: dict[str, int] = field(default_factory=dict)
 
 
+@dataclass
+class Prepared:
+    compared: int = 0
+    chunks: int = 0
+
+
+def prepare_changes(db: ScopedDB, settings: Settings, providers: Providers) -> Prepared:
+    """What every path from new entities to evaluation needs first (A-101): identities
+    resolved, so an account first seen since the last full run is linked to its person,
+    and the index refreshed, so new evidence can be retrieved. Both are incremental:
+    known pairs and unchanged chunks cost nothing."""
+    compared = resolver.resolve_tenant(db).compared
+    chunks = index.refresh(db, settings, providers.embedder, providers.llm).chunks
+    return Prepared(compared, chunks)
+
+
 def run(
     db: ScopedDB,
     settings: Settings,
@@ -63,8 +79,8 @@ def run(
             landing = ingest_tenant(settings, db, db.tenant, source=source)
             report.landed, report.duplicates = landing.landed, landing.duplicates
         report.normalized = normalize_all(db, settings)
-        report.identity_compared = resolver.resolve_tenant(db).compared
-        report.chunks = index.refresh(db, settings, active.embedder, active.llm).chunks
+        prepared = prepare_changes(db, settings, active)
+        report.identity_compared, report.chunks = prepared.compared, prepared.chunks
         report.enqueued = evaluations.enqueue_all(db, settings, now=now)
         summary = evaluations.drain(db, settings, now=now, providers=active)
         report.evaluated = summary.evaluated

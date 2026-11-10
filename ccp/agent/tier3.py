@@ -28,6 +28,7 @@ from ccp.approvals import store as approvals
 from ccp.config import Settings
 from ccp.evaluators import budget_gate, registry
 from ccp.evaluators.context import EvaluationContext, load_context
+from ccp.evaluators.rule_versions import rule_stamp
 from ccp.evaluators.tier2 import AITierUnavailable, Providers
 from ccp.evaluators.verdict import TriggerReason, Verdict, evaluation_key
 from ccp.knowledge import graph as knowledge
@@ -118,8 +119,15 @@ def _interrupted_verdict(
     reasons = list(draft.get("reasons") or ["stopped at the human gate"])
     return Verdict(
         evaluation_key=evaluation_key(
-            tenant.tenant_id, spec.test_id, subject_key, trigger, spec.prompt_version, model
+            tenant.tenant_id,
+            spec.test_id,
+            subject_key,
+            trigger,
+            spec.prompt_version,
+            model,
+            rule=rule_stamp(spec, tenant.settings),
         ),
+        rule_version=rule_stamp(spec, tenant.settings),
         tenant_id=tenant.tenant_id,
         test_id=spec.test_id,
         subject_key=subject_key,
@@ -185,6 +193,7 @@ def evaluate(
         ctx.trigger_observed_at,
         spec.prompt_version,
         settings.ccp_tier3_model,
+        rule=rule_stamp(spec, tenant.settings),
     )
     previous = threads.resumable(db, key)
     if previous is not None:  # a retry: continue that thread from its last checkpoint
