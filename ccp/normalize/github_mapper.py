@@ -7,6 +7,8 @@
     repo.security_policy.snapshot   -> Evidence(policy_document)
     repo.file_listing.snapshot      -> Evidence(repo_file_listing)
     org.member_added/removed        -> Person, AccessGrant(person -> org, active/revoked)
+    org.pull.completed              -> nothing here; on a complete pull the consumer
+                                       writes revocations for what was not seen (A-102)
     repo.collaborator_added/removed -> Person, AccessGrant(person -> repo, active/revoked)
 
 Account kind: the API's ``type`` (Bot -> service) plus a small login-pattern list; ``shared``
@@ -347,6 +349,11 @@ def map_github_event(event: SourceEvent) -> MappingResult:
         )
         return MappingResult(entities=tuple(out))
 
+    if kind == "org.pull.completed":  # the consumer infers revocations from it (A-102)
+        if p.get("complete"):
+            return MappingResult(guardrail_events=("github_pull_complete",))
+        gaps = len(p.get("incomplete") or [])
+        return MappingResult(guardrail_events=(f"github_pull_incomplete:{gaps}",))
     return MappingResult(guardrail_events=(f"unmapped_event_type:{kind}",))
 
 

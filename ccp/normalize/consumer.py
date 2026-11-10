@@ -21,7 +21,7 @@ from ccp.ingest.consumers import OrderedConsumer
 from ccp.ingest.event_log import LogRecord
 from ccp.ingest.raw_zone import RawZone
 from ccp.ingest.worker import register
-from ccp.normalize import repository
+from ccp.normalize import repository, revocations
 from ccp.normalize.entities import MappingResult
 from ccp.normalize.github_mapper import map_github_event
 from ccp.normalize.hris_mapper import map_hris_event
@@ -71,8 +71,11 @@ class NormalizeConsumer(OrderedConsumer):
             inputs={"offset": record.offset, "event_type": event.event_type},
         ) as s:
             result = map_event(event)
+            entities = list(result.entities)
+            if event.event_type == "org.pull.completed":  # absences as revocations (A-102)
+                entities += revocations.from_complete_pull(cur, event)
             inserted = 0
-            for entity in result.entities:
+            for entity in entities:
                 if repository.insert(cur, entity):
                     inserted += 1
                     event_log.append(
@@ -85,7 +88,7 @@ class NormalizeConsumer(OrderedConsumer):
                     )
             for guardrail in result.guardrail_events:
                 s.event(guardrail)
-            s.set_output({"entities": len(result.entities), "inserted": inserted})
+            s.set_output({"entities": len(entities), "inserted": inserted})
 
 
 for _connector in ("github", "hris", "manual"):
