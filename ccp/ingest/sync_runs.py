@@ -29,6 +29,7 @@ class SyncRun:
     started_at: datetime
     finished_at: datetime
     error: str | None = None
+    error_kind: str | None = None  # auth, not_visible or fail, when the run failed (A-120)
 
     @property
     def error_class(self) -> str | None:
@@ -43,8 +44,8 @@ def record(db: ScopedDB, run: SyncRun, connection_id: str | None = None) -> None
     with db.transaction() as cur:
         cur.execute(
             "INSERT INTO sync_runs (run_id, tenant_id, connection_id, connector, source, status,"
-            " started_at, finished_at, events_landed, duplicates, error_class, error)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            " started_at, finished_at, events_landed, duplicates, error_class, error,"
+            " error_kind) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 run.run_id,
                 db.tenant.tenant_id,
@@ -58,6 +59,7 @@ def record(db: ScopedDB, run: SyncRun, connection_id: str | None = None) -> None
                 run.duplicates,
                 run.error_class,
                 (run.error or "")[:2000] or None,
+                run.error_kind,
             ),
         )
         for scope, outcome in run.scopes.items():
@@ -78,12 +80,12 @@ def record(db: ScopedDB, run: SyncRun, connection_id: str | None = None) -> None
 def recent(db: ScopedDB, limit: int = 20) -> list[dict[str, Any]]:
     """The tenant's latest runs, newest first, each with its scopes."""
     runs = db.fetch_all(
-        "SELECT run_id, connector, source, status, finished_at, events_landed, duplicates, error"
-        " FROM sync_runs ORDER BY finished_at DESC, run_id DESC LIMIT %s",
+        "SELECT run_id, connector, source, status, finished_at, events_landed, duplicates,"
+        " error, error_kind FROM sync_runs ORDER BY finished_at DESC, run_id DESC LIMIT %s",
         (limit,),
     )
     out: list[dict[str, Any]] = []
-    for run_id, connector, source, status, finished, landed, duplicates, error in runs:
+    for run_id, connector, source, status, finished, landed, duplicates, error, kind in runs:
         scopes = db.fetch_all(
             "SELECT scope, status, items, detail FROM sync_run_scopes WHERE run_id = %s"
             " ORDER BY scope",
@@ -99,6 +101,7 @@ def recent(db: ScopedDB, limit: int = 20) -> list[dict[str, Any]]:
                 "landed": landed,
                 "duplicates": duplicates,
                 "error": error,
+                "error_kind": kind,
                 "scopes": {s: {"status": st, "items": n, "detail": d} for s, st, n, d in scopes},
             }
         )

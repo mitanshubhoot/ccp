@@ -11,20 +11,24 @@ GET /repos/{full}/branches/{default}/protection; GET /repos/{full}/contents/SECU
 GET /repos/{full}/contents (top-level files, small text files inlined);
 POST /graphql for organizationVerifiedDomainEmails per member.
 
-Reliability (spec.md A-102): every request retries with backoff on 5xx and transport
-errors and waits out a rate limit (429, or 403 with no remaining quota) before trying
-again; any other error stops the pull. A 404 on a listing means "not visible", never
-"empty": the pull is marked incomplete. A failed email lookup raises. Snapshot ids are
-derived from content, so an unchanged re-pull lands no snapshot. The last event of every
-pull, `org.pull.completed`, is the pull's own (its id is new each time): it names the
-listings the pull saw whole and who was on them, and from it the normalizer settles every
-grant on those listings at the pull time (A-119): not listed is revoked, listed is still
-active, and listed again after a revocation is active again.
+Reliability (spec.md A-102, A-120): what a response means comes from the per-endpoint
+error table (`errors.py`), never from its status alone. A transient error retries with
+backoff and a rate limit waits for its reset; every request first spends a token from the
+tenant's bucket for the organization (`ccp.connectors.rate`). A read that is absent is a
+fact (an unprotected branch, an empty repository); one that is not visible is a gap that
+leaves its scope partial while the pull goes on; a refused credential stops the pull as an
+auth failure, and anything else unexpected stops it too. A failed email lookup raises.
+Snapshot ids are derived from content, so an unchanged re-pull lands no snapshot. The last
+event of every pull, `org.pull.completed`, is the pull's own (its id is new each time): it
+names the listings the pull saw whole and who was on them, and from it the normalizer
+settles every grant on those listings at the pull time (A-119): not listed is revoked,
+listed is still active, and listed again after a revocation is active again.
 """
 
 from __future__ import annotations
 
 import base64
+import enum
 import hashlib
 import json
 import random
@@ -36,7 +40,17 @@ from typing import Any
 
 import httpx
 
-from ccp.connectors.base import ConnectorName, SourceEvent, SourceKind, SyncReport, after
+from ccp.connectors import rate
+from ccp.connectors.base import (
+    ConnectorName,
+    PullError,
+    PullErrorKind,
+    SourceEvent,
+    SourceKind,
+    SyncReport,
+    after,
+)
+from ccp.connectors.github import errors
 from ccp.tenancy import TenantContext
 
 SCHEMA_VERSION = "github.v1"
@@ -48,23 +62,17 @@ query($login: String!, $org: String!) {
 """
 
 
-RETRY_STATUSES = frozenset({500, 502, 503, 504})
 MAX_ATTEMPTS = 5
 MAX_WAIT_SECONDS = 120.0
+# a connection's bucket: steady, well under GitHub's secondary limit of 900 REST points a
+# minute, and a reserve of the hourly quota left for the customer's other tools (A-120)
+RATE_PER_SECOND = 10.0
+BURST = 50
+QUOTA_RESERVE = 100
 
 
-def _rate_limit_wait(response: httpx.Response) -> float | None:
-    """Seconds to wait when the response is a rate limit, else None. GitHub signals one with
-    429, or with 403 and no remaining quota; Retry-After or the reset time says how long."""
-    limited = response.status_code == 429 or (
-        response.status_code == 403
-        and (
-            response.headers.get("x-ratelimit-remaining") == "0"
-            or "retry-after" in response.headers
-        )
-    )
-    if not limited:
-        return None
+def _rate_limit_wait(response: httpx.Response) -> float:
+    """How long a rate limit asks to wait: Retry-After, else until the reset, else a minute."""
     if "retry-after" in response.headers:
         return max(1.0, float(response.headers["retry-after"]))
     reset = response.headers.get("x-ratelimit-reset")
@@ -73,8 +81,20 @@ def _rate_limit_wait(response: httpx.Response) -> float | None:
     return 60.0
 
 
-class GitHubPullError(RuntimeError):
-    """The pull cannot be trusted: an error that retries did not clear."""
+class GitHubPullError(PullError):
+    """The pull cannot be trusted: an error that retries did not clear, or a response the
+    error table says stops the pull. Its kind is auth, not_visible or fail (A-120)."""
+
+
+class Gap(enum.Enum):
+    """A read with no body, by the error table: absent is a fact, not visible is a gap."""
+
+    ABSENT = "absent"
+    NOT_VISIBLE = "not_visible"
+
+
+ABSENT = Gap.ABSENT
+NOT_VISIBLE = Gap.NOT_VISIBLE
 
 
 def content_id(prefix: str, payload: dict[str, Any]) -> str:
@@ -97,6 +117,7 @@ class GitHubLiveConnector:
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], datetime] | None = None,
+        bucket: rate.RateBucket | None = None,
     ) -> None:
         self._client = httpx.Client(
             base_url=base_url,
@@ -110,7 +131,9 @@ class GitHubLiveConnector:
         )
         self._sleep = sleep
         self._clock = clock or (lambda: datetime.now(UTC))
-        self.incomplete: list[str] = []  # listings this pull could not see in full
+        self._given_bucket = bucket
+        self._bucket: rate.RateBucket | None = bucket  # else the tenant's, chosen per pull
+        self.incomplete: list[str] = []  # what this pull could not see: path and reason
 
     def pull(
         self,
@@ -125,46 +148,67 @@ class GitHubLiveConnector:
 
     # -- helpers -------------------------------------------------------------------
 
-    def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        """One request with retries: 5xx and transport errors back off exponentially with
-        jitter; a rate limit waits for its reset (capped); anything else returns."""
+    def _request(
+        self, method: str, path: str, endpoint: str, **kwargs: Any
+    ) -> tuple[httpx.Response, errors.Meaning, str]:
+        """One request with retries, by what the error table says the response means: retry
+        backs off exponentially with jitter, rate_limited waits for the reset (capped), and
+        any other meaning returns. Every attempt first spends from the connection's bucket."""
         last = ""
         for attempt in range(1, MAX_ATTEMPTS + 1):
             wait = min(MAX_WAIT_SECONDS, 2.0 ** (attempt - 1)) * random.uniform(1.0, 1.5)  # noqa: S311
+            if self._bucket is not None:
+                self._bucket.take(self._sleep)
             try:
                 response = self._client.request(method, path, **kwargs)
             except httpx.TransportError as exc:
                 last = f"{type(exc).__name__}: {exc}"
             else:
-                limited = _rate_limit_wait(response)
-                if limited is not None:
-                    last, wait = f"rate limited ({response.status_code})", limited
-                elif response.status_code in RETRY_STATUSES:
-                    last = f"HTTP {response.status_code}"
+                self._observe_quota(response)
+                meaning, why = errors.classify(endpoint, response)
+                if meaning == "rate_limited":
+                    last, wait = why, _rate_limit_wait(response)
+                elif meaning == "retry":
+                    last = why
                 else:
-                    return response
+                    return response, meaning, why
             if attempt < MAX_ATTEMPTS:
                 self._sleep(min(wait, MAX_WAIT_SECONDS))
         raise GitHubPullError(f"{method} {path}: gave up after {MAX_ATTEMPTS} attempts ({last})")
 
-    def _get(self, path: str, *, optional: bool = False, **params: Any) -> Any:
-        """A 404 on an optional resource (branch protection, SECURITY.md, a file) is "not
-        there"; on a listing it is "not visible to this token", so the pull is incomplete."""
-        response = self._request("GET", path, params=params or None)
-        if response.status_code == 404:
-            if not optional:
-                self.incomplete.append(f"404 {path}")
-            return None
-        if response.status_code >= 400:
-            raise GitHubPullError(f"GET {path}: HTTP {response.status_code}")
-        return response.json()
+    def _observe_quota(self, response: httpx.Response) -> None:
+        """GitHub's own count of the hourly quota left holds the bucket near the end."""
+        remaining = response.headers.get("x-ratelimit-remaining")
+        reset = response.headers.get("x-ratelimit-reset")
+        if self._bucket is None or remaining is None or reset is None:
+            return
+        try:
+            self._bucket.observe(int(remaining), float(reset) - time.time())
+        except ValueError:
+            return
 
-    def _paginate(self, path: str, **params: Any) -> list[dict[str, Any]]:
+    def _get(self, path: str, endpoint: str, **params: Any) -> Any:
+        """The body when the read is ok; ABSENT, or NOT_VISIBLE with its gap recorded, by the
+        error table; a refused credential or anything unexpected raises (A-120)."""
+        response, meaning, why = self._request("GET", path, endpoint, params=params or None)
+        if meaning == "ok":
+            return response.json()
+        if meaning == "absent":
+            return ABSENT
+        if meaning == "not_visible":
+            self.incomplete.append(f"{response.status_code} {path}: {why}")
+            return NOT_VISIBLE
+        kind: PullErrorKind = "auth" if meaning == "auth" else "fail"
+        raise GitHubPullError(f"GET {path}: HTTP {response.status_code} ({why})", kind)
+
+    def _paginate(self, path: str, endpoint: str, **params: Any) -> list[dict[str, Any]]:
+        """Every page of a listing; a page not visible ends it with its gap recorded, so the
+        caller can tell the listing is not whole."""
         items: list[dict[str, Any]] = []
         page = 1
         while True:
-            batch = self._get(path, per_page=100, page=page, **params)
-            if not batch:
+            batch = self._get(path, endpoint, per_page=100, page=page, **params)
+            if not isinstance(batch, list) or not batch:
                 break
             items.extend(batch)
             if len(batch) < 100:
@@ -175,15 +219,17 @@ class GitHubLiveConnector:
     def _verified_emails(self, login: str, org: str) -> list[str]:
         """A failed lookup raises (A-102): reading it as "no emails" would make an account
         look unlinkable to its person."""
-        response = self._request(
+        response, meaning, why = self._request(
             "POST",
             "/graphql",
+            errors.GRAPHQL,
             json={"query": _VERIFIED_EMAILS_QUERY, "variables": {"login": login, "org": org}},
         )
-        body = response.json() if response.status_code == 200 else {}
-        if response.status_code != 200 or body.get("errors"):
-            detail = body.get("errors") or f"HTTP {response.status_code}"
-            raise GitHubPullError(f"verified-email lookup for {login!r} failed: {detail}")
+        body = response.json() if meaning == "ok" else {}
+        if meaning != "ok" or body.get("errors"):
+            detail = body.get("errors") or f"HTTP {response.status_code} ({why})"
+            kind: PullErrorKind = "auth" if meaning == "auth" else "fail"
+            raise GitHubPullError(f"verified-email lookup for {login!r} failed: {detail}", kind)
         data = body.get("data") or {}
         user = data.get("user") or {}
         emails = user.get("organizationVerifiedDomainEmails") or []
@@ -202,6 +248,11 @@ class GitHubLiveConnector:
         org = tenant.settings.github_org
         snapshot_ts = self._now()
         self.incomplete = []  # this pull's gaps only, whatever an earlier pull saw
+        self._bucket = self._given_bucket or rate.bucket_for(
+            tenant.tenant_id,
+            f"github:{org}",
+            lambda: rate.RateBucket(RATE_PER_SECOND, BURST, QUOTA_RESERVE),
+        )
 
         def event(
             event_type: str, source_event_id: str, ts: str, payload: dict[str, Any]
@@ -216,16 +267,21 @@ class GitHubLiveConnector:
                 schema_version=SCHEMA_VERSION,
             )
 
-        org_obj = self._get(f"/orgs/{org}")
-        if org_obj is None:
-            raise LookupError(f"GitHub organization {org!r} not found or token lacks access")
+        org_obj = self._get(f"/orgs/{org}", errors.ORG)
+        if not isinstance(org_obj, dict):
+            raise GitHubPullError(
+                f"GitHub organization {org!r} does not exist or this credential cannot see it",
+                "not_visible",
+            )
         org_updated = org_obj.get("updated_at") or snapshot_ts
         yield event("org.snapshot", content_id(org_obj["node_id"], org_obj), org_updated, org_obj)
         if report is not None:
             report.complete("org", 1)
 
-        admins = {m["login"] for m in self._paginate(f"/orgs/{org}/members", role="admin")}
-        members = self._paginate(f"/orgs/{org}/members", role="all")
+        admins = {
+            m["login"] for m in self._paginate(f"/orgs/{org}/members", errors.MEMBERS, role="admin")
+        }
+        members = self._paginate(f"/orgs/{org}/members", errors.MEMBERS, role="all")
         if report is not None:
             hidden = self._gaps(f"/orgs/{org}/members")
             if hidden:
@@ -248,13 +304,14 @@ class GitHubLiveConnector:
                 "org.member.snapshot", content_id(member["node_id"], payload), snapshot_ts, payload
             )
 
-        repos = self._paginate(f"/orgs/{org}/repos", type="all")
+        repos = self._paginate(f"/orgs/{org}/repos", errors.REPOS, type="all")
         repos_hidden = self._gaps(f"/orgs/{org}/repos")
         if report is not None:
             if repos_hidden:
                 report.mark("repos", "not_visible", 0, "; ".join(repos_hidden))
             else:
                 report.complete("repos", len(repos))
+        settings_hidden: list[str] = []  # repositories with a setting this pull could not read
         for repo in repos:
             full = repo["full_name"]
             node_id = repo["node_id"]
@@ -267,7 +324,9 @@ class GitHubLiveConnector:
                     "type": c.get("type", "User"),
                     "permission": c.get("role_name") or c.get("permissions", {}),
                 }
-                for c in self._paginate(f"/repos/{full}/collaborators", affiliation="direct")
+                for c in self._paginate(
+                    f"/repos/{full}/collaborators", errors.COLLABORATORS, affiliation="direct"
+                )
             ]
             if len(self.incomplete) == gaps_before:  # this repo's collaborators seen in full
                 seen_collaborators[node_id] = sorted(c["node_id"] for c in collaborators)
@@ -283,36 +342,42 @@ class GitHubLiveConnector:
             }
             yield event("repo.snapshot", content_id(node_id, repo_payload), updated, repo_payload)
 
+            hidden_here: list[str] = []
             protection = self._get(
                 f"/repos/{full}/branches/{repo_payload['default_branch']}/protection",
-                optional=True,
+                errors.PROTECTION,
             )
-            protection_payload: dict[str, Any] = {
-                "org": org,
-                "repo": repo["name"],
-                "repo_node_id": node_id,
-                "branch": repo_payload["default_branch"],
-                "protected": protection is not None,
-                "updated_at": snapshot_ts,
-            }
-            if protection is not None:
-                protection_payload.update(
-                    {
-                        "required_pull_request_reviews": protection.get(
-                            "required_pull_request_reviews"
-                        ),
-                        "enforce_admins": protection.get("enforce_admins"),
-                    }
+            if protection is NOT_VISIBLE:  # no fact either way: GH-3 abstains
+                hidden_here.append("branch protection")
+            else:
+                protection_payload: dict[str, Any] = {
+                    "org": org,
+                    "repo": repo["name"],
+                    "repo_node_id": node_id,
+                    "branch": repo_payload["default_branch"],
+                    "protected": isinstance(protection, dict),
+                    "updated_at": snapshot_ts,
+                }
+                if isinstance(protection, dict):
+                    protection_payload.update(
+                        {
+                            "required_pull_request_reviews": protection.get(
+                                "required_pull_request_reviews"
+                            ),
+                            "enforce_admins": protection.get("enforce_admins"),
+                        }
+                    )
+                yield event(
+                    "repo.branch_protection.snapshot",
+                    content_id(f"{node_id}:protection", protection_payload),
+                    snapshot_ts,
+                    protection_payload,
                 )
-            yield event(
-                "repo.branch_protection.snapshot",
-                content_id(f"{node_id}:protection", protection_payload),
-                snapshot_ts,
-                protection_payload,
-            )
 
-            security = self._get(f"/repos/{full}/contents/SECURITY.md", optional=True)
-            if security is not None and security.get("content"):
+            security = self._get(f"/repos/{full}/contents/SECURITY.md", errors.FILE)
+            if security is NOT_VISIBLE:
+                hidden_here.append("SECURITY.md")
+            elif isinstance(security, dict) and security.get("content"):
                 content = base64.b64decode(security["content"]).decode("utf-8", errors="replace")
                 policy = {
                     "org": org,
@@ -330,11 +395,13 @@ class GitHubLiveConnector:
                     policy,
                 )
 
-            listing = self._get(f"/repos/{full}/contents", optional=True)  # empty repo: 404
-            if listing:
+            listing = self._get(f"/repos/{full}/contents", errors.CONTENTS)
+            if listing is NOT_VISIBLE:
+                hidden_here.append("files")
+            else:
                 files: list[dict[str, Any]] = []
                 not_listed: list[dict[str, Any]] = []  # GH-5 cannot pass over these (A-96)
-                for item in listing:
+                for item in listing if isinstance(listing, list) else []:  # absent: no files
                     if item.get("type") != "file":
                         not_listed.append({"path": item.get("path"), "type": item.get("type")})
                         continue
@@ -344,11 +411,13 @@ class GitHubLiveConnector:
                         "size": item["size"],
                     }
                     if item["size"] <= _MAX_INLINE_FILE_BYTES:
-                        blob = self._get(f"/repos/{full}/contents/{item['path']}", optional=True)
-                        if blob and blob.get("content"):
+                        blob = self._get(f"/repos/{full}/contents/{item['path']}", errors.FILE)
+                        if isinstance(blob, dict) and blob.get("content"):
                             entry["content"] = base64.b64decode(blob["content"]).decode(
                                 "utf-8", errors="replace"
                             )
+                        elif blob is NOT_VISIBLE:  # not inlined, so GH-5 cannot pass over it
+                            hidden_here.append(f"file {item['path']}")
                     files.append(entry)
                 listing_payload = {
                     "org": org,
@@ -364,24 +433,37 @@ class GitHubLiveConnector:
                     snapshot_ts,
                     listing_payload,
                 )
+            if hidden_here:
+                settings_hidden.append(f"{full}: {', '.join(hidden_here)} not visible")
 
         if report is not None:
             listed = len(seen_collaborators)
             if repos_hidden:
                 report.mark("collaborators", "not_visible", 0, "the repositories are not visible")
-            elif listed == len(repos):
-                report.complete("collaborators", listed)
-            elif listed:
-                report.mark(
-                    "collaborators",
-                    "partial",
-                    listed,
-                    f"{len(repos) - listed} of {len(repos)} repositories' collaborators not"
-                    " visible",
-                )
+                report.mark("repo_settings", "not_visible", 0, "the repositories are not visible")
             else:
-                report.mark("collaborators", "not_visible", 0, "; ".join(self._gaps("/repos/")))
-            report.complete("repo_settings", len(repos))
+                if listed == len(repos):
+                    report.complete("collaborators", listed)
+                elif listed:
+                    report.mark(
+                        "collaborators",
+                        "partial",
+                        listed,
+                        f"{len(repos) - listed} of {len(repos)} repositories' collaborators"
+                        " not visible",
+                    )
+                else:
+                    gaps = "; ".join(self._gaps("/collaborators"))
+                    report.mark("collaborators", "not_visible", 0, gaps)
+                if settings_hidden:
+                    report.mark(
+                        "repo_settings",
+                        "partial",
+                        len(repos) - len(settings_hidden),
+                        "; ".join(settings_hidden),
+                    )
+                else:
+                    report.complete("repo_settings", len(repos))
         completed = {
             "org": org,
             "complete": not self.incomplete,

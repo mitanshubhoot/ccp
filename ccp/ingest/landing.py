@@ -19,7 +19,15 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from ccp.config import Settings
-from ccp.connectors.base import Connector, ConnectorName, SourceEvent, SourceKind, SyncReport
+from ccp.connectors.base import (
+    Connector,
+    ConnectorName,
+    PullError,
+    PullErrorKind,
+    SourceEvent,
+    SourceKind,
+    SyncReport,
+)
 from ccp.connectors.registry import CONNECTOR_NAMES, build_connector
 from ccp.ingest import event_log, sync_runs
 from ccp.ingest.partition import partition_key
@@ -113,6 +121,7 @@ def sync_connector(
     """One connector's pull, landed and recorded as a sync run (A-118). Never raises for the
     pull's own failures: they end the run as failed, with the error's class."""
     report = SyncReport(connector.scopes)
+    kind: PullErrorKind | None = None
     tally = Tally()
     started = datetime.now(UTC)
     with steps.step(
@@ -131,7 +140,8 @@ def sync_connector(
             )
         except Exception as exc:  # this connector's run fails; the others still run
             report.error = f"{type(exc).__name__}: {exc}"
-            s.event(f"sync_failed:{connector.name}:{type(exc).__name__}")
+            kind = _kind(exc)
+            s.event(f"sync_failed:{connector.name}:{kind}:{type(exc).__name__}")
         run = SyncRun(
             run_id=sync_runs.new_run_id(),
             connector=connector.name,
@@ -143,6 +153,7 @@ def sync_connector(
             started_at=started,
             finished_at=datetime.now(UTC),
             error=report.error,
+            error_kind=kind,
         )
         sync_runs.record(db, run, connection_id)
         s.set_output(
@@ -154,6 +165,11 @@ def sync_connector(
             }
         )
     return run
+
+
+def _kind(exc: Exception) -> PullErrorKind:
+    """Why a pull stopped, in the error table's terms (A-120); anything unnamed is a fail."""
+    return exc.kind if isinstance(exc, PullError) else "fail"
 
 
 def _failed_to_start(db: ScopedDB, name: str, source: str, exc: Exception) -> SyncRun:
@@ -171,6 +187,7 @@ def _failed_to_start(db: ScopedDB, name: str, source: str, exc: Exception) -> Sy
         started_at=now,
         finished_at=now,
         error=f"{type(exc).__name__}: {exc}",
+        error_kind=_kind(exc),
     )
     sync_runs.record(db, run)
     return run

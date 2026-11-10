@@ -30,6 +30,17 @@ ConnectorName = Literal["github", "hris", "manual"]
 SourceKind = Literal["fixture", "live"]
 ScopeStatus = Literal["complete", "partial", "not_visible", "failed"]
 RunStatus = Literal["complete", "partial", "failed"]
+PullErrorKind = Literal["auth", "not_visible", "fail"]
+
+
+class PullError(RuntimeError):
+    """A pull that cannot go on. Its kind says why, in the error table's terms (A-120): the
+    credential was refused (auth), the source is hidden from it (not_visible), or anything
+    else (fail). The sync run it ends records the kind."""
+
+    def __init__(self, message: str, kind: PullErrorKind = "fail") -> None:
+        super().__init__(message)
+        self.kind: PullErrorKind = kind
 
 
 @dataclass(frozen=True)

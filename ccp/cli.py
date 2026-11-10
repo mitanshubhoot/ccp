@@ -578,6 +578,7 @@ def ingest_runs(
         typer.echo(
             f"{run['finished_at'].isoformat()} {run['connector']:<8} {run['source']:<8}"
             f" {run['status']:<8} landed {run['landed']}"
+            + (f"  {run['error_kind']}: {run['error']}" if run["error"] else "")
         )
         for scope, outcome in run["scopes"].items():
             detail = f"  {outcome['detail']}" if outcome["detail"] else ""

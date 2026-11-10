@@ -146,4 +146,22 @@ def test_a_connector_that_cannot_be_built_is_a_recorded_failed_run(
     summary = ingest_tenant(settings, acme, acme.tenant, connectors=("hris",), source="live")
     (run,) = summary.runs
     assert run.status == "failed" and run.error_class == "RuntimeError" and run.scopes == {}
+    assert run.error_kind == "fail"
     assert sync_runs.recent(acme, 1)[0]["status"] == "failed"
+
+
+def test_a_refused_credential_is_recorded_as_an_auth_failure(
+    own: tuple[Settings, ScopedDB],
+) -> None:
+    """A-120: the run says why it failed, in the error table's terms, for connection health."""
+    settings, acme = own
+    refused = {"/orgs/acme-example/members": [httpx.Response(401, json={"message": "Bad creds"})]}
+    handler, _ = _api(["ana"], overrides=refused)
+    connector = GitHubLiveConnector(
+        "t", transport=httpx.MockTransport(handler), sleep=lambda s: None
+    )
+    run = sync_connector(settings, acme, acme.tenant, connector)
+    assert (run.status, run.error_kind, run.error_class) == ("failed", "auth", "GitHubPullError")
+    assert run.scopes["org"].status == "complete" and run.scopes["members"].status == "failed"
+    latest = sync_runs.recent(acme, 1)[0]
+    assert (latest["status"], latest["error_kind"]) == ("failed", "auth")

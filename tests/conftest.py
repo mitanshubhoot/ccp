@@ -22,6 +22,15 @@ from ccp.storage.db import app_pool, scratch_database
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def _full_rate_buckets() -> Iterator[None]:
+    """Every test starts with full rate buckets: the registry is per process (A-120)."""
+    from ccp.connectors import rate
+
+    rate.reset()
+    yield
+
+
 @pytest.fixture(scope="session")
 def base_settings(tmp_path_factory: pytest.TempPathFactory) -> Settings:
     data_dir = tmp_path_factory.mktemp("ccp-data")
