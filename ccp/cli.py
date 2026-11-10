@@ -895,3 +895,14 @@ def db_check() -> None:
     """Connect as the application role and print what the server looks like."""
     for key, value in db.check(_settings()).items():
         typer.echo(f"{key}: {value}")
+
+
+@db_app.command("lint")
+def db_lint() -> None:
+    """The row-level security catalogue lint (A-99). Exit 1 on any finding."""
+    findings = db.lint_catalogue(_settings())
+    for finding in findings:
+        typer.echo(str(finding))
+    if findings:
+        raise typer.Exit(1)
+    typer.echo("every tenant table is forced under its tenant policy and classified")

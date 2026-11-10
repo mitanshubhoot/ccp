@@ -8,9 +8,8 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
-from langgraph.checkpoint.postgres import PostgresSaver
 from ulid import ULID
 
 from ccp.agent import core, threads
@@ -93,7 +92,8 @@ def _build(
         forbidden_tokens=other_tenant_tokens(settings, db.tenant.tenant_id),
     )
     pool = checkpoints.saver_pool(settings, db.tenant)
-    return core.build_graph(spec, PostgresSaver(cast(Any, pool))), pool, tracker
+    saver = checkpoints.tenant_saver(pool, db.tenant)
+    return core.build_graph(spec, saver), pool, tracker
 
 
 def _run(

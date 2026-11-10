@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import psycopg
 from psycopg import sql
@@ -130,6 +131,16 @@ def scratch_database(settings: Settings, prefix: str = "ccp_scratch") -> Iterato
     finally:
         admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
         admin.close()
+
+
+def lint_catalogue(settings: Settings) -> list[Any]:
+    """The row-level security catalogue lint (ccp/storage/lint.py), as the admin role: only
+    the migration runner reaches the admin URL."""
+    from ccp.storage.lint import lint
+
+    role, _ = app_role_and_password(settings)
+    with psycopg.connect(settings.database_admin_url) as conn:
+        return list(lint(conn, role))
 
 
 def check(settings: Settings) -> dict[str, str]:

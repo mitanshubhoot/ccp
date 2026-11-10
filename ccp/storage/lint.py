@@ -1,0 +1,143 @@
+"""The row-level security catalogue lint (spec.md A-99), run against a migrated database.
+
+For every table that holds tenant data (a `tenant_id` column in `public`, or the saver's
+`thread_id` tables in `checkpoints`) it checks that
+  1. row-level security is enabled and forced, so even the owner is filtered;
+  2. there is exactly one policy, `tenant_isolation`, filtering both reads and writes on the
+     tenant (another permissive policy would be OR-ed with it and open the table);
+  3. an insert-only table grants the application role no UPDATE or DELETE;
+  4. the table is classified: insert-only or operational. A new table that is neither fails
+     the lint until someone decides which it is.
+A deliberately permissive policy (`USING (true)`) is its negative control in the tests.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+import psycopg
+
+TENANT_PREDICATE = "(tenant_id = app_tenant())"
+THREAD_PREDICATE = "(split_part(thread_id, ':'::text, 1) = app_tenant())"
+
+# Audit and append-only data: corrections are new rows, never edits.
+INSERT_ONLY: frozenset[str] = frozenset(
+    {
+        "raw_events",
+        "dead_letter",
+        "dead_letter_replays",
+        "persons",
+        "access_grants",
+        "assets",
+        "evidence",
+        "vendors",
+        "findings",
+        "resolution_decisions",
+        "person_links",
+        "review_queue",
+        "review_resolutions",
+        "verdicts",
+        "compliance_state",
+        "spend_ledger",
+        "embedding_cache",
+        "enrichment_cache",
+        "approvals",
+        "approval_events",
+        "investigations",
+        "gap_reports",
+        "policy_drafts",
+        "copilot_answers",
+        "review_labels",
+    }
+)
+# Operational state that is updated in place by design.
+OPERATIONAL: frozenset[str] = frozenset(
+    {
+        "event_log",
+        "tenant_sequences",
+        "chunks",
+        "agent_threads",
+        "remediation_proposals",
+        "ordered_failures",
+        "checkpoints.checkpoints",
+        "checkpoints.checkpoint_blobs",
+        "checkpoints.checkpoint_writes",
+    }
+)
+
+
+@dataclass(frozen=True)
+class Finding:
+    table: str
+    problem: str
+
+    def __str__(self) -> str:
+        return f"{self.table}: {self.problem}"
+
+
+def _tenant_tables(cur: psycopg.Cursor[Any]) -> list[tuple[str, str, bool, bool]]:
+    """(qualified name, the column it is scoped by, rls enabled, rls forced)."""
+    rows = cur.execute(
+        "SELECT CASE WHEN n.nspname = 'public' THEN c.relname"
+        "            ELSE n.nspname || '.' || c.relname END,"
+        "       a.attname, c.relrowsecurity, c.relforcerowsecurity"
+        " FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+        " JOIN pg_attribute a ON a.attrelid = c.oid AND NOT a.attisdropped"
+        " WHERE c.relkind IN ('r', 'p')"
+        "   AND ((n.nspname = 'public' AND a.attname = 'tenant_id')"
+        "     OR (n.nspname = 'checkpoints' AND a.attname = 'thread_id'))"
+        " ORDER BY 1"
+    ).fetchall()
+    return [(str(r[0]), str(r[1]), bool(r[2]), bool(r[3])) for r in rows]
+
+
+def _policies(cur: psycopg.Cursor[Any], table: str) -> list[tuple[str, str, str, str | None]]:
+    schema, _, name = table.rpartition(".")
+    rows = cur.execute(
+        "SELECT policyname, permissive, coalesce(qual, ''), with_check FROM pg_policies"
+        " WHERE schemaname = %s AND tablename = %s",
+        (schema or "public", name),
+    ).fetchall()
+    return [(str(r[0]), str(r[1]), str(r[2]), r[3]) for r in rows]
+
+
+def lint(conn: psycopg.Connection[Any], app_role: str) -> list[Finding]:
+    findings: list[Finding] = []
+    with conn.cursor() as cur:
+        for table, column, enabled, forced in _tenant_tables(cur):
+            if not (enabled and forced):
+                findings.append(Finding(table, "row-level security is not enabled and forced"))
+            predicate = TENANT_PREDICATE if column == "tenant_id" else THREAD_PREDICATE
+            policies = _policies(cur, table)
+            if [p[0] for p in policies] != ["tenant_isolation"]:
+                findings.append(
+                    Finding(
+                        table,
+                        f"policies {sorted(p[0] for p in policies)} are not exactly"
+                        " ['tenant_isolation']",
+                    )
+                )
+            for name, permissive, qual, check in policies:
+                if name != "tenant_isolation":
+                    continue
+                if permissive != "PERMISSIVE" or qual != predicate or check != predicate:
+                    findings.append(
+                        Finding(
+                            table,
+                            f"tenant_isolation filters {qual!r} / {check!r}, not"
+                            f" {predicate!r} on both reads and writes",
+                        )
+                    )
+            if table in INSERT_ONLY:
+                for privilege in ("UPDATE", "DELETE"):
+                    row = cur.execute(
+                        "SELECT has_table_privilege(%s, %s, %s)", (app_role, table, privilege)
+                    ).fetchone()
+                    if row is not None and row[0]:
+                        findings.append(Finding(table, f"insert-only, yet {privilege} is granted"))
+            elif table not in OPERATIONAL:
+                findings.append(
+                    Finding(table, "unclassified: add it to INSERT_ONLY or OPERATIONAL")
+                )
+    return findings

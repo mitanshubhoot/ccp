@@ -37,7 +37,7 @@ def put_embeddings(db: ScopedDB, model: str, entries: Mapping[str, Sequence[floa
         for key, vector in entries.items():
             cur.execute(
                 "INSERT INTO embedding_cache (cache_key, tenant_id, embed_model, embedding)"
-                " VALUES (%s, %s, %s, %s::vector) ON CONFLICT (cache_key) DO NOTHING",
+                " VALUES (%s, %s, %s, %s::vector) ON CONFLICT (tenant_id, cache_key) DO NOTHING",
                 (key, db.tenant.tenant_id, model, vector_literal(vector)),
             )
 
@@ -50,6 +50,6 @@ def get_enrichment(db: ScopedDB, key: str) -> str | None:
 def put_enrichment(db: ScopedDB, key: str, model: str, prompt_version: str, context: str) -> None:
     db.execute(
         "INSERT INTO enrichment_cache (cache_key, tenant_id, model, prompt_version, context)"
-        " VALUES (%s, %s, %s, %s, %s) ON CONFLICT (cache_key) DO NOTHING",
+        " VALUES (%s, %s, %s, %s, %s) ON CONFLICT (tenant_id, cache_key) DO NOTHING",
         (key, db.tenant.tenant_id, model, prompt_version, context),
     )

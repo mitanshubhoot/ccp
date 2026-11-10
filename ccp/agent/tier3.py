@@ -14,7 +14,7 @@ separate process resumes it later from the decision recorded on that item (A-95)
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command
@@ -72,7 +72,7 @@ def _build(
         db.tenant, spec, tools, deps, now=now, retrieval=providers.retrieval
     )
     pool = checkpoints.saver_pool(settings, db.tenant)
-    saver = PostgresSaver(cast(Any, pool))
+    saver = checkpoints.tenant_saver(pool, db.tenant)
     return core.build_graph(graph_spec, saver), saver, pool, tracker
 
 

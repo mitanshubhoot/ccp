@@ -11,9 +11,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import TracebackType
-from typing import Any, cast
+from typing import Any
 
-from langgraph.checkpoint.postgres import PostgresSaver
 from ulid import ULID
 
 from ccp.agent import core, threads
@@ -154,7 +153,7 @@ class Session:
             config=self.config,
             known_tests=self.known_tests,
         )
-        return core.build_graph(spec, PostgresSaver(cast(Any, self.pool)))
+        return core.build_graph(spec, checkpoints.tenant_saver(self.pool, self.db.tenant))
 
     def ask(
         self,

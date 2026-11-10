@@ -2,17 +2,23 @@
 
     migration runner (admin)     setup_checkpoint_tables(): PostgresSaver.setup() with
                                  search_path=checkpoints, then FORCE RLS + a thread_id policy
-    tier 3 wrapper (app role)    saver_pool(settings, tenant): a psycopg pool whose sessions
-                                 carry search_path=checkpoints and app.tenant_id=<tenant>, so
-                                 every saver query is scoped without a SET LOCAL per statement
+    graphs (app role)            saver_pool(settings, tenant): a psycopg pool whose sessions
+                                 carry search_path=checkpoints and nothing else;
+                                 tenant_saver(pool, tenant): every saver statement runs in a
+                                 transaction that sets app.tenant_id locally first (A-99), so
+                                 no session ever carries a tenant a later statement could reuse
 
 LangGraph owns the tables' shape; they carry `thread_id`, and every thread id this code
-mints starts with the tenant id, so the policy is `thread_id LIKE app_tenant() || ':%'`.
+mints starts with the tenant id, so the policy compares that prefix exactly:
+`split_part(thread_id, ':', 1) = app_tenant()`. (It once used LIKE, where `_` and `%`
+in a tenant id are wildcards; the A-99 lint found the pattern.)
 """
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any, cast
 
 import psycopg
 from psycopg import sql
@@ -56,17 +62,15 @@ def setup_checkpoint_tables(admin_url: str, app_role: str) -> None:
             conn.execute(
                 sql.SQL(
                     "CREATE POLICY tenant_isolation ON {} USING"
-                    " (thread_id LIKE public.app_tenant() || ':%%')"
-                    " WITH CHECK (thread_id LIKE public.app_tenant() || ':%%')"
+                    " (split_part(thread_id, ':', 1) = public.app_tenant())"
+                    " WITH CHECK (split_part(thread_id, ':', 1) = public.app_tenant())"
                 ).format(table)
             )
 
 
 def saver_conninfo(settings: Settings, tenant: TenantContext) -> str:
-    return make_conninfo(
-        settings.database_url,
-        options=f"-c search_path={SCHEMA} -c app.tenant_id={tenant.tenant_id}",
-    )
+    """The saver's connections set no tenant themselves; each transaction does."""
+    return make_conninfo(settings.database_url, options=f"-c search_path={SCHEMA}")
 
 
 def saver_pool(settings: Settings, tenant: TenantContext, *, max_size: int = 4) -> ConnectionPool:
@@ -78,6 +82,28 @@ def saver_pool(settings: Settings, tenant: TenantContext, *, max_size: int = 4) 
         open=True,
         kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
     )
+
+
+def tenant_saver(pool: ConnectionPool, tenant: TenantContext) -> Any:
+    """A PostgresSaver whose every statement runs in a transaction that first sets
+    app.tenant_id for that transaction only (A-99)."""
+    from langgraph.checkpoint.postgres import PostgresSaver, _internal
+    from psycopg import Cursor
+    from psycopg.rows import DictRow
+
+    class TenantSaver(PostgresSaver):
+        @contextmanager
+        def _cursor(self, *, pipeline: bool = False) -> Iterator[Cursor[DictRow]]:
+            with (
+                self.lock,
+                _internal.get_connection(self.conn) as conn,
+                conn.transaction(),
+                conn.cursor(binary=True, row_factory=dict_row) as cur,
+            ):
+                cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant.tenant_id,))
+                yield cur
+
+    return TenantSaver(cast(Any, pool))
 
 
 def thread_id_for(tenant: TenantContext, test_id: str, subject_key: str, run_id: str) -> str:

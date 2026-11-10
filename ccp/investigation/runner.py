@@ -9,10 +9,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 import psycopg
-from langgraph.checkpoint.postgres import PostgresSaver
 from ulid import ULID
 
 from ccp.agent import core, threads
@@ -62,7 +61,8 @@ def _build(
     deps = core.ModelDeps(providers.llm, settings.investigator_model, tracker, reasoning=True)
     spec = graph_module.build_spec(db.tenant, tools, deps, now=now)
     pool = checkpoints.saver_pool(settings, db.tenant)
-    return core.build_graph(spec, PostgresSaver(cast(Any, pool))), pool, tracker
+    saver = checkpoints.tenant_saver(pool, db.tenant)
+    return core.build_graph(spec, saver), pool, tracker
 
 
 def investigate(

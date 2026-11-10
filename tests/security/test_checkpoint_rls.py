@@ -73,19 +73,28 @@ def test_raw_read_of_another_tenants_thread_is_empty_and_unscoped_raises(
             conn.execute("SELECT count(*) FROM checkpoints").fetchone()
 
 
-def test_saver_pool_sessions_carry_the_tenant_and_the_schema(
+def test_saver_sessions_carry_the_schema_and_each_transaction_the_tenant(
     world: tuple[Settings, dict[str, ScopedDB]],
 ) -> None:
+    """A-99: the session carries no tenant; the saver sets it per transaction."""
     settings, dbs = world
     pool = checkpoints.saver_pool(settings, dbs["globex"].tenant, max_size=1)
     try:
         with pool.connection() as conn:
-            assert conn.execute("SHOW app.tenant_id").fetchone() == {"app.tenant_id": "globex"}
+            unset = conn.execute(
+                "SELECT current_setting('app.tenant_id', true) AS tenant"
+            ).fetchone()
+            assert unset is not None and not unset["tenant"]
             path = conn.execute("SHOW search_path").fetchone()
             assert path is not None and "checkpoints" in str(path["search_path"])
-            ids = [
-                r["thread_id"] for r in conn.execute("SELECT thread_id FROM checkpoints").fetchall()
-            ]
+            with pytest.raises(psycopg.Error):  # no tenant: the policy refuses to answer
+                conn.execute("SELECT thread_id FROM checkpoints").fetchall()
+            with conn.transaction():
+                conn.execute("SELECT set_config('app.tenant_id', 'globex', true)")
+                ids = [
+                    r["thread_id"]
+                    for r in conn.execute("SELECT thread_id FROM checkpoints").fetchall()
+                ]
             assert ids and all(i.startswith("globex:") for i in ids)
     finally:
         pool.close()
