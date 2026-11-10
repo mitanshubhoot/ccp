@@ -72,7 +72,7 @@ class NormalizeConsumer(OrderedConsumer):
         ) as s:
             result = map_event(event)
             entities = list(result.entities)
-            if event.event_type == "org.pull.completed":  # absences as revocations (A-102)
+            if event.event_type == "org.pull.completed":  # settle its listings (A-119)
                 entities += revocations.from_complete_pull(cur, event)
             inserted = 0
             for entity in entities:

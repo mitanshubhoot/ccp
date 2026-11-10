@@ -15,9 +15,11 @@ Reliability (spec.md A-102): every request retries with backoff on 5xx and trans
 errors and waits out a rate limit (429, or 403 with no remaining quota) before trying
 again; any other error stops the pull. A 404 on a listing means "not visible", never
 "empty": the pull is marked incomplete. A failed email lookup raises. Snapshot ids are
-derived from content, so an unchanged re-pull lands nothing. The last event of every pull,
-`org.pull.completed`, says whether the pull saw everything; only a complete pull lets the
-normalizer read a missing member or collaborator as a revocation.
+derived from content, so an unchanged re-pull lands no snapshot. The last event of every
+pull, `org.pull.completed`, is the pull's own (its id is new each time): it names the
+listings the pull saw whole and who was on them, and from it the normalizer settles every
+grant on those listings at the pull time (A-119): not listed is revoked, listed is still
+active, and listed again after a revocation is active again.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ import hashlib
 import json
 import random
 import time
+import uuid
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -93,6 +96,7 @@ class GitHubLiveConnector:
         base_url: str = "https://api.github.com",
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._client = httpx.Client(
             base_url=base_url,
@@ -105,6 +109,7 @@ class GitHubLiveConnector:
             transport=transport,
         )
         self._sleep = sleep
+        self._clock = clock or (lambda: datetime.now(UTC))
         self.incomplete: list[str] = []  # listings this pull could not see in full
 
     def pull(
@@ -184,9 +189,10 @@ class GitHubLiveConnector:
         emails = user.get("organizationVerifiedDomainEmails") or []
         return [e for e in emails if isinstance(e, str)]
 
-    @staticmethod
-    def _now() -> str:
-        return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    def _now(self) -> str:
+        """The pull time, to the microsecond: two pulls are never the same instant, so the
+        later one's settlement of a grant always reads as the later observation (A-119)."""
+        return self._clock().astimezone(UTC).isoformat().replace("+00:00", "Z")
 
     # -- the pull ------------------------------------------------------------------
 
@@ -380,10 +386,13 @@ class GitHubLiveConnector:
             "org": org,
             "complete": not self.incomplete,
             "incomplete": list(self.incomplete),
+            "members_listed": not self._gaps(f"/orgs/{org}/members"),
             "members": sorted(m["node_id"] for m in members),
             "repo_collaborators": seen_collaborators,
             "pulled_at": snapshot_ts,
         }
+        # the pull's own event, new every pull unlike the snapshots: the record that these
+        # listings were seen whole at this time, from which every grant on them is settled
         yield event(
-            "org.pull.completed", content_id(f"{org}:pull", completed), snapshot_ts, completed
+            "org.pull.completed", f"{org}:pull@{uuid.uuid4().hex[:16]}", snapshot_ts, completed
         )

@@ -7,8 +7,8 @@
     repo.security_policy.snapshot   -> Evidence(policy_document)
     repo.file_listing.snapshot      -> Evidence(repo_file_listing)
     org.member_added/removed        -> Person, AccessGrant(person -> org, active/revoked)
-    org.pull.completed              -> nothing here; on a complete pull the consumer
-                                       writes revocations for what was not seen (A-102)
+    org.pull.completed              -> nothing here; the consumer settles every grant on
+                                       the listings the pull saw whole (A-102, A-119)
     repo.collaborator_added/removed -> Person, AccessGrant(person -> repo, active/revoked)
 
 Account kind: the API's ``type`` (Bot -> service) plus a small login-pattern list; ``shared``

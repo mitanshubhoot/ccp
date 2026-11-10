@@ -2,7 +2,7 @@
 
 - Transient errors and rate limits are retried and waited out; a persistent error stops the
   pull; a failed email lookup raises instead of reading as "no emails".
-- A 404 on a listing marks the pull incomplete; an unchanged re-pull lands nothing.
+- A 404 on a listing marks the pull incomplete; an unchanged re-pull lands only its marker.
 - After a complete pull, a collaborator who is no longer listed is revoked as a new
   observation; after an incomplete pull, absence proves nothing.
 """
@@ -38,6 +38,7 @@ def _api(
     *,
     overrides: dict[str, list[httpx.Response]] | None = None,
     collaborators_status: int = 200,
+    emails: dict[str, list[str]] | None = None,
 ) -> tuple[Callable[[httpx.Request], httpx.Response], list[str]]:
     """A recorded GitHub: one org, two members, one repo with the given collaborators.
     ``overrides`` serves queued responses for a path before the recorded one."""
@@ -61,7 +62,9 @@ def _api(
                 return ok([{"login": "ana", "node_id": "U_ANA"}])
             return ok([{"login": "ana", "node_id": "U_ANA"}, {"login": "bo", "node_id": "U_BO"}])
         if path == "/graphql":
-            return ok({"data": {"user": {"organizationVerifiedDomainEmails": []}}})
+            login = json.loads(request.content)["variables"]["login"]
+            verified = (emails or {}).get(login, [])
+            return ok({"data": {"user": {"organizationVerifiedDomainEmails": verified}}})
         if path == f"/orgs/{ORG}/repos":
             if request.url.params.get("page", "1") != "1":
                 return ok([])
@@ -148,13 +151,14 @@ def test_a_listing_404_marks_the_pull_incomplete() -> None:
     assert "R_1" not in done["repo_collaborators"]  # nothing may be inferred for that repo
 
 
-def test_ids_come_from_content_so_an_unchanged_re_pull_is_the_same_events() -> None:
+def test_ids_come_from_content_so_an_unchanged_re_pull_is_the_same_snapshots() -> None:
     handler, _ = _api(["ana"])
     first = [e.source_event_id for e in _pull(handler)]
     second = [e.source_event_id for e in _pull(handler)]
-    assert first == second
+    assert first[:-1] == second[:-1]  # the snapshots: the same events, so none lands again
+    assert first[-1] != second[-1]  # the completion marker is each pull's own (A-119)
     changed = [e.source_event_id for e in _pull(_api(["ana", "bo"])[0])]
-    assert set(changed) != set(first)  # the collaborator change is a new repo snapshot
+    assert set(changed[:-1]) != set(first[:-1])  # the collaborator change: a new repo snapshot
 
 
 @pytest.fixture
@@ -192,7 +196,7 @@ def test_a_removed_collaborator_is_revoked_only_after_a_complete_pull(
     settings, db = lone
     assert _land(settings, db, _pull(_api(["ana", "bo"])[0])) > 0
     assert _grant_state(db, "bo") is not None and _grant_state(db, "bo")[0] == "active"  # type: ignore[index]
-    assert _land(settings, db, _pull(_api(["ana", "bo"])[0])) == 0  # unchanged: nothing lands
+    assert _land(settings, db, _pull(_api(["ana", "bo"])[0])) == 1  # unchanged: the marker only
     _land(settings, db, _pull(_api(["ana"], collaborators_status=404)[0]))  # incomplete
     assert _grant_state(db, "bo")[0] == "active"  # type: ignore[index]  # absence proved nothing
     _land(settings, db, _pull(_api(["ana"])[0]))  # complete, and bo is gone
@@ -203,5 +207,6 @@ def test_a_removed_collaborator_is_revoked_only_after_a_complete_pull(
         "SELECT state FROM access_grants WHERE entity_id = %s ORDER BY observed_at",
         ("github:grant:U_BO:R_1",),
     )
-    assert [r[0] for r in history] == ["active", "revoked"]  # a new observation, not an edit
+    states = [r[0] for r in history]  # new observations, never an edit
+    assert states[-1] == "revoked" and set(states[:-1]) == {"active"}
     json.dumps([str(r) for r in history])
