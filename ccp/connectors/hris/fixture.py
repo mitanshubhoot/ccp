@@ -20,6 +20,8 @@ from typing import Any
 from ccp.connectors.base import (
     ConnectorName,
     SourceEvent,
+    SourceKind,
+    SyncReport,
     after,
     load_json,
     parse_ts,
@@ -36,14 +38,44 @@ _EVENT_TYPES = {
 }
 
 
+_SCOPE_OF = {
+    "hris.employee.snapshot": "employees",
+    "hris.identity.snapshot": "identities",
+    "hris.account.snapshot": "accounts",
+    "hris.asset.snapshot": "assets",
+    "hris.document": "documents",
+}
+
+
 class HrisFixtureConnector:
     name: ConnectorName = "hris"
+    source: SourceKind = "fixture"
+    scopes: tuple[str, ...] = (
+        "employees",
+        "hr_events",
+        "identities",
+        "accounts",
+        "assets",
+        "documents",
+    )
 
     def __init__(self, fixtures_dir: Path) -> None:
         self._fixtures_dir = fixtures_dir
 
-    def pull(self, tenant: TenantContext, since: datetime | None = None) -> Iterator[SourceEvent]:
-        return after(self._events(tenant), since)
+    def pull(
+        self,
+        tenant: TenantContext,
+        since: datetime | None = None,
+        report: SyncReport | None = None,
+    ) -> Iterator[SourceEvent]:
+        events = list(self._events(tenant))  # a fixture is read whole, then reported complete
+        if report is not None:
+            counts = {s: 0 for s in self.scopes}
+            for e in events:
+                counts[_SCOPE_OF.get(e.event_type, "hr_events")] += 1
+            for scope, n in counts.items():
+                report.complete(scope, n)
+        return after(iter(events), since)
 
     def _events(self, tenant: TenantContext) -> Iterator[SourceEvent]:
         root = self._fixtures_dir / tenant.tenant_id / "hris"

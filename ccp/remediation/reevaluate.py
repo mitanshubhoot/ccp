@@ -17,8 +17,7 @@ from ccp.connectors.base import Connector
 from ccp.evaluators import runner as evaluations
 from ccp.evaluators.impact import ImpactConsumer
 from ccp.evaluators.tier2 import Providers
-from ccp.ingest.landing import land_events
-from ccp.ingest.raw_zone import RawZone
+from ccp.ingest.landing import sync_connector
 from ccp.normalize.consumer import normalize_all
 from ccp.observability import steps
 from ccp.storage.scoped import ScopedDB
@@ -31,13 +30,15 @@ class ReevaluationSummary:
     enqueued: int
     evaluated: int
     state_written: int
+    pull_status: str = "complete"  # the re-pull is a sync run like any other (A-118)
 
 
 def reevaluate(
     db: ScopedDB, settings: Settings, connector: Connector, providers: Providers | None = None
 ) -> ReevaluationSummary:
     with steps.step("remediate.reevaluate", layer="remediation", tenant=db.tenant) as s:
-        landed, _duplicates = land_events(db, RawZone(settings.raw_dir), connector.pull(db.tenant))
+        pulled = sync_connector(settings, db, db.tenant, connector)
+        landed = pulled.landed
         normalized = normalize_all(db, settings)
         prepare_changes(db, settings, providers or Providers.from_settings(settings))
         impact = ImpactConsumer(db)
@@ -51,6 +52,7 @@ def reevaluate(
             enqueued=impact.enqueued,
             evaluated=evaluated.evaluated,
             state_written=written.written,
+            pull_status=pulled.status,
         )
         s.set_output(summary.__dict__)
     return summary

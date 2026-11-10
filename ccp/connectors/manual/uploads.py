@@ -20,7 +20,14 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from ccp.connectors.base import ConnectorName, SourceEvent, after, sha256_bytes
+from ccp.connectors.base import (
+    ConnectorName,
+    SourceEvent,
+    SourceKind,
+    SyncReport,
+    after,
+    sha256_bytes,
+)
 from ccp.connectors.frontmatter import split_front_matter
 from ccp.connectors.manual.pdf_text import PdfLimits, extract_pages
 from ccp.tenancy import TenantContext, TenantId
@@ -79,15 +86,30 @@ class ManifestMissing(FileNotFoundError):
 
 class ManualUploadConnector:
     name: ConnectorName = "manual"
+    scopes: tuple[str, ...] = ("uploads",)
 
-    def __init__(self, root_for_tenant: Callable[[TenantId], Path], limits: PdfLimits) -> None:
+    def __init__(
+        self,
+        root_for_tenant: Callable[[TenantId], Path],
+        limits: PdfLimits,
+        source: SourceKind = "fixture",
+    ) -> None:
         self._root_for_tenant = root_for_tenant
         self._limits = limits
+        self.source: SourceKind = source
 
-    def pull(self, tenant: TenantContext, since: datetime | None = None) -> Iterator[SourceEvent]:
-        return after(self._events(tenant), since)
+    def pull(
+        self,
+        tenant: TenantContext,
+        since: datetime | None = None,
+        report: SyncReport | None = None,
+    ) -> Iterator[SourceEvent]:
+        return after(self._events(tenant, report), since)
 
-    def _events(self, tenant: TenantContext) -> Iterator[SourceEvent]:
+    def _events(
+        self, tenant: TenantContext, report: SyncReport | None = None
+    ) -> Iterator[SourceEvent]:
+        read, left_out = 0, []  # entries not read: refused, missing, unsupported (A-118)
         root = self._root_for_tenant(tenant.tenant_id)
         manifest_path = root / "manifest.yaml"
         if not manifest_path.is_file():
@@ -121,6 +143,7 @@ class ManualUploadConnector:
                     payload={"filename": entry.file[:200], "reason": REFUSED_OUTSIDE},
                     schema_version=SCHEMA_VERSION,
                 )
+                left_out.append(f"refused {entry.file[:80]}")
                 continue
             if not path.is_file():
                 log.warning(
@@ -128,6 +151,7 @@ class ManualUploadConnector:
                     tenant.tenant_id,
                     entry.file,
                 )
+                left_out.append(f"missing {entry.file}")
                 continue
             data = path.read_bytes()
             digest = sha256_bytes(data)
@@ -165,6 +189,7 @@ class ManualUploadConnector:
                     entry.file,
                     suffix,
                 )
+                left_out.append(f"unsupported {entry.file}")
                 continue
             yield SourceEvent(
                 tenant_id=tenant.tenant_id,
@@ -175,3 +200,9 @@ class ManualUploadConnector:
                 payload=payload,
                 schema_version=SCHEMA_VERSION,
             )
+            read += 1
+        if report is not None:
+            if left_out:
+                report.mark("uploads", "partial", read, "; ".join(left_out)[:2000])
+            else:
+                report.complete("uploads", read)

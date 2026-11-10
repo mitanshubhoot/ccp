@@ -46,7 +46,7 @@ def build_connector(
             def runtime_root(tenant_id: TenantId) -> Path:
                 return settings.uploads_dir / tenant_id
 
-            return ManualUploadConnector(runtime_root, pdf_limits(settings))
+            return ManualUploadConnector(runtime_root, pdf_limits(settings), "live")
 
         def fixture_root(tenant_id: TenantId) -> Path:
             return settings.ccp_fixtures_dir / tenant_id / "uploads"

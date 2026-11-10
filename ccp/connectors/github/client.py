@@ -33,7 +33,7 @@ from typing import Any
 
 import httpx
 
-from ccp.connectors.base import ConnectorName, SourceEvent, after
+from ccp.connectors.base import ConnectorName, SourceEvent, SourceKind, SyncReport, after
 from ccp.tenancy import TenantContext
 
 SCHEMA_VERSION = "github.v1"
@@ -84,6 +84,8 @@ def content_id(prefix: str, payload: dict[str, Any]) -> str:
 
 class GitHubLiveConnector:
     name: ConnectorName = "github"
+    source: SourceKind = "live"
+    scopes: tuple[str, ...] = ("org", "members", "repos", "collaborators", "repo_settings")
 
     def __init__(
         self,
@@ -105,8 +107,16 @@ class GitHubLiveConnector:
         self._sleep = sleep
         self.incomplete: list[str] = []  # listings this pull could not see in full
 
-    def pull(self, tenant: TenantContext, since: datetime | None = None) -> Iterator[SourceEvent]:
-        return after(self._events(tenant), since)
+    def pull(
+        self,
+        tenant: TenantContext,
+        since: datetime | None = None,
+        report: SyncReport | None = None,
+    ) -> Iterator[SourceEvent]:
+        return after(self._events(tenant, report), since)
+
+    def _gaps(self, fragment: str) -> list[str]:
+        return [g for g in self.incomplete if fragment in g]
 
     # -- helpers -------------------------------------------------------------------
 
@@ -180,9 +190,12 @@ class GitHubLiveConnector:
 
     # -- the pull ------------------------------------------------------------------
 
-    def _events(self, tenant: TenantContext) -> Iterator[SourceEvent]:
+    def _events(
+        self, tenant: TenantContext, report: SyncReport | None = None
+    ) -> Iterator[SourceEvent]:
         org = tenant.settings.github_org
         snapshot_ts = self._now()
+        self.incomplete = []  # this pull's gaps only, whatever an earlier pull saw
 
         def event(
             event_type: str, source_event_id: str, ts: str, payload: dict[str, Any]
@@ -202,9 +215,17 @@ class GitHubLiveConnector:
             raise LookupError(f"GitHub organization {org!r} not found or token lacks access")
         org_updated = org_obj.get("updated_at") or snapshot_ts
         yield event("org.snapshot", content_id(org_obj["node_id"], org_obj), org_updated, org_obj)
+        if report is not None:
+            report.complete("org", 1)
 
         admins = {m["login"] for m in self._paginate(f"/orgs/{org}/members", role="admin")}
         members = self._paginate(f"/orgs/{org}/members", role="all")
+        if report is not None:
+            hidden = self._gaps(f"/orgs/{org}/members")
+            if hidden:
+                report.mark("members", "not_visible", 0, "; ".join(hidden))
+            else:
+                report.complete("members", len(members))
         seen_collaborators: dict[str, list[str]] = {}
         for member in members:
             payload = {
@@ -221,7 +242,14 @@ class GitHubLiveConnector:
                 "org.member.snapshot", content_id(member["node_id"], payload), snapshot_ts, payload
             )
 
-        for repo in self._paginate(f"/orgs/{org}/repos", type="all"):
+        repos = self._paginate(f"/orgs/{org}/repos", type="all")
+        repos_hidden = self._gaps(f"/orgs/{org}/repos")
+        if report is not None:
+            if repos_hidden:
+                report.mark("repos", "not_visible", 0, "; ".join(repos_hidden))
+            else:
+                report.complete("repos", len(repos))
+        for repo in repos:
             full = repo["full_name"]
             node_id = repo["node_id"]
             updated = repo.get("updated_at") or snapshot_ts
@@ -331,6 +359,23 @@ class GitHubLiveConnector:
                     listing_payload,
                 )
 
+        if report is not None:
+            listed = len(seen_collaborators)
+            if repos_hidden:
+                report.mark("collaborators", "not_visible", 0, "the repositories are not visible")
+            elif listed == len(repos):
+                report.complete("collaborators", listed)
+            elif listed:
+                report.mark(
+                    "collaborators",
+                    "partial",
+                    listed,
+                    f"{len(repos) - listed} of {len(repos)} repositories' collaborators not"
+                    " visible",
+                )
+            else:
+                report.mark("collaborators", "not_visible", 0, "; ".join(self._gaps("/repos/")))
+            report.complete("repo_settings", len(repos))
         completed = {
             "org": org,
             "complete": not self.incomplete,

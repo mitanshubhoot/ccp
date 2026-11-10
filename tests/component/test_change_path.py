@@ -40,8 +40,12 @@ def world(base_settings: Settings) -> Iterator[tuple[Settings, dict[str, ScopedD
 
 class _Nothing:
     name = "manual"
+    source = "fixture"
+    scopes: tuple[str, ...] = ()  # sees nothing, so its sync run is complete (A-118)
 
-    def pull(self, tenant: TenantContext, since: datetime | None = None) -> Iterator[SourceEvent]:
+    def pull(
+        self, tenant: TenantContext, since: datetime | None = None, report: object = None
+    ) -> Iterator[SourceEvent]:
         return iter(())
 
 

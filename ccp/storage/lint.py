@@ -57,6 +57,8 @@ INSERT_ONLY: frozenset[str] = frozenset(
         "agent_steps",
         "policy_decisions",
         "credential_issues",
+        "sync_runs",
+        "sync_run_scopes",
     }
 )
 # Operational state that is updated in place by design.

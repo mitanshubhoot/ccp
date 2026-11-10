@@ -548,9 +548,40 @@ def ingest_run(
         summary = ingest_tenant(settings, ScopedDB(pool, ctx), ctx, names, kind)
     finally:
         pool.close()
-    for name, n in summary.by_connector.items():
-        typer.echo(f"{name:<8} landed {n}")
+    for run in summary.runs:  # every pull is a sync run (A-118)
+        partial = [f"{s}={o.status}" for s, o in run.scopes.items() if o.status != "complete"]
+        tail = f"  ({', '.join(partial)})" if partial else ""
+        typer.echo(f"{run.connector:<8} {run.status:<8} landed {run.landed}{tail}")
+        if run.error:
+            typer.echo(f"         {run.error}", err=True)
     typer.echo(f"total landed {summary.landed}, duplicates {summary.duplicates}")
+    if summary.failed:
+        raise typer.Exit(1)
+
+
+@ingest_app.command("runs")
+def ingest_runs(
+    tenant: str | None = typer.Option(None, "--tenant"),
+    limit: int = typer.Option(10, "--limit"),
+) -> None:
+    """The tenant's latest sync runs, newest first, each scope's outcome (A-118)."""
+    from ccp.ingest import sync_runs
+
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        runs = sync_runs.recent(ScopedDB(pool, ctx), limit)
+    finally:
+        pool.close()
+    for run in runs:
+        typer.echo(
+            f"{run['finished_at'].isoformat()} {run['connector']:<8} {run['source']:<8}"
+            f" {run['status']:<8} landed {run['landed']}"
+        )
+        for scope, outcome in run["scopes"].items():
+            detail = f"  {outcome['detail']}" if outcome["detail"] else ""
+            typer.echo(f"    {scope:<16} {outcome['status']:<12} {outcome['items']}{detail}")
 
 
 @worker_app.command("run")

@@ -1,16 +1,23 @@
-"""The connector contract (spec.md Layer 1).
+"""The connector contract (spec.md Layer 1, A-118).
 
 A connector turns a provider's data into ``SourceEvent`` objects. The dedup key is the
 provider's own event id and the ordering key is the provider's own timestamp; nothing
 locally generated is ever used for either. Payloads are passed through untouched so the
 raw zone (Layer 2) is a faithful copy of what the provider said.
+
+A pull also says what it saw (A-118). A connector declares its scopes, the data types it
+reads, and marks each one in the run's `SyncReport`: complete (every listing seen in full,
+so an absence there is a fact), partial (some of it seen), not visible (the credential
+cannot see it), or failed. A scope the pull never reached counts as failed, and the run is
+complete only when every scope is.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -21,6 +28,47 @@ from ccp.tenancy import TenantContext, TenantId
 
 ConnectorName = Literal["github", "hris", "manual"]
 SourceKind = Literal["fixture", "live"]
+ScopeStatus = Literal["complete", "partial", "not_visible", "failed"]
+RunStatus = Literal["complete", "partial", "failed"]
+
+
+@dataclass(frozen=True)
+class ScopeOutcome:
+    status: ScopeStatus
+    items: int = 0
+    detail: str | None = None
+
+
+class SyncReport:
+    """What one pull saw, scope by scope (A-118)."""
+
+    def __init__(self, scopes: Sequence[str]) -> None:
+        self.declared = tuple(scopes)
+        self._outcomes: dict[str, ScopeOutcome] = {}
+        self.error: str | None = None  # set when the pull itself raised
+
+    def mark(
+        self, scope: str, status: ScopeStatus, items: int = 0, detail: str | None = None
+    ) -> None:
+        if scope not in self.declared:
+            raise ValueError(f"scope {scope!r} is not declared ({', '.join(self.declared)})")
+        self._outcomes[scope] = ScopeOutcome(status, items, detail)
+
+    def complete(self, scope: str, items: int = 0) -> None:
+        self.mark(scope, "complete", items)
+
+    def outcomes(self) -> dict[str, ScopeOutcome]:
+        """Every declared scope; one the pull never reached is failed."""
+        unreached = ScopeOutcome("failed", 0, "the pull stopped before this scope")
+        return {s: self._outcomes.get(s, unreached) for s in self.declared}
+
+    def status(self) -> RunStatus:
+        outcomes = self.outcomes().values()
+        if self.error is not None or any(o.status == "failed" for o in outcomes):
+            return "failed"
+        if all(o.status == "complete" for o in outcomes):
+            return "complete"
+        return "partial"
 
 
 class SourceEvent(BaseModel):
@@ -48,9 +96,14 @@ class SourceEvent(BaseModel):
 
 class Connector(Protocol):
     name: ConnectorName
+    source: SourceKind
+    scopes: tuple[str, ...]  # the data types a pull reads, each marked in its SyncReport
 
     def pull(
-        self, tenant: TenantContext, since: datetime | None = None
+        self,
+        tenant: TenantContext,
+        since: datetime | None = None,
+        report: SyncReport | None = None,
     ) -> Iterator[SourceEvent]: ...
 
 

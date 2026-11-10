@@ -22,7 +22,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ccp.connectors.base import ConnectorName, SourceEvent, after, load_json, parse_ts
+from ccp.connectors.base import (
+    ConnectorName,
+    SourceEvent,
+    SourceKind,
+    SyncReport,
+    after,
+    load_json,
+    parse_ts,
+)
 from ccp.tenancy import TenantContext
 
 SCHEMA_VERSION = "github.v1"
@@ -54,12 +62,26 @@ def load_docs(root: Path) -> FixtureDocs:
 
 class GitHubFixtureConnector:
     name: ConnectorName = "github"
+    source: SourceKind = "fixture"
+    scopes: tuple[str, ...] = (
+        "org",
+        "members",
+        "repos",
+        "collaborators",
+        "repo_settings",
+        "deliveries",
+    )
 
     def __init__(self, fixtures_dir: Path) -> None:
         self._fixtures_dir = fixtures_dir
 
-    def pull(self, tenant: TenantContext, since: datetime | None = None) -> Iterator[SourceEvent]:
-        return after(self._events(tenant), since)
+    def pull(
+        self,
+        tenant: TenantContext,
+        since: datetime | None = None,
+        report: SyncReport | None = None,
+    ) -> Iterator[SourceEvent]:
+        return after(self._events(tenant, report), since)
 
     def docs_for(self, tenant: TenantContext) -> FixtureDocs:
         root = self._fixtures_dir / tenant.tenant_id / "github"
@@ -67,7 +89,9 @@ class GitHubFixtureConnector:
             raise FileNotFoundError(f"no GitHub fixture for tenant {tenant.tenant_id!r} at {root}")
         return load_docs(root)
 
-    def _events(self, tenant: TenantContext) -> Iterator[SourceEvent]:
+    def _events(
+        self, tenant: TenantContext, report: SyncReport | None = None
+    ) -> Iterator[SourceEvent]:
         docs = self.docs_for(tenant)
 
         def event(
@@ -134,6 +158,15 @@ class GitHubFixtureConnector:
         for delivery in docs["deliveries"]:
             event_type = _DELIVERY_TYPES[(delivery["event"], delivery["action"])]
             yield event(event_type, delivery["id"], delivery["delivered_at"], delivery)
+
+        if report is not None:  # a fixture is complete by construction (A-118)
+            repos = docs["repos"]
+            report.complete("org", 1)
+            report.complete("members", len(docs["members"]))
+            report.complete("repos", len(repos))
+            report.complete("collaborators", len(repos))
+            report.complete("repo_settings", len(repos))
+            report.complete("deliveries", len(docs["deliveries"]))
 
 
 # -- test-only: the simulated remediation loop (spec.md Layer 10 "Re-evaluate") -------------
