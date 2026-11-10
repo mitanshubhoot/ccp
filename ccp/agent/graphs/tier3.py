@@ -275,10 +275,19 @@ def build_spec(
             unresolved_evidence_type=unresolved,
         )
         status = conf.forced_status or decision.status
+        reasons = list(decision.reasons)
+        stopped = [
+            e.split(":", 2)[2]
+            for e in state.get("guardrail_events", [])
+            if e.startswith("tool_loop_stopped:")
+        ]
+        if stopped:  # a search that stopped for any reason but a normal end (A-100)
+            status = VerdictStatus.needs_review
+            reasons.append(f"the evidence search stopped early ({', '.join(stopped)})")
         return {
             "draft_verdict": {
                 "status": status.value,
-                "reasons": list(decision.reasons),
+                "reasons": reasons,
                 "confidence": conf.value,
                 "confidence_cap": conf.cap,
                 "factors": {

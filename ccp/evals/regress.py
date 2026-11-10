@@ -27,6 +27,7 @@ class Regression(BaseModel):
     confidence_deltas: list[dict[str, Any]] = Field(default_factory=list)
     cost_delta_usd: float = 0.0
     golden_changed: list[str] = Field(default_factory=list)
+    bundle_changed: bool = False  # a new bundle: earned autonomy is re-earned (A-100)
     asr_increases: dict[str, list[float]] = Field(default_factory=dict)
     p95_breaches: list[str] = Field(default_factory=list)
     added_cases: list[str] = Field(default_factory=list)
@@ -90,6 +91,11 @@ def diff(
     before_cost = sum(r.cost_usd or 0.0 for r in baseline.cases)
     after_cost = sum(r.cost_usd or 0.0 for r in current.cases)
     reg.cost_delta_usd = round(after_cost - before_cost, 6)
+    reg.bundle_changed = (
+        baseline.bundle_sha256 is not None
+        and current.bundle_sha256 is not None
+        and baseline.bundle_sha256 != current.bundle_sha256
+    )
     reg.golden_changed = sorted(
         name
         for name, digest in current.golden_sha256.items()
@@ -124,6 +130,9 @@ def format_regression(reg: Regression) -> str:
         lines.extend(f"    {d['id']}: {d['before']} -> {d['after']}" for d in reg.confidence_deltas)
     lines.append(f"  cost delta: {reg.cost_delta_usd:+.6f} USD")
     lines.append(f"  golden files changed: {reg.golden_changed or 'none'}")
+    lines.append(
+        "  bundle changed: " + ("yes; earned autonomy is re-earned" if reg.bundle_changed else "no")
+    )
     lines.append(f"  ASR increases: {reg.asr_increases or 'none'}")
     lines.append(f"  p95 breaches: {reg.p95_breaches or 'none'}")
     if reg.added_cases or reg.removed_cases:

@@ -132,23 +132,70 @@ def record_event(
         raise LookupError(f"no approval item {approval_id!r}")
     if event in DECIDED_STATES and not current.is_open:
         raise ValueError(f"approval {approval_id!r} is already {current.state}")
-    db.execute(
-        "INSERT INTO approval_events"
-        " (event_id, approval_id, tenant_id, event, reviewer, note, decision)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s)",
-        (
-            str(ULID()),
-            approval_id,
-            db.tenant.tenant_id,
-            event,
-            reviewer.strip(),
-            note,
-            json.dumps(decision, default=str) if decision is not None else None,
-        ),
-    )
+    with db.transaction() as cur:
+        cur.execute(
+            "INSERT INTO approval_events"
+            " (event_id, approval_id, tenant_id, event, reviewer, note, decision)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (
+                str(ULID()),
+                approval_id,
+                db.tenant.tenant_id,
+                event,
+                reviewer.strip(),
+                note,
+                json.dumps(decision, default=str) if decision is not None else None,
+            ),
+        )
+        if event in DECIDED_STATES:  # every decision is also a label (A-100)
+            cur.execute(
+                "INSERT INTO review_labels (label_id, tenant_id, approval_id, kind, ref_id,"
+                " proposed, decision, reviewer, consent_scope)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    str(ULID()),
+                    db.tenant.tenant_id,
+                    approval_id,
+                    current.kind,
+                    current.ref_id,
+                    json.dumps(current.payload, default=str),
+                    json.dumps(
+                        decision if decision is not None else {"event": event, "note": note},
+                        default=str,
+                    ),
+                    reviewer.strip(),
+                    db.tenant.settings.label_consent,
+                ),
+            )
     updated = get(db, approval_id)
     assert updated is not None
     return updated
+
+
+def labels(db: ScopedDB, usable_for: str | None = None) -> list[dict[str, Any]]:
+    """Review labels, oldest first; ``usable_for`` "eval" keeps eval and training consent,
+    "training" keeps training consent only."""
+    scopes = {None: None, "eval": ("eval", "training"), "training": ("training",)}[usable_for]
+    clause = " WHERE consent_scope = ANY(%s)" if scopes else ""
+    rows = db.fetch_all(
+        "SELECT label_id, approval_id, kind, ref_id, proposed, decision, reviewer,"
+        f" consent_scope, recorded_at FROM review_labels{clause} ORDER BY recorded_at, label_id",
+        (list(scopes),) if scopes else None,
+    )
+    return [
+        {
+            "label_id": str(r[0]),
+            "approval_id": str(r[1]),
+            "kind": str(r[2]),
+            "ref_id": str(r[3]),
+            "proposed": _json(r[4]),
+            "decision": _json(r[5]),
+            "reviewer": str(r[6]),
+            "consent_scope": str(r[7]),
+            "recorded_at": r[8],
+        }
+        for r in rows
+    ]
 
 
 def get(db: ScopedDB, approval_id: str) -> Approval | None:

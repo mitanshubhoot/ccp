@@ -27,12 +27,12 @@ from typing import Any
 import psycopg
 import yaml
 
+from ccp.agent.bundle import bundle_sha256
 from ccp.config import REPO_ROOT, Settings
 from ccp.evals import metrics as metrics_mod
 from ccp.evals.adversarial import load_adversarial
 from ccp.evals.compare import compare
-from ccp.evals.judge import Rubric, load_rubric
-from ccp.evals.judge import judge as run_judge
+from ccp.evals.judge import Rubric, SelfGrading, judge_consistently, load_rubric
 from ccp.evals.schema import CaseResult, GoldenCase, LevelSummary, RunMetrics, RunReport
 from ccp.evals.targets import TARGETS, EvalContext
 from ccp.llm.budget import BudgetTracker, RunBudget
@@ -179,6 +179,17 @@ def _expected_fields(expected: dict[str, Any]) -> int:
     return 0
 
 
+def generating_models(settings: Settings) -> tuple[str, ...]:
+    """Every model that can produce what the judge grades (A-100)."""
+    return (
+        settings.ccp_tier2_model,
+        settings.ccp_tier3_model,
+        settings.investigator_model,
+        settings.policy_model,
+        settings.copilot_model,
+    )
+
+
 def run_case(ctx: EvalContext, case: GoldenCase) -> CaseResult:
     fn = TARGETS.get(case.target)
     missing = missing_providers(
@@ -249,13 +260,15 @@ def run_case(ctx: EvalContext, case: GoldenCase) -> CaseResult:
                     kind="generation",
                     inputs={"case_id": case.id, "rubric": rubric.name},
                 ) as js:
-                    judged = run_judge(
+                    judged = judge_consistently(
                         llm,
                         rubric,
                         case_input=case.input,
                         output=_compact(actual),
                         model=ctx.settings.ccp_judge_model,
                         tracker=BudgetTracker(RunBudget.from_settings(ctx.settings)),
+                        generators=generating_models(ctx.settings),
+                        runs=ctx.settings.ccp_judge_runs,
                     )
                     usage = judged.usage or {}
                     steps.note_model_call(
@@ -266,6 +279,8 @@ def run_case(ctx: EvalContext, case: GoldenCase) -> CaseResult:
                         cache_write=int(usage.get("cache_write", 0)),
                     )
                     js.set_output({"overall_pass": judged.overall_pass})
+            except SelfGrading as exc:
+                mismatches.append(f"judge: self-grading blocked: {exc}")
             except Exception as exc:
                 mismatches.append(f"judge: {type(exc).__name__}: {exc}")
             else:
@@ -401,6 +416,7 @@ def run(
         finished_at=datetime.now(UTC),
         git_commit=_git_commit(),
         golden_sha256=golden_hashes,
+        bundle_sha256=bundle_sha256(),
         cases=results,
         summary=summary,
         unit=run_unit_tests() if unit else None,

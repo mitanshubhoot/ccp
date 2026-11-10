@@ -16,10 +16,12 @@ of what every graph needs. Graph modules are short declarations over these facto
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -28,6 +30,7 @@ from langgraph.types import RetryPolicy
 from pydantic import ValidationError
 
 from ccp.agent.allowlists import check_allowlist
+from ccp.agent.bundle import bundle_sha256
 from ccp.agent.state import AgentState
 from ccp.agent.tools import BoundTool
 from ccp.evaluators import citations
@@ -272,6 +275,7 @@ def make_structured_node(
                     "model": extraction.model,
                     "prompt_version": prompt_version,
                     "prompt_sha256": prompt.sha256,
+                    "bundle_sha256": bundle_sha256(),  # prompts, tools, errors (A-100)
                     "usage": extraction.usage.__dict__,
                 }
             },
@@ -280,6 +284,62 @@ def make_structured_node(
         }
 
     return node
+
+
+class StopReason(StrEnum):
+    """Why a tool loop ended (A-100). Anything but `normal` holds the outcome for review."""
+
+    normal = "normal_end"
+    call_cap = "call_cap"
+    tool_errors = "tool_errors"
+    refusal = "refusal"
+    truncated = "truncated"
+    loop_call = "loop_repeat_call"
+    loop_result = "loop_repeat_result"
+
+
+LOOP_REPEATS = 3  # the same call, or the same result running, this many times is a loop
+TOOL_ERROR_RUN = 3  # this many failed tool calls in a row end the loop
+
+
+def model_stop(model_stop_reason: str, called_tools: bool) -> StopReason | None:
+    """The model's own ending: a refusal, a truncated turn, or an answer with no tool call."""
+    if model_stop_reason == "refusal":
+        return StopReason.refusal
+    if model_stop_reason in ("max_tokens", "model_context_window_exceeded"):
+        return StopReason.truncated
+    if not called_tools:
+        return StopReason.normal
+    return None
+
+
+def stop_reason(
+    history: list[tuple[str, str, str, bool]], calls_made: int, max_calls: int
+) -> StopReason | None:
+    """After a turn's tool calls: three failures in a row, the same tool and arguments three
+    times, the same result three times running, or the call cap end the loop."""
+    if len(history) >= TOOL_ERROR_RUN and all(h[3] for h in history[-TOOL_ERROR_RUN:]):
+        return StopReason.tool_errors
+    calls = [(h[0], h[1]) for h in history]
+    if any(calls.count(c) >= LOOP_REPEATS for c in set(calls)):
+        return StopReason.loop_call
+    recent = [h[2] for h in history[-LOOP_REPEATS:]]
+    if len(recent) == LOOP_REPEATS and len(set(recent)) == 1:
+        return StopReason.loop_result
+    if calls_made >= max_calls:
+        return StopReason.call_cap
+    return None
+
+
+def _request_digest(
+    system: list[SystemBlock], messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+) -> str:
+    material = json.dumps(
+        {"system": [b.text for b in system], "messages": messages, "tools": tools},
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 def make_tool_loop(
@@ -294,14 +354,19 @@ def make_tool_loop(
     max_calls: int = 8,
 ) -> NodeFn:
     """The bounded tool loop. Off-list tool calls are answered with an error result and a
-    guardrail event, never dispatched; every dispatched call counts against the budget."""
+    guardrail event, never dispatched; every dispatched call counts against the budget. The
+    loop ends only through `stop_reason` (A-100), and any stop but a normal end is a
+    `tool_loop_stopped:<node>:<reason>` event that holds the outcome for review. Each model
+    turn is its own step; a retried node replays the turns it already took (`memo`) instead
+    of sampling the model again."""
     offered = [tools[n].spec.schema() for n in sorted(tools) if n in allowed]
+    nonce = prompt_guard.new_nonce()  # one fence per graph build: stable across node retries
+    memo: dict[str, Any] = {}  # request digest -> ChatTurn, for this graph build
 
     def node(state: AgentState) -> dict[str, Any]:
         llm = deps.require()
         prompt = load_prompt(prompt_version)
         system = [SystemBlock(prompt.text, cache=True)]
-        nonce = prompt_guard.new_nonce()  # one fence for every tool result in this loop
         messages: list[dict[str, Any]] = [
             {
                 "role": "user",
@@ -320,30 +385,44 @@ def make_tool_loop(
         last_response: Any = None
         last_model: str | None = None
         calls_made = 0
-        while calls_made < max_calls:
-            turn = llm.chat(
-                system=system,
-                messages=messages,
-                tools=offered,
-                model=deps.model,
-                tracker=deps.tracker,
-                reasoning=deps.reasoning,
-            )
-            steps.note_model_call(
-                turn.model,
-                input_tokens=turn.usage.input_tokens,
-                output_tokens=turn.usage.output_tokens,
-                cache_read=turn.usage.cache_read_input_tokens,
-                cache_write=turn.usage.cache_creation_input_tokens,
-                prompt_version=prompt_version,
-            )
+        history: list[tuple[str, str, str, bool]] = []  # (tool, arguments, result digest, error)
+        reason: StopReason | None = None
+        turn_no = 0
+        while reason is None:
+            turn_no += 1
+            digest = _request_digest(system, messages, offered)
+            with steps.step(
+                f"{name}.turn",
+                layer="agent",
+                kind="generation",
+                inputs={"turn": turn_no, "replayed": digest in memo},
+            ):
+                if digest in memo:  # a retried node: this turn was already taken
+                    turn = memo[digest]
+                else:
+                    turn = llm.chat(
+                        system=system,
+                        messages=messages,
+                        tools=offered,
+                        model=deps.model,
+                        tracker=deps.tracker,
+                        reasoning=deps.reasoning,
+                    )
+                    memo[digest] = turn
+                    steps.note_model_call(
+                        turn.model,
+                        input_tokens=turn.usage.input_tokens,
+                        output_tokens=turn.usage.output_tokens,
+                        cache_read=turn.usage.cache_read_input_tokens,
+                        cache_write=turn.usage.cache_creation_input_tokens,
+                        prompt_version=prompt_version,
+                    )
             if first_request is None:
                 first_request = dict(turn.request)
             last_response, last_model = turn.response, turn.model
-            if turn.stop_reason not in ("tool_use", "end_turn", ""):
-                updates["guardrail_events"].append(f"tool_loop_stopped:{name}:{turn.stop_reason}")
             messages.append({"role": "assistant", "content": turn.assistant_content})
-            if not turn.tool_calls:
+            reason = model_stop(turn.stop_reason, bool(turn.tool_calls))
+            if reason is not None:
                 break
             for call in turn.tool_calls:
                 calls_made += 1
@@ -383,9 +462,21 @@ def make_tool_loop(
                     e for e in guarded.events if not e.startswith("secret_redacted_in_tool_result")
                 )  # the tool seam already reported its own redactions above
                 messages.append(tool_result_message(call.id, result, guarded.content))
+                history.append(
+                    (
+                        call.name,
+                        json.dumps(call.arguments, sort_keys=True, default=str),
+                        hashlib.sha256(guarded.content.split("\n", 1)[-1].encode()).hexdigest(),
+                        bool(result.get("is_error")),
+                    )
+                )
                 if calls_made >= max_calls:
-                    updates["guardrail_events"].append(f"tool_loop_budget_exhausted:{name}")
                     break
+            reason = stop_reason(history, calls_made, max_calls)
+        if reason is not StopReason.normal:
+            updates["guardrail_events"].append(f"tool_loop_stopped:{name}:{reason.value}")
+            if reason is StopReason.call_cap:  # the older name, kept for readers of the log
+                updates["guardrail_events"].append(f"tool_loop_budget_exhausted:{name}")
         updates["messages"] = messages
         if first_request is not None:  # replay can check the gather prompt too
             updates["requests"] = {
@@ -395,6 +486,7 @@ def make_tool_loop(
                     "model": last_model,
                     "prompt_version": prompt_version,
                     "prompt_sha256": prompt.sha256,
+                    "bundle_sha256": bundle_sha256(),  # prompts, tools, errors (A-100)
                 }
             }
         return updates

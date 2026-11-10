@@ -292,6 +292,9 @@ def build_spec(
             retrieval_quality=1.0 if chunks else None,
             no_evidence=not chunks,
             injection=injection,
+            unresolved_evidence_type=any(  # a gather that stopped early (A-100)
+                e.startswith("tool_loop_stopped:") for e in state.get("guardrail_events", [])
+            ),
         )
         gaps = list(report.get("gaps") or [])
         if not chunks:  # no policy_document chunks at all: every gap uncovered, capped 0.20

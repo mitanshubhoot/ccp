@@ -214,3 +214,77 @@ def bias_checks(
         "length_agreement": agreement(plain, padded),
         "length_overall_agrees": plain.overall_pass == padded.overall_pass,
     }
+
+
+class SelfGrading(ValueError):
+    """The judge model also produced the output it would grade (A-100); refused."""
+
+
+def same_model(a: str, b: str) -> bool:
+    """Two ids name the same model, dated or not (claude-x-4-5 and claude-x-4-5-20251001)."""
+    a, b = a.lower().strip(), b.lower().strip()
+    return bool(a and b) and (a == b or a.startswith(b + "-") or b.startswith(a + "-"))
+
+
+def judge_consistently(
+    llm: LLMClient,
+    rubric: Rubric,
+    *,
+    case_input: dict[str, Any],
+    output: Any,
+    model: str,
+    tracker: BudgetTracker,
+    generators: tuple[str, ...] = (),
+    runs: int = 3,
+    variant: Variant = "normal",
+) -> JudgeResult:
+    """The judge, run ``runs`` times (A-100). A criterion is met by majority; the case passes
+    only when every run passes and every criterion is answered the same way, otherwise a
+    `judge_inconsistent` event holds it for a person. A judge that also generated the output
+    (``generators``) is refused before any call."""
+    clash = next((g for g in generators if same_model(model, g)), None)
+    if clash is not None:
+        raise SelfGrading(f"judge model {model!r} also generated the graded output ({clash!r})")
+    results = [
+        judge(
+            llm,
+            rubric,
+            case_input=case_input,
+            output=output,
+            model=model,
+            tracker=tracker,
+            variant=variant,
+        )
+        for _ in range(max(1, runs))
+    ]
+    first = results[0]
+    criteria: list[CriterionResult] = []
+    unanimous = len({r.overall_pass for r in results}) == 1
+    for index, criterion in enumerate(first.criteria):
+        votes = [r.criteria[index].met for r in results]
+        unanimous = unanimous and len(set(votes)) == 1
+        criteria.append(
+            CriterionResult(
+                name=criterion.name,
+                met=votes.count(True) * 2 > len(votes),
+                evidence=criterion.evidence,
+            )
+        )
+    events = sorted({e for r in results for e in r.guardrail_events})
+    passes = sum(r.overall_pass for r in results)
+    if not unanimous:
+        events.append(f"judge_inconsistent:{passes}/{len(results)}")
+    usage: dict[str, Any] = {}
+    for r in results:
+        for key, value in (r.usage or {}).items():
+            usage[key] = usage.get(key, 0) + value
+    usage["runs"] = len(results)
+    return JudgeResult(
+        criteria=criteria,
+        overall_pass=unanimous and first.overall_pass,
+        model=first.model,
+        rubric=first.rubric,
+        variant=variant,
+        guardrail_events=events,
+        usage=usage,
+    )

@@ -198,7 +198,9 @@ def test_the_runner_judges_a_case_with_the_rubric_and_skips_without_a_judge(
             "rubric": "verdict_reasoning",
         }
     )
-    ctx = runner.EvalContext(settings=base_settings, judge_llm=StubLLMClient(handler=strict_judge))
+    # a judge model that no tier generates with (A-100), whatever the local .env says
+    settings = base_settings.model_copy(update={"ccp_judge_model": "claude-opus-5"})
+    ctx = runner.EvalContext(settings=settings, judge_llm=StubLLMClient(handler=strict_judge))
     result = runner.run_case(ctx, judged)
     assert result.judge is not None and result.judge.rubric == "verdict_reasoning"
     assert not result.passed and any(m.startswith("judge:") for m in result.mismatches)

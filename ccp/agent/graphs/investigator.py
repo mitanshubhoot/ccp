@@ -260,6 +260,10 @@ def build_spec(
             citation_rate=float(stats["citation_rate"]),
             retrieval_quality=1.0 if state.get("retrieved_chunks") else None,
             injection=injection,
+            # a gather that stopped early (A-100) leaves the diagnosis unresolved
+            unresolved_evidence_type=any(
+                e.startswith("tool_loop_stopped:") for e in state.get("guardrail_events", [])
+            ),
         )
         requests = state.get("requests", {})
         diagnose_call = requests.get("diagnose", {})

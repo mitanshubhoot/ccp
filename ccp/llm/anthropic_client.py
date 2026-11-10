@@ -68,19 +68,24 @@ TEMPERATURE_ZERO_PREFIXES = ("claude-haiku-4-5",)  # models that still accept sa
 
 
 def sampling_params(model: str, *, reasoning: bool) -> dict[str, Any]:
-    """Tier 3: adaptive thinking at medium effort where supported. Tier 2: temperature 0 on
-    the models that still take it (spec.md Layer 8 "Model configuration")."""
+    """Thinking and effort set per call type (spec.md Layer 8 "Model configuration", A-100).
+    Reasoning calls (tier 3, the agents): adaptive thinking at medium effort where supported.
+    Extraction calls (tier 2, classification, the judge): thinking explicitly off on models
+    that would otherwise think, so a short structured answer is never cut off by its own
+    thinking; temperature 0 on the models that still take it."""
     params: dict[str, Any] = {}
     if reasoning and model.startswith(ADAPTIVE_THINKING_PREFIXES):
         params["thinking"] = {"type": "adaptive"}
         params["output_config"] = {"effort": "medium"}
+    elif not reasoning and model.startswith(ADAPTIVE_THINKING_PREFIXES):
+        params["thinking"] = {"type": "disabled"}
     elif not reasoning and model.startswith(TEMPERATURE_ZERO_PREFIXES):
         params["extra_body"] = {"temperature": 0}
     return params
 
 
 def _room_for_thinking(params: dict[str, Any]) -> None:
-    if "thinking" in params:
+    if (params.get("thinking") or {}).get("type") not in (None, "disabled"):
         params["max_tokens"] = max(int(params["max_tokens"]), REASONING_MIN_MAX_TOKENS)
 
 
@@ -98,6 +103,16 @@ def _usage(model: str, raw: Any, *, batch: bool = False) -> Usage:
         batch=batch,
     )
     return Usage(input_tokens, output_tokens, cache_read, cache_write, usd)
+
+
+def _context(usage: Usage) -> int:
+    """Everything one call put through the model: what the token cap bounds (A-100)."""
+    return (
+        usage.input_tokens
+        + usage.cache_read_input_tokens
+        + usage.cache_creation_input_tokens
+        + usage.output_tokens
+    )
 
 
 def _user_content(user: str, documents: Sequence[str]) -> str | list[dict[str, Any]]:
@@ -285,6 +300,7 @@ class AnthropicClient:
             input_tokens=usage.input_tokens + usage.cache_read_input_tokens,
             output_tokens=usage.output_tokens,
             usd=usage.usd,
+            context_tokens=_context(usage),
         )
         if getattr(response, "stop_reason", None) == "refusal":
             raise TerminalModelError("model refused the extraction request")
@@ -312,6 +328,7 @@ class AnthropicClient:
             input_tokens=usage.input_tokens + usage.cache_read_input_tokens,
             output_tokens=usage.output_tokens,
             usd=usage.usd,
+            context_tokens=_context(usage),
         )
         text = "".join(
             str(block.text) for block in response.content if getattr(block, "type", "") == "text"
@@ -352,6 +369,7 @@ class AnthropicClient:
             input_tokens=usage.input_tokens + usage.cache_read_input_tokens,
             output_tokens=usage.output_tokens,
             usd=usage.usd,
+            context_tokens=_context(usage),
         )
         text_parts: list[str] = []
         calls: list[ToolCall] = []

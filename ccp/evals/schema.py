@@ -111,6 +111,7 @@ class RunReport(BaseModel):
     finished_at: datetime
     git_commit: str | None
     golden_sha256: dict[str, str]
+    bundle_sha256: str | None = None  # prompts, tool texts, allowlists (A-100)
     cases: list[CaseResult]
     summary: dict[str, LevelSummary]
     unit: LevelSummary | None = None  # pytest tests/unit, when the run included it

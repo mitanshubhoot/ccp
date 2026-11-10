@@ -30,6 +30,9 @@ class TenantSettings(BaseModel):
     termination_revocation_sla_hours: int = Field(gt=0)
     daily_budget_usd: float = Field(default=5.0, ge=0)
     max_concurrency: int = Field(default=4, ge=1)
+    # What a reviewer's decisions may be used for (A-100): none, eval, or training. A tenant
+    # admin opts in; each label keeps the scope in force when it was recorded.
+    label_consent: Literal["none", "eval", "training"] = "none"
 
 
 class TenantsFile(BaseModel):
@@ -74,7 +77,10 @@ class Settings(BaseSettings):
     ccp_llm_provider: Literal["anthropic"] = "anthropic"
     ccp_tier2_model: str = "claude-haiku-4-5"
     ccp_tier3_model: str = "claude-sonnet-5"
-    ccp_judge_model: str = "claude-haiku-4-5"
+    # The judge is a different model from every generating tier, and never grades its own
+    # output; it runs ccp_judge_runs times and passes a case only when the runs agree.
+    ccp_judge_model: str = "claude-opus-5"
+    ccp_judge_runs: int = Field(default=3, ge=1)
     ccp_investigator_model: str | None = None
     ccp_policy_model: str | None = None
     ccp_copilot_model: str | None = None

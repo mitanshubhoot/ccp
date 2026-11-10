@@ -42,11 +42,19 @@ def _loop(tracker: BudgetTracker, client: StubLLMClient, limit: int = 1000) -> i
     return calls
 
 
-def test_token_cap_stops_the_loop() -> None:
-    tracker = BudgetTracker(RunBudget(max_tokens=2_000, max_usd=100, max_seconds=100))
-    with pytest.raises(BudgetExceeded, match="budget_exceeded: token cap"):
-        _loop(tracker, _stub())
-    assert tracker.tokens == 2_400  # 4 calls of 600 tokens; the 4th tripped the cap
+def test_token_cap_bounds_one_calls_context_and_dollars_bound_the_run() -> None:
+    """A-100: the token cap is the peak context of a call; the run total is dollars."""
+    small = BudgetTracker(RunBudget(max_tokens=2_000, max_usd=100, max_seconds=100))
+    assert _loop(small, _stub(), limit=5) == 5  # five 600-token calls: none too big
+    assert small.tokens == 3_000 and small.peak_context == 600
+    tight = BudgetTracker(RunBudget(max_tokens=500, max_usd=100, max_seconds=100))
+    with pytest.raises(BudgetExceeded, match="by one call's context"):
+        _loop(tight, _stub())
+    cached = BudgetTracker(RunBudget(max_tokens=10_000, max_usd=100, max_seconds=100))
+    cached.charge(input_tokens=100, output_tokens=50, usd=0.0, context_tokens=9_000)
+    assert cached.peak_context == 9_000  # cache writes and reads count toward a call
+    with pytest.raises(BudgetExceeded):
+        cached.charge(input_tokens=100, output_tokens=50, usd=0.0, context_tokens=10_001)
 
 
 def test_usd_cap_stops_the_loop() -> None:

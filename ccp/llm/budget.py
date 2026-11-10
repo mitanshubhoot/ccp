@@ -62,7 +62,8 @@ class RunBudget:
 class BudgetTracker:
     budget: RunBudget
     clock: Callable[[], float] = time.monotonic
-    tokens: int = 0
+    tokens: int = 0  # every token of every call, for reporting
+    peak_context: int = 0  # the largest single call: what the token cap bounds
     usd: float = 0.0
     tool_calls: int = 0
     started: float = field(default=0.0)
@@ -70,12 +71,25 @@ class BudgetTracker:
     def __post_init__(self) -> None:
         self.started = self.clock()
 
-    def charge(self, *, input_tokens: int, output_tokens: int, usd: float) -> None:
-        self.tokens += input_tokens + output_tokens
+    def charge(
+        self,
+        *,
+        input_tokens: int,
+        output_tokens: int,
+        usd: float,
+        context_tokens: int | None = None,
+    ) -> None:
+        """Count one call (A-100). The token cap bounds the context of a single call,
+        cached or not (input, cache reads and writes, and output); what a run may spend
+        in total is bounded by the dollar cap, which prices every token class."""
+        context = context_tokens if context_tokens is not None else input_tokens + output_tokens
+        self.tokens += context
+        self.peak_context = max(self.peak_context, context)
         self.usd += usd
-        if self.tokens > self.budget.max_tokens:
+        if context > self.budget.max_tokens:
             raise BudgetExceeded(
-                f"budget_exceeded: token cap {self.budget.max_tokens} exceeded ({self.tokens})"
+                f"budget_exceeded: token cap {self.budget.max_tokens} exceeded by one"
+                f" call's context ({context})"
             )
         if self.usd > self.budget.max_usd:
             raise BudgetExceeded(
@@ -102,6 +116,7 @@ class BudgetTracker:
     def snapshot(self) -> dict[str, float | int]:
         return {
             "tokens": self.tokens,
+            "peak_context": self.peak_context,
             "usd": round(self.usd, 6),
             "tool_calls": self.tool_calls,
             "elapsed_s": round(self.clock() - self.started, 3),
