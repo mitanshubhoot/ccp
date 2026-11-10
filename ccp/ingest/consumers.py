@@ -75,8 +75,8 @@ class OrderedConsumer(ABC):
     def handle(self, cur: psycopg.Cursor[Any], record: LogRecord) -> None: ...
 
     def run_once(self, batch_size: int = 100) -> int:
-        """Handle the next batch in (source_ts, offset) order. Returns the records completed
-        (handled, or skipped as dead); 0 when nothing is due."""
+        """Handle the next batch in (source_ts, seq) order. Returns the records completed
+        (handled, or skipped as dead); 0 when nothing is due. The cursor is a seq (A-104)."""
         with self._db.transaction() as cur:
             last = event_log.read_cursor(cur, self.cursor_name, self.topic)
             records = event_log.fetch_after(cur, self.topic, last, batch_size)
@@ -84,7 +84,7 @@ class OrderedConsumer(ABC):
                 return 0
             failures = event_log.ordered_failures(cur, self.name, [r.offset for r in records])
             now = event_log.db_now(cur)
-            ordered = sorted(records, key=lambda r: (r.source_ts, r.offset))
+            ordered = sorted(records, key=lambda r: (r.source_ts, r.position))
             completed = 0
             for record in ordered:
                 failure = failures.get(record.offset)
@@ -120,7 +120,7 @@ class OrderedConsumer(ABC):
                     event_log.resolve_ordered_failure(cur, self.name, record.offset)
                 completed += 1
             rest = ordered[completed:]
-            cursor = min(r.offset for r in rest) - 1 if rest else max(r.offset for r in records)
+            cursor = min(r.position for r in rest) - 1 if rest else max(r.position for r in records)
             if cursor > last:
                 event_log.advance_cursor(cur, self.cursor_name, self.topic, cursor)
         return completed

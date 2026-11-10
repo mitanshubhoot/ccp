@@ -8,6 +8,13 @@ Retries wait (A-97): a failed parallel record is pending again only after
 record without spending an attempt. Ordered topics keep their failure state per consumer in
 ``ordered_failures``, because several consumers read the same ordered topic and one
 consumer's dead letter must not hide the record from the others.
+
+Ordered topics are read by seq, not by offset (A-104). The global offset is numbered when a
+row is inserted but becomes visible when it commits, so a reader that jumped to the highest
+offset it saw could pass a lower one that committed later and never read it. A record on an
+ordered topic takes the next number of its (tenant, topic) counter, whose row the producing
+transaction holds until it commits: producers on one tenant's topic take turns, numbers
+become visible in order, and a cursor never passes a number that has yet to appear.
 """
 
 from __future__ import annotations
@@ -20,10 +27,13 @@ from typing import Any
 import psycopg
 from ulid import ULID
 
+from ccp.ingest.topics import TopicKind, kind_of
+
 _COLUMNS = (
     '"offset", tenant_id, topic, partition_key, source_ts, ref, produced_at, '
-    "status, attempts, claimed_at, last_error"
+    "status, attempts, claimed_at, last_error, seq"
 )
+_QUALIFIED = ", ".join(f"e.{c.strip()}" for c in _COLUMNS.split(","))
 BACKOFF_CAP_SECONDS = 900.0
 
 
@@ -49,10 +59,31 @@ class LogRecord:
     attempts: int
     claimed_at: datetime | None
     last_error: str | None
+    seq: int | None = None  # ordered topics: its place in the tenant's topic (A-104)
 
     @classmethod
     def from_row(cls, row: tuple[Any, ...]) -> LogRecord:
         return cls(*row)
+
+    @property
+    def position(self) -> int:
+        """The record's place in its ordered topic."""
+        if self.seq is None:
+            raise ValueError(f"offset {self.offset} on {self.topic!r} has no seq")
+        return self.seq
+
+
+def _next_seq(cur: psycopg.Cursor[Any], tenant_id: str, topic: str) -> int:
+    """Advance the (tenant, topic) counter; its row stays locked until this transaction
+    ends, so the next producer on the same topic waits for the commit (A-104)."""
+    row = cur.execute(
+        "INSERT INTO tenant_sequences (tenant_id, name, value) VALUES (%s, %s, 1)"
+        " ON CONFLICT (tenant_id, name) DO UPDATE SET value = tenant_sequences.value + 1"
+        " RETURNING value",
+        (tenant_id, f"topic:{topic}"),
+    ).fetchone()
+    assert row is not None
+    return int(row[0])
 
 
 def append(
@@ -64,10 +95,13 @@ def append(
     source_ts: datetime,
     ref: str,
 ) -> int:
+    """Append one record and return its offset. A record on an ordered topic also takes
+    the next seq of its tenant's topic."""
+    seq = _next_seq(cur, tenant_id, topic) if kind_of(topic) is TopicKind.ordered else None
     row = cur.execute(
-        "INSERT INTO event_log (tenant_id, topic, partition_key, source_ts, ref)"
-        ' VALUES (%s, %s, %s, %s, %s) RETURNING "offset"',
-        (tenant_id, topic, partition_key, source_ts, ref),
+        "INSERT INTO event_log (tenant_id, topic, partition_key, source_ts, ref, seq)"
+        ' VALUES (%s, %s, %s, %s, %s, %s) RETURNING "offset"',
+        (tenant_id, topic, partition_key, source_ts, ref, seq),
     ).fetchone()
     assert row is not None
     return int(row[0])
@@ -78,30 +112,38 @@ def get(cur: psycopg.Cursor[Any], offset: int) -> LogRecord | None:
     return LogRecord.from_row(row) if row else None
 
 
-def fetch_after(
-    cur: psycopg.Cursor[Any], topic: str, last_offset: int, limit: int
-) -> list[LogRecord]:
+def fetch_after(cur: psycopg.Cursor[Any], topic: str, last_seq: int, limit: int) -> list[LogRecord]:
+    """The tenant's next records on an ordered topic, in seq order (row-level security
+    scopes the read to the transaction's tenant)."""
     rows = cur.execute(
-        f'SELECT {_COLUMNS} FROM event_log WHERE topic = %s AND "offset" > %s'
-        ' ORDER BY "offset" LIMIT %s',
-        (topic, last_offset, limit),
+        f"SELECT {_COLUMNS} FROM event_log WHERE topic = %s AND seq > %s ORDER BY seq LIMIT %s",
+        (topic, last_seq, limit),
     ).fetchall()
     return [LogRecord.from_row(r) for r in rows]
 
 
-def read_cursor(cur: psycopg.Cursor[Any], consumer: str, topic: str) -> int:
+def committed_seq(cur: psycopg.Cursor[Any], topic: str) -> int:
+    """The highest seq the tenant's topic has committed (0 when empty)."""
     row = cur.execute(
-        "SELECT last_offset FROM consumer_offsets WHERE consumer = %s AND topic = %s",
+        "SELECT coalesce(max(seq), 0) FROM event_log WHERE topic = %s", (topic,)
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def read_cursor(cur: psycopg.Cursor[Any], consumer: str, topic: str) -> int:
+    """The last seq the consumer completed on the topic."""
+    row = cur.execute(
+        "SELECT last_seq FROM consumer_offsets WHERE consumer = %s AND topic = %s",
         (consumer, topic),
     ).fetchone()
     return int(row[0]) if row else 0
 
 
-def advance_cursor(cur: psycopg.Cursor[Any], consumer: str, topic: str, last_offset: int) -> None:
+def advance_cursor(cur: psycopg.Cursor[Any], consumer: str, topic: str, last_seq: int) -> None:
     cur.execute(
-        "INSERT INTO consumer_offsets (consumer, topic, last_offset) VALUES (%s, %s, %s)"
-        " ON CONFLICT (consumer, topic) DO UPDATE SET last_offset = EXCLUDED.last_offset",
-        (consumer, topic, last_offset),
+        "INSERT INTO consumer_offsets (consumer, topic, last_seq) VALUES (%s, %s, %s)"
+        " ON CONFLICT (consumer, topic) DO UPDATE SET last_seq = EXCLUDED.last_seq",
+        (consumer, topic, last_seq),
     )
 
 
@@ -109,20 +151,24 @@ def claim(
     cur: psycopg.Cursor[Any], topic: str, limit: int, visibility_seconds: int
 ) -> list[LogRecord]:
     """Claim pending rows whose wait is over, or claimed rows whose visibility timeout has
-    expired."""
+    expired. At most `limit`: the pick is a materialized CTE, run once. As `IN (SELECT ...
+    LIMIT n FOR UPDATE SKIP LOCKED)` the planner could rescan the subquery once per row of
+    a nested loop, and every rescan skipped the rows this statement had just claimed, so one
+    pass took the whole topic past the tenant's concurrency cap (A-104)."""
     rows = cur.execute(
-        "UPDATE event_log SET status = 'claimed', claimed_at = now(), attempts = attempts + 1"
-        ' WHERE "offset" IN ('
+        "WITH picked AS MATERIALIZED ("
         '   SELECT "offset" FROM event_log'
         "   WHERE topic = %s AND ("
         "     (status = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= now()))"
         "     OR (status = 'claimed' AND claimed_at < now() - make_interval(secs => %s))"
         "   )"
         '   ORDER BY "offset" LIMIT %s FOR UPDATE SKIP LOCKED'
-        f") RETURNING {_COLUMNS}",
+        ") UPDATE event_log e SET status = 'claimed', claimed_at = now(),"
+        ' attempts = e.attempts + 1 FROM picked WHERE e."offset" = picked."offset"'
+        f" RETURNING {_QUALIFIED}",
         (topic, visibility_seconds, limit),
     ).fetchall()
-    return [LogRecord.from_row(r) for r in rows]
+    return sorted((LogRecord.from_row(r) for r in rows), key=lambda r: r.offset)
 
 
 def mark_done(cur: psycopg.Cursor[Any], offset: int) -> None:

@@ -205,5 +205,6 @@ def test_entity_ref_parsing_survives_colons_in_ids(
             source_ts=TS,
             ref="evidence:hris:evidence:doc:x.md:training_record:x.md:abc123",
         )
-        record = next(r for r in event_log.fetch_after(cur, "entities", offset - 1, 1))
+        record = event_log.get(cur, offset)
+        assert record is not None
     assert impact.parse_entity_ref(record) == ("evidence", "hris:evidence:doc:x.md")

@@ -103,9 +103,8 @@ class _Picky(OrderedConsumer):
 def _fresh(consumer: OrderedConsumer, db: ScopedDB) -> None:
     """Start the consumer after everything other tests left on the shared topic."""
     with db.transaction() as cur:
-        row = cur.execute('SELECT coalesce(max("offset"), 0) FROM event_log').fetchone()
-        assert row is not None
-        event_log.advance_cursor(cur, consumer.cursor_name, consumer.topic, int(row[0]))
+        newest = event_log.committed_seq(cur, consumer.topic)
+        event_log.advance_cursor(cur, consumer.cursor_name, consumer.topic, newest)
 
 
 def _append(db: ScopedDB, topic: str, ts: str, ref: str) -> int:
