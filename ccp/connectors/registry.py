@@ -18,6 +18,16 @@ CONNECTOR_NAMES: tuple[ConnectorName, ...] = ("github", "hris", "manual")
 SOURCE_KINDS: tuple[SourceKind, ...] = ("fixture", "live")
 
 
+def declared_scopes() -> dict[str, frozenset[str]]:
+    """Every scope each connector can mark in a sync run, fixture or live (A-118); a test's
+    required sources (A-123) must name one of these."""
+    return {
+        "github": frozenset(GitHubLiveConnector.scopes) | frozenset(GitHubFixtureConnector.scopes),
+        "hris": frozenset(HrisFixtureConnector.scopes),
+        "manual": frozenset(ManualUploadConnector.scopes),
+    }
+
+
 def pdf_limits(settings: Settings) -> PdfLimits:
     return PdfLimits(
         max_bytes=settings.ccp_pdf_max_bytes,

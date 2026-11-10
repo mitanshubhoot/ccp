@@ -1,6 +1,7 @@
 # Test specs (spec.md Layer 6). Everything the router and the evaluators need is declared
 # here at authoring time: how the test is evaluated, which evidence it consumes, which
-# rule decides, where valid time comes from, and when evidence goes stale.
+# rule decides, where valid time comes from, when evidence goes stale, and which sources
+# must have been seen whole for a PASS to stand (requires_complete, A-123).
 tests:
   - test_id: GH-1
     title: A terminated person still holds an active GitHub org membership or repo collaboration
@@ -10,6 +11,7 @@ tests:
     subject_kind: person
     controls: [CTL-ACCESS-REVOKE]
     rule: gh1_terminated_github_access
+    requires_complete: [github:members, github:collaborators]
     valid_from_strategy: event_time_plus_sla
     parameters: {sla_hours_key: termination_revocation_sla_hours}
     revalidate_every_days: 30
@@ -21,6 +23,7 @@ tests:
     subject_kind: org
     controls: [CTL-PRIV-LIMIT]
     rule: gh2_admin_limit
+    requires_complete: [github:members]
     valid_from_strategy: evidence_observed
     parameters: {limit_key: org_admin_limit}
     revalidate_every_days: 30
@@ -67,6 +70,7 @@ tests:
     subject_kind: person
     controls: [CTL-ACCESS-REVOKE]
     rule: hr1_offboarding_sla
+    requires_complete: [github:members, github:collaborators, hris:identities]
     valid_from_strategy: event_time_plus_sla
     parameters: {sla_hours_key: termination_revocation_sla_hours}
     revalidate_every_days: 30
@@ -78,6 +82,7 @@ tests:
     subject_kind: tenant
     controls: [CTL-MFA]
     rule: hr2_mfa_everywhere
+    requires_complete: [hris:identities]
     valid_from_strategy: evidence_observed
     revalidate_every_days: 30
   - test_id: HR-3
@@ -116,5 +121,6 @@ tests:
     subject_kind: tenant
     controls: [CTL-ACCOUNT-OWNER]
     rule: hr5_shared_account_owner
+    requires_complete: [hris:accounts]
     valid_from_strategy: evidence_observed
     revalidate_every_days: 30

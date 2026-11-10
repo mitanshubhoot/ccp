@@ -276,7 +276,7 @@ def test_a_verdict_and_its_announcement_commit_together(
     acme = dbs["acme"]
     request = EvaluationRequest("HR-1", JANE, TRIGGER, "full_run")
     _queue(acme, "HR-1", JANE)
-    key = evaluations.expected_key(settings, "acme", request)
+    key = evaluations.expected_key(settings, "acme", request, acme)
     real_append = event_log.append
     crashes = {"left": 1}
 

@@ -57,6 +57,7 @@ def parameters_hash(spec: TestSpec, tenant: TenantSettings) -> str:
     material = {
         "parameters": dict(spec.parameters),
         "evidence_max_age_days": spec.evidence_max_age_days,
+        "requires_complete": sorted(spec.requires_complete),  # what a PASS rests on (A-123)
         "tenant": {name: getattr(tenant, name) for name in RULE_SETTINGS},
     }
     canonical = json.dumps(material, sort_keys=True, default=str, separators=(",", ":"))

@@ -7,9 +7,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from ccp.config import Settings
+from ccp.evaluators import completeness
 from ccp.evaluators.rule_versions import rule_stamp
 from ccp.evaluators.verdict import TriggerReason, Verdict, evaluation_key
 from ccp.identity import resolver
+from ccp.ingest import sync_runs
+from ccp.ingest.sync_runs import ScopeState
 from ccp.knowledge.graph import TestSpec
 from ccp.normalize import repository
 from ccp.normalize.entities import AccessGrant, Asset, Evidence, Person
@@ -32,6 +35,7 @@ class EvaluationContext:
     canonical: dict[str, str]
     pending_review: set[str]
     reason: TriggerReason = "impact"
+    sources: dict[str, ScopeState] = field(default_factory=dict)  # latest pulls (A-123)
     _groups: dict[str, set[str]] = field(default_factory=dict, repr=False)
 
     def canonical_of(self, entity_id: str) -> str:
@@ -52,6 +56,11 @@ class EvaluationContext:
 
     def is_pending_review(self, canonical_id: str) -> bool:
         return bool(self.group(canonical_id) & self.pending_review)
+
+    def sources_digest(self) -> str:
+        """The required sources' states, part of the evaluation key (A-123)."""
+        stale_after = timedelta(hours=self.settings.ccp_sync_stale_hours)
+        return completeness.digest(self.spec, self.sources, self.now, stale_after)
 
     @property
     def sla(self) -> timedelta:
@@ -89,6 +98,7 @@ class EvaluationContext:
                 None,
                 None,
                 rule=rule_stamp(self.spec, self.tenant.settings),
+                sources=self.sources_digest(),
             ),
             tenant_id=self.tenant.tenant_id,
             test_id=self.spec.test_id,
@@ -129,4 +139,5 @@ def load_context(
         canonical=resolver.canonical_map(db),
         pending_review=resolver.pending_review_entities(db),
         reason=reason,
+        sources=sync_runs.latest_scopes(db),
     )

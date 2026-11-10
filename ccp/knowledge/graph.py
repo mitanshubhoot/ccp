@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from ccp.connectors.registry import declared_scopes
 from ccp.storage.scoped import ScopedDB
 from ccp.types import EvidenceType
 
@@ -82,6 +83,20 @@ class TestSpec(BaseModel):
     extraction_schema: str | None = None
     evidence_max_age_days: int | None = None
     revalidate_every_days: int | None = None
+    # The sources a PASS rests on (A-123): "connector:scope" pairs whose latest pull must have
+    # seen them whole, and recently, or a PASS is withheld as needs_review. A test whose PASS
+    # rests on an absence names the listings that absence comes from.
+    requires_complete: tuple[str, ...] = ()
+
+    @field_validator("requires_complete")
+    @classmethod
+    def _known_scopes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        known = declared_scopes()
+        for ref in value:
+            connector, _, scope = ref.partition(":")
+            if scope not in known.get(connector, frozenset()):
+                raise ValueError(f"unknown source scope {ref!r}; a connector:scope is required")
+        return value
 
     @model_validator(mode="after")
     def _interpretive_needs_extraction(self) -> TestSpec:

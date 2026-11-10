@@ -76,6 +76,7 @@ def test_same_record_processed_twice_writes_once(
         None,
         None,
         rule=_stamp(settings, "globex", "HR-5"),
+        sources="hris:accounts=complete",  # the fixture pull saw the accounts whole (A-123)
     )
     assert globex.fetch_one("SELECT count(*) FROM verdicts WHERE evaluation_key = %s", (key,)) == (
         1,

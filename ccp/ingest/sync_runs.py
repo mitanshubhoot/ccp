@@ -108,6 +108,29 @@ def recent(db: ScopedDB, limit: int = 20) -> list[dict[str, Any]]:
     return out
 
 
+@dataclass(frozen=True)
+class ScopeState:
+    """How a scope's latest pull left it (A-123)."""
+
+    status: str
+    finished_at: datetime
+    run_id: str
+
+
+def latest_scopes(db: ScopedDB) -> dict[str, ScopeState]:
+    """Every "connector:scope" the tenant's runs have marked, as its latest run left it."""
+    rows = db.fetch_all(
+        "SELECT DISTINCT ON (r.connector, s.scope) r.connector, s.scope, s.status,"
+        " r.finished_at, r.run_id FROM sync_runs r JOIN sync_run_scopes s"
+        " ON s.tenant_id = r.tenant_id AND s.run_id = r.run_id"
+        " ORDER BY r.connector, s.scope, r.finished_at DESC, r.run_id DESC"
+    )
+    return {
+        f"{connector}:{scope}": ScopeState(str(status), finished, str(run_id))
+        for connector, scope, status, finished, run_id in rows
+    }
+
+
 def last_complete(db: ScopedDB, connector: str, scope: str) -> datetime | None:
     """When the scope was last seen in full: the newest run that marked it complete."""
     row = db.fetch_one(

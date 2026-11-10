@@ -12,18 +12,18 @@ one subject is never evaluated twice at once (A-107).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 
 from ccp.config import Settings, TenantSettings
-from ccp.evaluators import deterministic, registry, tier2
+from ccp.evaluators import completeness, deterministic, registry, tier2
 from ccp.evaluators import verdict as verdicts
 from ccp.evaluators.budget_gate import check_daily_budget
 from ccp.evaluators.context import load_context
 from ccp.evaluators.impact import EvaluationRequest, enqueue
 from ccp.evaluators.rule_versions import rule_stamp
 from ccp.evaluators.verdict import TriggerReason, Verdict, evaluation_key
-from ccp.ingest import event_log
+from ccp.ingest import event_log, sync_runs
 from ccp.ingest.consumers import ParallelConsumer, ParkedError
 from ccp.ingest.event_log import LogRecord
 from ccp.ingest.worker import register
@@ -76,8 +76,8 @@ def evaluate_request(
     ctx = load_context(
         db, settings, spec, request.trigger_observed_at, now, reason=_reason(request.reason)
     )
-    if spec.tier == 1:
-        return deterministic.evaluate(ctx, request.subject)
+    if spec.tier == 1:  # no PASS over a partial or stale population (A-123)
+        return completeness.guard(ctx, deterministic.evaluate(ctx, request.subject))
     evaluator = registry.evaluator_for(spec.tier)
     if evaluator is None:
         raise ParkedError(
@@ -85,9 +85,10 @@ def evaluate_request(
         )
     active = providers or tier2.Providers.from_settings(settings)
     try:
-        return evaluator(
+        verdict = evaluator(
             db, settings, ctx, spec, request.subject, active, reason=_reason(request.reason)
         )
+        return completeness.guard(ctx, verdict)
     except tier2.AITierUnavailable as exc:
         raise ParkedError(str(exc)) from exc
     except EmbeddingModelMismatch as exc:
@@ -115,10 +116,22 @@ def cached_tenant_settings(tenant_id: str, settings: Settings) -> TenantSettings
     return settings.load_tenants()[tenant_id]
 
 
-def expected_key(settings: Settings, tenant_id: str, request: EvaluationRequest) -> str:
-    """The evaluation key the routed tier will use, known before it runs."""
+def expected_key(
+    settings: Settings,
+    tenant_id: str,
+    request: EvaluationRequest,
+    db: ScopedDB | None = None,
+    now: datetime | None = None,
+) -> str:
+    """The evaluation key the routed tier will use, known before it runs. A tier 1 test
+    with required sources keys on their state too (A-123), read from `db`."""
     spec = cached_graph().tests[request.test_id]
     model = {2: settings.ccp_tier2_model, 3: settings.ccp_tier3_model}.get(spec.tier)
+    sources = ""
+    if spec.tier == 1 and spec.requires_complete and db is not None:
+        stale_after = timedelta(hours=settings.ccp_sync_stale_hours)
+        moment = now or datetime.now(UTC)
+        sources = completeness.digest(spec, sync_runs.latest_scopes(db), moment, stale_after)
     return evaluation_key(
         tenant_id,
         spec.test_id,
@@ -127,6 +140,7 @@ def expected_key(settings: Settings, tenant_id: str, request: EvaluationRequest)
         spec.prompt_version if spec.tier in (2, 3) else None,
         model,
         rule=rule_stamp(spec, cached_tenant_settings(tenant_id, settings)),
+        sources=sources,
     )
 
 
@@ -184,9 +198,10 @@ class EvaluationsConsumer(ParallelConsumer):
                 "reason": request.reason,
             },
         ) as s:
-            stored = verdicts.load_by_key(
-                self._db, expected_key(self.settings, self._db.tenant.tenant_id, request)
+            key = expected_key(
+                self.settings, self._db.tenant.tenant_id, request, self._db, self.now
             )
+            stored = verdicts.load_by_key(self._db, key)
             if stored is not None:  # done before (a retry after a crash): no model call
                 verdict, inserted = stored, False
                 s.event("verdict_already_stored")

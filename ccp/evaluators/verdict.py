@@ -80,20 +80,23 @@ def evaluation_key(
     model: str | None,
     *,
     rule: str,
+    sources: str = "",
 ) -> str:
     """``rule`` is the rule stamp (rule version and parameters hash, A-101): a corrected
-    rule or changed parameters over the same data is a new evaluation."""
-    material = "|".join(
-        [
-            tenant_id,
-            test_id,
-            subject_key,
-            trigger_observed_at.astimezone(UTC).isoformat(),
-            prompt_version or "",
-            model or "",
-            rule,
-        ]
-    )
+    rule or changed parameters over the same data is a new evaluation. ``sources`` is the
+    state of the sources a PASS rests on (A-123): a population that goes partial or stale,
+    or comes back whole, is a new evaluation too. Empty for a test that requires none, so
+    those keys are as before."""
+    parts = [
+        tenant_id,
+        test_id,
+        subject_key,
+        trigger_observed_at.astimezone(UTC).isoformat(),
+        prompt_version or "",
+        model or "",
+        rule,
+    ]
+    material = "|".join([*parts, sources] if sources else parts)
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
