@@ -5,7 +5,8 @@
 Tier 1 never parks: the daily model budget applies only to tiers 2 and 3. A record whose
 verdict is already stored makes no model call. A tier 2 record with no model client
 configured parks (AI tier unavailable), never dead-letters. The tenant's `max_concurrency`
-caps how many records one pass claims.
+caps the records in flight across every worker, counted and claimed in one transaction, and
+one subject is never evaluated twice at once (A-107).
 """
 
 from __future__ import annotations
@@ -142,6 +143,7 @@ def unannounced(db: ScopedDB) -> int:
 class EvaluationsConsumer(ParallelConsumer):
     name = "evaluations"
     topic = "evaluations"
+    one_per_key = True  # an evaluation's partition key is its tenant and subject (A-107)
 
     def __init__(
         self,
@@ -155,6 +157,7 @@ class EvaluationsConsumer(ParallelConsumer):
             max_attempts=settings.ccp_max_attempts,
             visibility_seconds=settings.ccp_claim_visibility_seconds,
             base_delay=settings.ccp_retry_base_seconds,
+            max_in_flight=db.tenant.settings.max_concurrency,
         )
         self.settings = settings
         self.now = now
@@ -166,23 +169,6 @@ class EvaluationsConsumer(ParallelConsumer):
         if self._providers is None:
             self._providers = tier2.Providers.from_settings(self.settings)
         return self._providers
-
-    def in_flight(self) -> int:
-        """Records held under a live lease (A-105); a claim from before leases counts until
-        its old visibility timeout."""
-        row = self._db.fetch_one(
-            "SELECT count(*) FROM event_log WHERE topic = %s AND status = 'claimed'"
-            " AND coalesce(lease_expires_at, claimed_at + make_interval(secs => %s)) > now()",
-            (self.topic, self.visibility_seconds),
-        )
-        return int(row[0]) if row else 0
-
-    def run_once(self, limit: int = 10) -> int:
-        """Claim at most (max_concurrency - in flight) records, never more than `limit`."""
-        allowed = min(limit, self._db.tenant.settings.max_concurrency - self.in_flight())
-        if allowed <= 0:
-            return 0
-        return super().run_once(allowed)
 
     def handle(self, record: LogRecord) -> None:
         request = EvaluationRequest.from_ref(record.ref)

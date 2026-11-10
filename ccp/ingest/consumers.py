@@ -264,6 +264,9 @@ class LeaseKeeper:
 class ParallelConsumer(ABC):
     name: str
     topic: str
+    # A-107: at most one record per partition key in flight (an evaluation's key is its
+    # subject), so two evaluations of one subject never run at once.
+    one_per_key: bool = False
 
     def __init__(
         self,
@@ -272,6 +275,7 @@ class ParallelConsumer(ABC):
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
         visibility_seconds: float = 60,
         base_delay: float = DEFAULT_BASE_DELAY,
+        max_in_flight: int | None = None,
     ) -> None:
         if kind_of(self.topic) is not TopicKind.parallel:
             raise TypeError(f"{self.topic!r} is not a parallel topic")
@@ -279,17 +283,43 @@ class ParallelConsumer(ABC):
         self.max_attempts = max_attempts
         self.visibility_seconds = visibility_seconds  # the lease length (A-105)
         self.base_delay = base_delay
+        self.max_in_flight = max_in_flight  # the tenant's cap, across every worker (A-107)
         self.owner = worker_identity()
         self.lost_leases = 0
 
     @abstractmethod
     def handle(self, record: LogRecord) -> None: ...
 
+    def in_flight(self) -> int:
+        """Records of this tenant's topic held under a live lease."""
+        with self._db.transaction() as cur:
+            return event_log.live_claims(cur, self.topic, self.visibility_seconds)
+
+    def _allowed(self, cur: psycopg.Cursor[Any], limit: int) -> int:
+        """How many this pass may claim. Under a cap, the count and the claim share one
+        transaction behind the tenant's cap lock, so two workers cannot both read the same
+        room and fill it twice (A-107)."""
+        if self.max_in_flight is None:
+            return limit
+        event_log.lock(cur, f"cap:{self._db.tenant.tenant_id}:{self.topic}")
+        held = event_log.live_claims(cur, self.topic, self.visibility_seconds)
+        return min(limit, self.max_in_flight - held)
+
     def run_once(self, limit: int = 10) -> int:
         """Claim up to `limit` records and work through them under a heartbeat. Returns how
         many were claimed."""
         with self._db.transaction() as cur:
-            records = event_log.claim(cur, self.topic, limit, self.visibility_seconds, self.owner)
+            allowed = self._allowed(cur, limit)
+            if allowed <= 0:
+                return 0
+            records = event_log.claim(
+                cur,
+                self.topic,
+                allowed,
+                self.visibility_seconds,
+                self.owner,
+                one_per_key=self.one_per_key,
+            )
         if not records:
             return 0
         with LeaseKeeper(self._db, records, self.visibility_seconds) as keeper:
@@ -304,14 +334,33 @@ class ParallelConsumer(ABC):
     def next_due(self) -> datetime | None:
         """When a record of this topic next falls due for the tenant (A-106): a pending one
         now or when its backoff ends, a claimed one when its lease runs out; None when
-        nothing is pending or claimed."""
+        nothing is pending or claimed. A record waiting behind its key's live claim is not
+        due on its own: the claim's lease bounds it, and its completion notifies (A-107)."""
+        waiting = (
+            " AND NOT (e.status = 'pending' AND EXISTS (SELECT 1 FROM event_log c"
+            " WHERE c.topic = e.topic AND c.partition_key = e.partition_key"
+            " AND c.status = 'claimed' AND coalesce(c.lease_expires_at,"
+            " c.claimed_at + make_interval(secs => %(lease)s)) > now()))"
+            if self.one_per_key
+            else ""
+        )
         row = self._db.fetch_one(
-            "SELECT min(CASE WHEN status = 'pending' THEN coalesce(next_attempt_at, now())"
-            " ELSE coalesce(lease_expires_at, claimed_at + make_interval(secs => %s)) END)"
-            " FROM event_log WHERE topic = %s AND status IN ('pending', 'claimed')",
-            (self.visibility_seconds, self.topic),
+            "SELECT min(CASE WHEN e.status = 'pending' THEN coalesce(e.next_attempt_at, now())"
+            " ELSE coalesce(e.lease_expires_at, e.claimed_at + make_interval(secs => %(lease)s))"
+            " END) FROM event_log e WHERE e.topic = %(topic)s"
+            f" AND e.status IN ('pending', 'claimed'){waiting}",
+            {"lease": self.visibility_seconds, "topic": self.topic},
         )
         return row[0] if row else None
+
+    def _wake_waiting(self, record: LogRecord) -> None:
+        """A record left the claimed state: wake the workers if its key has another record
+        waiting behind it (A-107)."""
+        if not self.one_per_key:
+            return
+        with self._db.transaction() as cur:
+            if event_log.waiting_on_key(cur, record):
+                event_log.notify(cur, record.tenant_id, record.topic)
 
     def _lost(self, record: LogRecord, when: str) -> None:
         self.lost_leases += 1
@@ -369,6 +418,8 @@ class ParallelConsumer(ABC):
                 moved = event_log.mark_done(cur, record.offset, lease=lease)
         if not moved:
             self._lost(record, "while it was handled; its outcome is dropped")
+        else:
+            self._wake_waiting(record)
 
     def _dead(self, record: LogRecord, error: str) -> bool:
         with self._db.transaction() as cur:

@@ -10,6 +10,8 @@ compliance_state row per verdict through the bitemporal writer.
 
 Idempotent on verdict_id: re-consuming the topic writes nothing. A needs_review verdict is
 written as a fact ("as of now, we do not know"); the human's later decision supersedes it.
+A verdict about an earlier moment than the subject's head is filed into history, bounded at
+the next newer fact, and never displaces the newer head (A-107).
 """
 
 from __future__ import annotations
@@ -75,6 +77,7 @@ def write_verdict(
         verdict_id=verdict.verdict_id,
         valid_from=verdict.valid_from,
         reason=reason,
+        late_into_history=True,  # an older fact never displaces a newer head (A-107)
     )
 
 

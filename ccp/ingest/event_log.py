@@ -173,8 +173,34 @@ def advance_cursor(cur: psycopg.Cursor[Any], consumer: str, topic: str, last_seq
     )
 
 
+# A record a claim may take: pending with its wait over, or claimed under a lease that ran out.
+_DUE = (
+    "((e.status = 'pending' AND (e.next_attempt_at IS NULL OR e.next_attempt_at <= now()))"
+    " OR (e.status = 'claimed' AND coalesce(e.lease_expires_at,"
+    " e.claimed_at + make_interval(secs => %(lease)s)) < now()))"
+)
+# Another record of the same partition key held under a live lease (A-107).
+_KEY_HELD = (
+    "EXISTS (SELECT 1 FROM event_log c WHERE c.topic = e.topic"
+    ' AND c.partition_key = e.partition_key AND c."offset" <> e."offset"'
+    " AND c.status = 'claimed' AND coalesce(c.lease_expires_at,"
+    " c.claimed_at + make_interval(secs => %(lease)s)) > now())"
+)
+_TAKE = (
+    "UPDATE event_log e SET status = 'claimed', claimed_at = now(),"
+    " attempts = e.attempts + 1, lease_token = gen_random_uuid()::text,"
+    " lease_owner = %(owner)s, lease_expires_at = now() + make_interval(secs => %(lease)s)"
+)
+
+
 def claim(
-    cur: psycopg.Cursor[Any], topic: str, limit: int, lease_seconds: float, owner: str = ""
+    cur: psycopg.Cursor[Any],
+    topic: str,
+    limit: int,
+    lease_seconds: float,
+    owner: str = "",
+    *,
+    one_per_key: bool = False,
 ) -> list[LogRecord]:
     """Claim up to `limit` records: pending ones whose wait is over, and claimed ones whose
     lease has run out. Each claim is a lease of `lease_seconds` with a fresh token, which the
@@ -184,24 +210,77 @@ def claim(
     At most `limit`: the pick is a materialized CTE, run once. As `IN (SELECT ... LIMIT n FOR
     UPDATE SKIP LOCKED)` the planner could rescan the subquery once per row of a nested loop,
     and every rescan skipped the rows this statement had just claimed, so one pass took the
-    whole topic past the tenant's concurrency cap (A-104)."""
+    whole topic past the tenant's concurrency cap (A-104).
+
+    `one_per_key` (A-107): never a record whose partition key has another record under a live
+    lease, and at most one per key, the oldest first. Two claimers racing for one key are
+    kept apart by a transaction lock on the key: the second skips it, and once the first
+    commits, its live claim keeps the key closed."""
+    params = {"topic": topic, "lease": lease_seconds, "limit": limit, "owner": owner or None}
+    if not one_per_key:
+        rows = cur.execute(
+            "WITH picked AS MATERIALIZED ("
+            f'   SELECT "offset" FROM event_log e WHERE e.topic = %(topic)s AND {_DUE}'
+            '   ORDER BY "offset" LIMIT %(limit)s FOR UPDATE SKIP LOCKED'
+            f") {_TAKE}"
+            ' FROM picked WHERE e."offset" = picked."offset"'
+            f" RETURNING {_QUALIFIED}",
+            params,
+        ).fetchall()
+        return sorted((LogRecord.from_row(r) for r in rows), key=lambda r: r.offset)
+    candidates = cur.execute(
+        f'SELECT e."offset", e.partition_key FROM event_log e WHERE e.topic = %(topic)s'
+        f" AND {_DUE} AND NOT {_KEY_HELD}"
+        ' ORDER BY e."offset" LIMIT %(scan)s FOR UPDATE SKIP LOCKED',
+        {**params, "scan": limit * 4 + 8},
+    ).fetchall()
+    chosen: list[int] = []
+    keys: set[str] = set()
+    for offset, key in candidates:
+        if len(chosen) >= limit:
+            break
+        if key in keys or not try_lock(cur, f"subject:{topic}:{key}"):
+            continue  # one per key here; another claimer is taking this key right now
+        held = cur.execute(  # a claim on this key committed since the candidates were read
+            f'SELECT {_KEY_HELD} FROM event_log e WHERE e."offset" = %(offset)s',
+            {**params, "offset": offset},
+        ).fetchone()
+        if held is not None and held[0]:
+            continue
+        keys.add(str(key))
+        chosen.append(int(offset))
+    if not chosen:
+        return []
     rows = cur.execute(
-        "WITH picked AS MATERIALIZED ("
-        '   SELECT "offset" FROM event_log'
-        "   WHERE topic = %(topic)s AND ("
-        "     (status = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= now()))"
-        "     OR (status = 'claimed' AND coalesce(lease_expires_at,"
-        "         claimed_at + make_interval(secs => %(lease)s)) < now())"
-        "   )"
-        '   ORDER BY "offset" LIMIT %(limit)s FOR UPDATE SKIP LOCKED'
-        ") UPDATE event_log e SET status = 'claimed', claimed_at = now(),"
-        " attempts = e.attempts + 1, lease_token = gen_random_uuid()::text,"
-        " lease_owner = %(owner)s, lease_expires_at = now() + make_interval(secs => %(lease)s)"
-        ' FROM picked WHERE e."offset" = picked."offset"'
-        f" RETURNING {_QUALIFIED}",
-        {"topic": topic, "lease": lease_seconds, "limit": limit, "owner": owner or None},
+        f'{_TAKE} WHERE e."offset" = ANY(%(chosen)s) RETURNING {_QUALIFIED}',
+        {**params, "chosen": chosen},
     ).fetchall()
     return sorted((LogRecord.from_row(r) for r in rows), key=lambda r: r.offset)
+
+
+def live_claims(cur: psycopg.Cursor[Any], topic: str, lease_seconds: float) -> int:
+    """Records of the tenant's topic held under a live lease (A-105, A-107)."""
+    row = cur.execute(
+        "SELECT count(*) FROM event_log WHERE topic = %s AND status = 'claimed'"
+        " AND coalesce(lease_expires_at, claimed_at + make_interval(secs => %s)) > now()",
+        (topic, lease_seconds),
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def lock(cur: psycopg.Cursor[Any], key: str) -> None:
+    """A lock on `key` held until this transaction ends, waiting for it if need be."""
+    cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (key,))
+
+
+def waiting_on_key(cur: psycopg.Cursor[Any], record: LogRecord) -> bool:
+    """Whether another record of the same partition key is pending (A-107)."""
+    row = cur.execute(
+        "SELECT 1 FROM event_log WHERE topic = %s AND partition_key = %s"
+        " AND status = 'pending' AND \"offset\" <> %s LIMIT 1",
+        (record.topic, record.partition_key, record.offset),
+    ).fetchone()
+    return row is not None
 
 
 def renew(cur: psycopg.Cursor[Any], held: Mapping[int, str], lease_seconds: float) -> set[int]:

@@ -163,17 +163,24 @@ def test_trigger_reasons_map_onto_supersession_reasons_and_the_chain_answers_bot
     ]
     assert [r.recorded_seq for r in chain] == sorted(r.recorded_seq for r in chain)
     r2, r3 = chain[2], chain[3]
-    # the late fact is now our belief about the present
+    # the late fact is filed into history (A-107): bounded at the next newer fact, never the
+    # head, so the human's newer decision stays our belief about the present
+    assert r3.history and not r2.history and r3.supersedes_row_id is None
+    assert r3.valid_to is not None and r3.valid_to <= r2.valid_from
     head3 = reader.current_state(acme, JANE)
-    assert head3 is not None and head3.row_id == r3.row_id
+    assert head3 is not None and head3.row_id == r2.row_id
+    assert [r.row_id for r in reader.heads(acme) if r.subject_key == JANE] == [r2.row_id]
     # "what did we believe at the moment the human decision was recorded?" -> the human's pass
     then = r2.recorded_at
     believed = reader.state_as_of(acme, JANE, valid_at=then, known_at=then)
     assert believed is not None and believed.row_id == r2.row_id
     assert reader.believed_state(acme, JANE, then) is not None
-    # "knowing everything we know now, what was true at that same moment?" -> the late fail
+    # "knowing everything we know now, what was true at that same moment?" -> still the pass
     corrected = reader.state_as_of(acme, JANE, valid_at=then, known_at=datetime.now(UTC))
-    assert corrected is not None and corrected.row_id == r3.row_id
+    assert corrected is not None and corrected.row_id == r2.row_id
+    # ...and at the moment the late fact describes, the late fail
+    past = reader.state_as_of(acme, JANE, valid_at=r3.valid_from, known_at=datetime.now(UTC))
+    assert past is not None and past.row_id == r3.row_id
     before_anything = reader.state_as_of(
         acme, JANE, valid_at=NOW - timedelta(days=60), known_at=datetime.now(UTC)
     )

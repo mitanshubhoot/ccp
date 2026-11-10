@@ -37,8 +37,13 @@ def world(base_settings: Settings) -> Iterator[tuple[Settings, dict[str, ScopedD
 
 
 def _claim_one(db: ScopedDB, offset: int) -> event_log.LogRecord:
+    """Claim this record; anything else the claim took goes straight back to pending, so a
+    live lease left behind cannot hold a later test's subject (A-107)."""
     with db.transaction() as cur:
         records = event_log.claim(cur, "evaluations", 100, 300)
+        for other in records:
+            if other.offset != offset:
+                event_log.mark_retry(cur, other.offset, "not this test's", lease=other.lease_token)
     return next(r for r in records if r.offset == offset)
 
 
@@ -61,6 +66,8 @@ def test_same_record_processed_twice_writes_once(
     record = _claim_one(globex, offset)
     consumer.handle(record)  # first delivery
     consumer.handle(record)  # redelivery after a crash between handle and mark_done
+    with globex.transaction() as cur:  # the redelivery's worker finishes it
+        assert event_log.mark_done(cur, record.offset, lease=record.lease_token)
     key = evaluation_key(
         "globex",
         "HR-5",

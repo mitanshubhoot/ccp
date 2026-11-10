@@ -22,6 +22,13 @@ Writer guarantees:
   * per-subject advisory lock: two writers on one subject serialize into one chain;
   * per-tenant sequence, incremented inside the same transaction, so recorded order
     equals commit order and believed_state(known_at) is stable across runs.
+
+A late fact (A-107): a verdict about an earlier moment than the head's, recorded after it,
+can be filed into history instead of superseding the head. The row is bounded at the next
+newer fact's valid_from, supersedes nothing and is never a head, so the as-of queries see it
+for the past it describes and the newer belief stays current. Before, whichever verdict
+arrived last became the head, so a stale evaluation that finished late replaced a newer
+one. Explicit corrections still supersede, and may rewrite the past.
 """
 
 from __future__ import annotations
@@ -40,7 +47,7 @@ Reason = Literal["evaluation", "correction", "human_override", "late_event", "st
 
 _COLUMNS = (
     "row_id, tenant_id, subject_key, test_id, control_ids, status, verdict_id, valid_from,"
-    " valid_to, recorded_seq, recorded_at, supersedes_row_id, reason"
+    " valid_to, recorded_seq, recorded_at, supersedes_row_id, reason, history"
 )
 
 
@@ -59,6 +66,7 @@ class StateRow:
     recorded_at: datetime
     supersedes_row_id: str | None
     reason: str
+    history: bool = False  # a late fact filed into history: never a head (A-107)
 
     @classmethod
     def from_row(cls, r: tuple[Any, ...]) -> StateRow:
@@ -77,6 +85,7 @@ class StateRow:
             recorded_at=r[10],
             supersedes_row_id=r[11],
             reason=r[12],
+            history=bool(r[13]),
         )
 
 
@@ -92,15 +101,29 @@ def _next_seq(cur: Any, tenant_id: str, name: str = "compliance_state") -> int:
     return int(row[0])
 
 
+_HEAD = (
+    "NOT c.history"
+    " AND NOT EXISTS (SELECT 1 FROM compliance_state s WHERE s.supersedes_row_id = c.row_id)"
+)
+
+
 def _open_row(cur: Any, subject_key: str) -> StateRow | None:
-    """The head of the subject's chain: the row nobody supersedes."""
+    """The head of the subject's chain: the row nobody supersedes, never a history row."""
     row = cur.execute(
-        f"SELECT {_COLUMNS} FROM compliance_state c WHERE c.subject_key = %s"
-        " AND NOT EXISTS (SELECT 1 FROM compliance_state s WHERE s.supersedes_row_id = c.row_id)"
+        f"SELECT {_COLUMNS} FROM compliance_state c WHERE c.subject_key = %s AND {_HEAD}"
         " ORDER BY c.recorded_seq DESC LIMIT 1",
         (subject_key,),
     ).fetchone()
     return StateRow.from_row(row) if row else None
+
+
+def _next_fact(cur: Any, subject_key: str, after: datetime) -> datetime | None:
+    """The valid_from of the subject's next newer fact: where a late fact's validity ends."""
+    row = cur.execute(
+        "SELECT min(valid_from) FROM compliance_state WHERE subject_key = %s AND valid_from > %s",
+        (subject_key, after),
+    ).fetchone()
+    return row[0] if row else None
 
 
 def record(
@@ -114,10 +137,15 @@ def record(
     valid_from: datetime,
     valid_to: datetime | None = None,
     reason: Reason = "evaluation",
+    late_into_history: bool = False,
 ) -> StateRow:
     """Append one row for the subject, superseding the chain head if there is one.
 
-    Lock, read the head, stamp the sequence, insert, commit: one short transaction.
+    With `late_into_history`, a fact older than the head (valid_from before the head's) is
+    filed into history instead (A-107): bounded at the next newer fact, superseding nothing,
+    labelled `late_event` unless it carries a reason of its own. The choice is made under the
+    subject's lock, against the head as it stands. Lock, read the head, stamp the sequence,
+    insert, commit: one short transaction.
     """
     status_value = VerdictStatus(status).value
     with db.transaction() as cur:
@@ -126,14 +154,19 @@ def record(
             (f"{db.tenant.tenant_id}|{subject_key}",),
         )
         head = _open_row(cur, subject_key)
+        history = late_into_history and head is not None and valid_from < head.valid_from
+        supersedes = None if history or head is None else head.row_id
+        if history:
+            valid_to = _next_fact(cur, subject_key, valid_from)
+            reason = "late_event" if reason == "evaluation" else reason
         seq = _next_seq(cur, db.tenant.tenant_id)
         row_id = str(ULID())
         recorded_at = datetime.now(UTC)
         inserted = cur.execute(
             "INSERT INTO compliance_state (row_id, tenant_id, subject_key, test_id, control_ids,"
             " status, verdict_id, valid_from, valid_to, recorded_seq, recorded_at,"
-            " supersedes_row_id, reason)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            " supersedes_row_id, reason, history)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             f" RETURNING {_COLUMNS}",
             (
                 row_id,
@@ -147,8 +180,9 @@ def record(
                 valid_to,
                 seq,
                 recorded_at,
-                head.row_id if head else None,
+                supersedes,
                 reason,
+                history,
             ),
         ).fetchone()
         assert inserted is not None
@@ -201,10 +235,9 @@ def chain(db: ScopedDB, subject_key: str) -> list[StateRow]:
 
 
 def heads(db: ScopedDB) -> list[StateRow]:
-    """Every subject's current chain head; the report reads these."""
+    """Every subject's current chain head; the report reads these. History rows are never
+    heads (A-107)."""
     rows = db.fetch_all(
-        f"SELECT {_COLUMNS} FROM compliance_state c"
-        " WHERE NOT EXISTS (SELECT 1 FROM compliance_state s WHERE s.supersedes_row_id = c.row_id)"
-        " ORDER BY subject_key"
+        f"SELECT {_COLUMNS} FROM compliance_state c WHERE {_HEAD} ORDER BY subject_key"
     )
     return [StateRow.from_row(r) for r in rows]
