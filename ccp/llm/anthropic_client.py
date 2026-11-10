@@ -32,7 +32,12 @@ from pydantic import BaseModel
 from ccp.config import Settings
 from ccp.llm.budget import BudgetTracker
 from ccp.llm.client import ChatTurn, Completion, Extraction, SystemBlock, ToolCall, Usage
-from ccp.llm.errors import RetryableModelError, TerminalModelError, classify_status
+from ccp.llm.errors import (
+    RetryableModelError,
+    TerminalModelError,
+    UnpricedModel,
+    classify_status,
+)
 from ccp.observability import cost
 
 T = TypeVar("T", bound=BaseModel)
@@ -93,6 +98,15 @@ def _usage(model: str, raw: Any, *, batch: bool = False) -> Usage:
         batch=batch,
     )
     return Usage(input_tokens, output_tokens, cache_read, cache_write, usd)
+
+
+def _require_price(model: str) -> None:
+    """A model the price table does not know would be charged $0, so no dollar cap could
+    stop it: refused before any call (A-97)."""
+    if not cost.is_priced(model):
+        raise UnpricedModel(
+            f"no price for model {model!r} in ccp/observability/cost.py; add it before use"
+        )
 
 
 def _classify(exc: Exception) -> Exception:
@@ -199,6 +213,7 @@ class AnthropicClient:
         reasoning: bool = False,
         on_token: Callable[[str], None] | None = None,
     ) -> Extraction:
+        _require_price(model)
         params: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
@@ -265,6 +280,7 @@ class AnthropicClient:
         tracker: BudgetTracker,
         max_tokens: int = 512,
     ) -> Completion:
+        _require_price(model)
         params: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
@@ -300,6 +316,7 @@ class AnthropicClient:
         max_tokens: int = 1024,
         reasoning: bool = False,
     ) -> ChatTurn:
+        _require_price(model)
         params: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,

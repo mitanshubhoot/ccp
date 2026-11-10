@@ -11,6 +11,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+import psycopg
 from pydantic import BaseModel, ConfigDict, Field
 from ulid import ULID
 
@@ -101,7 +102,14 @@ _COLUMNS = (
 
 def persist(db: ScopedDB, verdict: Verdict) -> bool:
     """Insert-or-ignore on the evaluation key. Returns False when the verdict already existed."""
-    row = db.fetch_one(
+    with db.transaction() as cur:
+        return insert(cur, verdict)
+
+
+def insert(cur: psycopg.Cursor[Any], verdict: Verdict) -> bool:
+    """`persist` inside the caller's transaction, so the verdict and its announcement on the
+    verdicts topic commit together or not at all (A-97)."""
+    row = cur.execute(
         f"INSERT INTO verdicts ({_COLUMNS})"
         " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
         " ON CONFLICT (evaluation_key) DO NOTHING RETURNING verdict_id",
@@ -134,7 +142,7 @@ def persist(db: ScopedDB, verdict: Verdict) -> bool:
             json.dumps(verdict.response_json, default=str) if verdict.response_json else None,
             verdict.created_at,
         ),
-    )
+    ).fetchone()
     return row is not None
 
 
@@ -176,6 +184,12 @@ def _from_row(r: tuple[Any, ...]) -> Verdict:
 
 def load(db: ScopedDB, verdict_id: str) -> Verdict | None:
     row = db.fetch_one(f"SELECT {_COLUMNS} FROM verdicts WHERE verdict_id = %s", (verdict_id,))
+    return _from_row(row) if row else None
+
+
+def load_by_key(db: ScopedDB, key: str) -> Verdict | None:
+    """The stored verdict for an evaluation key, checked before any model call (A-97)."""
+    row = db.fetch_one(f"SELECT {_COLUMNS} FROM verdicts WHERE evaluation_key = %s", (key,))
     return _from_row(row) if row else None
 
 

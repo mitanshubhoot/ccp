@@ -195,14 +195,22 @@ def test_rate_limit_retries_then_succeeds_and_bad_request_is_terminal() -> None:
         [status_error(anthropic.RateLimitError, 429), _response(_Fields(answer="ok"))]
     )
     out = client.extract(
-        schema=_Fields, system=[SystemBlock("s")], user="u", model="m", tracker=_tracker()
+        schema=_Fields,
+        system=[SystemBlock("s")],
+        user="u",
+        model="claude-haiku-4-5",
+        tracker=_tracker(),
     )
     assert out.parsed.answer == "ok" and len(messages.calls) == 2
 
     client, _ = _client([status_error(anthropic.BadRequestError, 400)])
     with pytest.raises(TerminalModelError):
         client.extract(
-            schema=_Fields, system=[SystemBlock("s")], user="u", model="m", tracker=_tracker()
+            schema=_Fields,
+            system=[SystemBlock("s")],
+            user="u",
+            model="claude-haiku-4-5",
+            tracker=_tracker(),
         )
 
     client, messages = _client(
@@ -210,7 +218,11 @@ def test_rate_limit_retries_then_succeeds_and_bad_request_is_terminal() -> None:
     )
     with pytest.raises(RetryableModelError):
         client.extract(
-            schema=_Fields, system=[SystemBlock("s")], user="u", model="m", tracker=_tracker()
+            schema=_Fields,
+            system=[SystemBlock("s")],
+            user="u",
+            model="claude-haiku-4-5",
+            tracker=_tracker(),
         )
     assert len(messages.calls) == anthropic_client.RETRY_ATTEMPTS
 
@@ -218,7 +230,11 @@ def test_rate_limit_retries_then_succeeds_and_bad_request_is_terminal() -> None:
 def test_schema_miss_is_re_asked_once_then_terminal_and_refusal_is_terminal() -> None:
     client, messages = _client([_response(None), _response(_Fields(answer="second"))])
     out = client.extract(
-        schema=_Fields, system=[SystemBlock("s")], user="u", model="m", tracker=_tracker()
+        schema=_Fields,
+        system=[SystemBlock("s")],
+        user="u",
+        model="claude-haiku-4-5",
+        tracker=_tracker(),
     )
     assert out.parsed.answer == "second" and len(messages.calls) == 2
     assert messages.calls[1]["messages"][0]["content"].endswith("every required field present.")
@@ -226,29 +242,46 @@ def test_schema_miss_is_re_asked_once_then_terminal_and_refusal_is_terminal() ->
     client, _ = _client([_response(None), _response(None)])
     with pytest.raises(TerminalModelError, match="re-ask"):
         client.extract(
-            schema=_Fields, system=[SystemBlock("s")], user="u", model="m", tracker=_tracker()
+            schema=_Fields,
+            system=[SystemBlock("s")],
+            user="u",
+            model="claude-haiku-4-5",
+            tracker=_tracker(),
         )
 
     client, _ = _client([_response(_Fields(answer="x"), stop_reason="refusal")])
     with pytest.raises(TerminalModelError, match="refused"):
         client.extract(
-            schema=_Fields, system=[SystemBlock("s")], user="u", model="m", tracker=_tracker()
+            schema=_Fields,
+            system=[SystemBlock("s")],
+            user="u",
+            model="claude-haiku-4-5",
+            tracker=_tracker(),
         )
 
 
 def test_complete_returns_the_text_blocks() -> None:
     client, _ = _client([_response(None, text="the context")])
-    out = client.complete(system=[SystemBlock("s")], user="u", model="m", tracker=_tracker())
+    out = client.complete(
+        system=[SystemBlock("s")], user="u", model="claude-haiku-4-5", tracker=_tracker()
+    )
     assert out.text == "the context" and out.usage.input_tokens == 1000
 
 
 def test_batch_items_carry_the_json_schema_output_config() -> None:
     item = BatchItem(
-        "id-1", system=[SystemBlock("s", cache=True)], user="u", model="m", schema=_Fields
+        "id-1",
+        system=[SystemBlock("s", cache=True)],
+        user="u",
+        model="claude-haiku-4-5",
+        schema=_Fields,
     )
     params = item.params()
     assert params["output_config"] == {
         "format": {"type": "json_schema", "schema": _Fields.model_json_schema()}
     }
     assert params["system"][0]["cache_control"] == {"type": "ephemeral"}
-    assert "output_config" not in BatchItem("id-2", system=[], user="u", model="m").params()
+    assert (
+        "output_config"
+        not in BatchItem("id-2", system=[], user="u", model="claude-haiku-4-5").params()
+    )

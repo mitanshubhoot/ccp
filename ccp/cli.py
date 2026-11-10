@@ -27,6 +27,7 @@ from ccp.evaluators import runner as evaluations
 from ccp.evaluators import thresholds, tier2
 from ccp.evaluators import verdict as verdicts
 from ccp.identity import resolver
+from ccp.ingest import ops as queue_ops
 from ccp.ingest import worker
 from ccp.ingest.landing import ingest_tenant
 from ccp.investigation import cli as investigate_cli
@@ -568,6 +569,65 @@ def worker_list() -> None:
     """List registered consumers."""
     for name in sorted(worker.CONSUMERS):
         typer.echo(name)
+
+
+@worker_app.command("dead-letters")
+def worker_dead_letters(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """Dead records: parallel topics, and ordered topics per consumer (A-97)."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        rows = queue_ops.dead_letters(ScopedDB(pool, ctx))
+    finally:
+        pool.close()
+    if not rows:
+        typer.echo("no dead letters")
+    for row in rows:
+        who = f" consumer={row.consumer}" if row.consumer else ""
+        typer.echo(
+            f"{row.offset}  {row.topic}{who}  tries={row.attempts}  {(row.error or '')[:160]}"
+        )
+
+
+@worker_app.command("replay")
+def worker_replay(
+    offset: int = typer.Option(..., "--offset"),
+    by: str = typer.Option(..., "--by", help="who replays it; recorded"),
+    consumer: str | None = typer.Option(None, "--consumer", help="ordered topics: only this one"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Replay a dead record: a parallel one goes back to pending, an ordered one is re-run by
+    each consumer that dead-lettered it. Exit 1 when a re-run fails again."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        outcomes = queue_ops.replay(ScopedDB(pool, ctx), settings, offset, by, consumer)
+    except (LookupError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        pool.close()
+    for who, outcome in outcomes.items():
+        typer.echo(f"{offset} {who}: {outcome}")
+    if "failed" in outcomes.values():
+        raise typer.Exit(1)
+
+
+@worker_app.command("unpark")
+def worker_unpark(
+    topic: str = typer.Option("evaluations", "--topic"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Parked records back to pending (they park again if the budget is still spent)."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        moved = queue_ops.unpark(ScopedDB(pool, ctx), topic)
+    finally:
+        pool.close()
+    typer.echo(f"{topic}: {moved} record(s) unparked")
 
 
 def _eval_selection(

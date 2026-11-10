@@ -179,7 +179,7 @@ class _Flaky(ParallelConsumer):
     def __init__(
         self, db: ScopedDB, fail_times: int, terminal: bool = False, max_attempts: int = 3
     ) -> None:
-        super().__init__(db, max_attempts=max_attempts, visibility_seconds=300)
+        super().__init__(db, max_attempts=max_attempts, visibility_seconds=300, base_delay=0.0)
         self.fail_times = fail_times
         self.terminal = terminal
         self.calls = 0

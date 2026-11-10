@@ -54,11 +54,38 @@ def _row(r: tuple[Any, ...]) -> ThreadRow:
     )
 
 
-def create(db: ScopedDB, thread_id: str, graph: str, test_id: str, subject_key: str) -> None:
+def create(
+    db: ScopedDB,
+    thread_id: str,
+    graph: str,
+    test_id: str,
+    subject_key: str,
+    evaluation_key: str | None = None,
+) -> None:
     db.execute(
-        "INSERT INTO agent_threads (thread_id, tenant_id, graph, test_id, subject_key, status)"
-        " VALUES (%s, %s, %s, %s, %s, 'running')",
-        (thread_id, db.tenant.tenant_id, graph, test_id, subject_key),
+        "INSERT INTO agent_threads"
+        " (thread_id, tenant_id, graph, test_id, subject_key, status, evaluation_key)"
+        " VALUES (%s, %s, %s, %s, %s, 'running', %s)",
+        (thread_id, db.tenant.tenant_id, graph, test_id, subject_key, evaluation_key),
+    )
+
+
+def resumable(db: ScopedDB, evaluation_key: str) -> ThreadRow | None:
+    """The newest thread for this evaluation that stopped without an outcome (it failed, or
+    its worker died while running): a retry continues it instead of starting over (A-97)."""
+    row = db.fetch_one(
+        f"SELECT {_COLUMNS} FROM agent_threads WHERE evaluation_key = %s"
+        " AND status IN ('running', 'failed') ORDER BY created_at DESC LIMIT 1",
+        (evaluation_key,),
+    )
+    return _row(row) if row else None
+
+
+def mark_running(db: ScopedDB, thread_id: str) -> None:
+    db.execute(
+        "UPDATE agent_threads SET status = 'running', error = NULL, updated_at = now()"
+        " WHERE thread_id = %s",
+        (thread_id,),
     )
 
 

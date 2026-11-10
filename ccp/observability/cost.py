@@ -40,14 +40,26 @@ PRICES: dict[str, Price] = {
 }
 
 
-def price_for(model: str) -> Price:
+def _known(model: str) -> str | None:
     """Exact id first, then the longest known prefix (dated ids such as -20260101)."""
     if model in PRICES:
-        return PRICES[model]
+        return model
     for known in sorted(PRICES, key=len, reverse=True):
         if model.startswith(known):
-            return PRICES[known]
-    return Price(input=0.0)
+            return known
+    return None
+
+
+def is_priced(model: str) -> bool:
+    """False for a model this table does not know. The model clients refuse such a model
+    before calling it, because its spend would count as $0 and no dollar cap could stop it
+    (A-97); here, for reporting, it still prices as zero."""
+    return _known(model) is not None
+
+
+def price_for(model: str) -> Price:
+    known = _known(model)
+    return PRICES[known] if known is not None else Price(input=0.0)
 
 
 def estimate_usd(

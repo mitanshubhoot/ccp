@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     # which must exceed the run wall-clock budget so a live run is never re-claimed.
     ccp_claim_visibility_seconds: int = Field(default=300, ge=1)
     ccp_max_attempts: int = Field(default=5, ge=1)
+    # The first retry waits this long, doubling each try up to 15 minutes, with jitter (A-97).
+    ccp_retry_base_seconds: float = Field(default=2.0, ge=0)
     ccp_golden_dir: Path = REPO_ROOT / "evals" / "golden"
     ccp_eval_runs_dir: Path = REPO_ROOT / "evals" / "runs"
     ccp_rubrics_dir: Path = REPO_ROOT / "evals" / "rubrics"

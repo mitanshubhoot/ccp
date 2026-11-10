@@ -4,7 +4,7 @@ final state to a Verdict. When the graph stops at the gate the wrapper returns a
 needs_review verdict at once, records the thread as interrupted, opens an approval item, and a
 separate process resumes it later from the decision recorded on that item (A-95).
 
-    evaluate(...)  ──► build ──► stream (trajectory) ──► get_state
+    evaluate(...)  ──► the failed thread for this key, or a new one ──► stream ──► get_state
                                      ├─ interrupted ──► needs_review verdict, approval item opened
                                      └─ finished    ──► Verdict from state, thread finished
     resume(...)    ──► recorded decision, unchanged payload ──► Command(resume=...) ──► Verdict
@@ -74,8 +74,12 @@ def _build(
     return core.build_graph(graph_spec, saver), saver, pool, tracker
 
 
-def _run(graph: Any, payload: Any, config: dict[str, Any]) -> list[str]:
-    trajectory: list[str] = []
+def _run(
+    graph: Any, payload: Any, config: dict[str, Any], into: list[str] | None = None
+) -> list[str]:
+    """Stream the graph, appending each step to ``into`` as it completes, so a run that
+    fails part way still records how far it got."""
+    trajectory = into if into is not None else []
     for update in graph.stream(payload, config, stream_mode="updates"):
         for key in update:
             trajectory.append("interrupt" if key == "__interrupt__" else str(key))
@@ -172,10 +176,23 @@ def evaluate(
         raise AITierUnavailable("ANTHROPIC_API_KEY is not set; tier 3 evaluation is unavailable")
     tenant = db.tenant
     subject_key = f"{spec.test_id}|{subject}"
-    run_id = str(ULID())
-    thread_id = checkpoints.thread_id_for(tenant, spec.test_id, subject_key, run_id)
+    key = evaluation_key(
+        tenant.tenant_id,
+        spec.test_id,
+        subject_key,
+        ctx.trigger_observed_at,
+        spec.prompt_version,
+        settings.ccp_tier3_model,
+    )
+    previous = threads.resumable(db, key)
+    if previous is not None:  # a retry: continue that thread from its last checkpoint
+        thread_id = previous.thread_id
+        threads.mark_running(db, thread_id)
+    else:
+        run_id = str(ULID())
+        thread_id = checkpoints.thread_id_for(tenant, spec.test_id, subject_key, run_id)
+        threads.create(db, thread_id, GRAPH, spec.test_id, subject_key, evaluation_key=key)
     graph, _saver, pool, tracker = _build(db, settings, spec, providers, ctx.now)
-    threads.create(db, thread_id, GRAPH, spec.test_id, subject_key)
     config = {"configurable": {"thread_id": thread_id}}
     initial: dict[str, Any] = {
         "tenant_id": tenant.tenant_id,
@@ -193,7 +210,7 @@ def evaluate(
         "extracted": {},
         "requests": {},
     }
-    trajectory: list[str] = []
+    trajectory: list[str] = list(previous.trajectory) if previous is not None else []
     try:
         with steps.step(
             "tier3.run",
@@ -201,7 +218,13 @@ def evaluate(
             tenant=tenant,
             inputs={"test_id": spec.test_id, "subject": subject, "thread_id": thread_id},
         ) as s:
-            trajectory = _run(graph, initial, config)
+            checkpointed = previous is not None and bool(graph.get_state(config).values)
+            if checkpointed:
+                s.event(f"resumed_thread:{thread_id}")
+                _run(graph, None, config, trajectory)  # only the steps not yet done run
+            else:
+                trajectory.clear()
+                _run(graph, initial, config, trajectory)
             budget_gate.record_spend(db, tracker.usd, tracker.tokens, s.step_id, ctx.now)
             snapshot = graph.get_state(config)
             payload = _interrupt_payload(snapshot)

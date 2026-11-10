@@ -112,7 +112,11 @@ def test_a_malformed_answer_is_asked_about_once_more_then_parsed() -> None:
         bad = exc
     messages = _Messages([bad, _response(_Fields(answer="ok"))])
     out = _client(messages).extract(
-        schema=_Fields, system=[SystemBlock("s")], user="u", model="m", tracker=_tracker()
+        schema=_Fields,
+        system=[SystemBlock("s")],
+        user="u",
+        model="claude-haiku-4-5",
+        tracker=_tracker(),
     )
     assert out.parsed.answer == "ok"
     assert len(messages.parse_calls) == 2
@@ -124,7 +128,11 @@ def test_two_malformed_answers_are_terminal() -> None:
     messages = _Messages([ValueError("bad json"), ValueError("bad json again")])
     with pytest.raises(TerminalModelError, match="re-ask"):
         _client(messages).extract(
-            schema=_Fields, system=[SystemBlock("s")], user="u", model="m", tracker=_tracker()
+            schema=_Fields,
+            system=[SystemBlock("s")],
+            user="u",
+            model="claude-haiku-4-5",
+            tracker=_tracker(),
         )
 
 
@@ -136,7 +144,7 @@ def test_streamed_deltas_are_forwarded_and_parsed() -> None:
         schema=_Fields,
         system=[SystemBlock("s")],
         user="u",
-        model="m",
+        model="claude-haiku-4-5",
         tracker=_tracker(),
         on_token=tokens.append,
     )
@@ -154,7 +162,7 @@ def test_a_stream_that_breaks_after_output_began_is_not_replayed() -> None:
             schema=_Fields,
             system=[SystemBlock("s")],
             user="u",
-            model="m",
+            model="claude-haiku-4-5",
             tracker=_tracker(),
             on_token=tokens.append,
         )
@@ -173,7 +181,7 @@ def test_thinking_blocks_return_verbatim_in_the_assistant_turn() -> None:
         system=[SystemBlock("s")],
         messages=[{"role": "user", "content": "go"}],
         tools=[{"name": "search_evidence"}],
-        model="m",
+        model="claude-haiku-4-5",
         tracker=_tracker(),
         reasoning=True,
     )

@@ -1,10 +1,11 @@
-"""The evaluations consumer and the full-run enqueuer (spec.md Layer 7).
+"""The evaluations consumer and the full-run enqueuer (spec.md Layer 7, A-97).
 
-    evaluations record ──► budget gate ──► route by tier ──► evaluate ──► persist (idempotent)
-                                                                         └► verdicts topic
-Tier 1 and tier 2 run here; tier 3 is parked until Phase 8. A tier 2 record with no model
-client configured parks (AI tier unavailable), never dead-letters. The tenant's
-`max_concurrency` caps how many records one pass claims.
+    evaluations record ──► route by tier ──► stored verdict? ──► budget gate (AI tiers) ──►
+        evaluate ──► one transaction: verdict (idempotent) + its announcement on `verdicts`
+Tier 1 never parks: the daily model budget applies only to tiers 2 and 3. A record whose
+verdict is already stored makes no model call. A tier 2 record with no model client
+configured parks (AI tier unavailable), never dead-letters. The tenant's `max_concurrency`
+caps how many records one pass claims.
 """
 
 from __future__ import annotations
@@ -15,10 +16,11 @@ from functools import lru_cache
 
 from ccp.config import Settings
 from ccp.evaluators import deterministic, registry, tier2
+from ccp.evaluators import verdict as verdicts
 from ccp.evaluators.budget_gate import check_daily_budget
 from ccp.evaluators.context import load_context
 from ccp.evaluators.impact import EvaluationRequest, enqueue
-from ccp.evaluators.verdict import TriggerReason, Verdict, persist
+from ccp.evaluators.verdict import TriggerReason, Verdict, evaluation_key
 from ccp.ingest import event_log
 from ccp.ingest.consumers import ParallelConsumer, ParkedError
 from ccp.ingest.event_log import LogRecord
@@ -91,10 +93,11 @@ def evaluate_request(
 
 
 def commit_verdict(db: ScopedDB, verdict: Verdict) -> bool:
-    """Persist and announce. Returns False when the evaluation key already existed."""
-    inserted = persist(db, verdict)
-    if inserted:
-        with db.transaction() as cur:
+    """Persist and announce in one transaction, so a crash cannot leave a verdict that the
+    state writer never hears of. Returns False when the evaluation key already existed."""
+    with db.transaction() as cur:
+        inserted = verdicts.insert(cur, verdict)
+        if inserted:
             event_log.append(
                 cur,
                 tenant_id=verdict.tenant_id,
@@ -104,6 +107,30 @@ def commit_verdict(db: ScopedDB, verdict: Verdict) -> bool:
                 ref=verdict.verdict_id,
             )
     return inserted
+
+
+def expected_key(settings: Settings, tenant_id: str, request: EvaluationRequest) -> str:
+    """The evaluation key the routed tier will use, known before it runs."""
+    spec = cached_graph().tests[request.test_id]
+    model = {2: settings.ccp_tier2_model, 3: settings.ccp_tier3_model}.get(spec.tier)
+    return evaluation_key(
+        tenant_id,
+        spec.test_id,
+        f"{spec.test_id}|{request.subject}",
+        request.trigger_observed_at,
+        spec.prompt_version if spec.tier in (2, 3) else None,
+        model,
+    )
+
+
+def unannounced(db: ScopedDB) -> int:
+    """Stored verdicts with no announcement on `verdicts`: zero, now that both commit
+    together (the NT4 reconciler check)."""
+    row = db.fetch_one(
+        "SELECT count(*) FROM verdicts v WHERE NOT EXISTS (SELECT 1 FROM event_log e"
+        " WHERE e.topic = 'verdicts' AND e.ref = v.verdict_id)"
+    )
+    return int(row[0]) if row else 0
 
 
 class EvaluationsConsumer(ParallelConsumer):
@@ -121,6 +148,7 @@ class EvaluationsConsumer(ParallelConsumer):
             db,
             max_attempts=settings.ccp_max_attempts,
             visibility_seconds=settings.ccp_claim_visibility_seconds,
+            base_delay=settings.ccp_retry_base_seconds,
         )
         self.settings = settings
         self.now = now
@@ -150,7 +178,7 @@ class EvaluationsConsumer(ParallelConsumer):
 
     def handle(self, record: LogRecord) -> None:
         request = EvaluationRequest.from_ref(record.ref)
-        check_daily_budget(self._db, self.now)
+        spec = cached_graph().tests[request.test_id]
         with steps.step(
             "evaluate",
             layer="evaluators",
@@ -162,10 +190,18 @@ class EvaluationsConsumer(ParallelConsumer):
                 "reason": request.reason,
             },
         ) as s:
-            spec = cached_graph().tests[request.test_id]
-            providers = self.providers if spec.tier in (2, 3) else None
-            verdict = evaluate_request(self._db, self.settings, request, self.now, providers)
-            inserted = commit_verdict(self._db, verdict)
+            stored = verdicts.load_by_key(
+                self._db, expected_key(self.settings, self._db.tenant.tenant_id, request)
+            )
+            if stored is not None:  # done before (a retry after a crash): no model call
+                verdict, inserted = stored, False
+                s.event("verdict_already_stored")
+            else:
+                if spec.tier in (2, 3):  # only model calls spend the daily budget
+                    check_daily_budget(self._db, self.now)
+                providers = self.providers if spec.tier in (2, 3) else None
+                verdict = evaluate_request(self._db, self.settings, request, self.now, providers)
+                inserted = commit_verdict(self._db, verdict)
             s.set_output(
                 {
                     "verdict_id": verdict.verdict_id,

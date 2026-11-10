@@ -102,16 +102,18 @@ def world(base_settings: Settings) -> Iterator[tuple[Settings, dict[str, ScopedD
 
 
 @pytest.mark.db
-def test_tenant_over_daily_budget_parks_records_and_resumes_after_reset(
+def test_tenant_over_daily_budget_parks_ai_records_and_resumes_after_reset(
     world: tuple[Settings, dict[str, ScopedDB]],
 ) -> None:
+    """The model budget parks only records that would call a model (A-97): a deterministic
+    test runs the same day, an interpretive one waits for the reset."""
     settings, dbs = world
     acme = dbs["acme"]
     cap = acme.tenant.settings.daily_budget_usd
     budget_gate.record_spend(acme, cap, tokens=1, recorded_at=NOW - timedelta(hours=1))
     assert budget_gate.daily_spend(acme, NOW) == pytest.approx(cap)
     with acme.transaction() as cur:
-        offset = event_log.append(
+        deterministic = event_log.append(
             cur,
             tenant_id="acme",
             topic="evaluations",
@@ -119,21 +121,31 @@ def test_tenant_over_daily_budget_parks_records_and_resumes_after_reset(
             source_ts=NOW,
             ref=EvaluationRequest("HR-5", "tenant", NOW).to_ref(),
         )
+        interpretive = event_log.append(
+            cur,
+            tenant_id="acme",
+            topic="evaluations",
+            partition_key="acme:GH-4|tenant",
+            source_ts=NOW,
+            ref=EvaluationRequest("GH-4", "tenant", NOW).to_ref(),
+        )
     consumer = runner.EvaluationsConsumer(acme, settings, now=NOW)
     while consumer.run_once():
         pass
     with acme.transaction() as cur:
-        status, attempts, error = event_log.status_of(cur, offset)
+        assert event_log.status_of(cur, deterministic)[0] == "done"
+        status, attempts, error = event_log.status_of(cur, interpretive)
     assert status == "parked" and attempts == 0 and "budget_exceeded" in (error or "")
-    assert consumer.summary.evaluated == 0
+    assert consumer.summary.evaluated == 1 and consumer.summary.by_status == {"fail": 1}
 
     tomorrow = NOW + timedelta(days=1)
     assert budget_gate.daily_spend(acme, tomorrow) == 0.0
     assert runner.requeue_parked(acme) == 1
-    resumed = runner.drain(acme, settings, now=tomorrow)
-    assert resumed.evaluated == 1 and resumed.by_status == {"fail": 1}
+    runner.drain(acme, settings, now=tomorrow)
     with acme.transaction() as cur:
-        assert event_log.status_of(cur, offset)[0] == "done"
+        status, _, error = event_log.status_of(cur, interpretive)
+    # the budget no longer holds it; this keyless run parks it for the missing model key
+    assert status == "parked" and "budget_exceeded" not in (error or "")
 
 
 @pytest.mark.db
