@@ -58,12 +58,15 @@ def test_the_defaults_sync_on_the_tenants_wall_clock(own: tuple[Settings, Scoped
     scheduler = schedules.Scheduler(ny, own[0])
     assert scheduler.run_once() == 0  # nothing due yet: every first slot lies ahead
     rows = _rows(ny)
-    assert set(rows) == {"clock", "unpark", "full-run"}
+    assert set(rows) == {"clock", "unpark", "check-connections", "sync", "full-run"}
     zone, full_run_at, enabled = rows["full-run"]
     assert zone == "America/New_York" and enabled
     local = full_run_at.astimezone(schedules.ZoneInfo("America/New_York"))
     assert (local.hour, local.minute) == (2, 0)
     assert rows["unpark"][0] == "UTC"  # the budget day is a UTC day
+    for schedule, at in (("check-connections", (1, 0)), ("sync", (1, 30))):  # A-121
+        local = rows[schedule][1].astimezone(schedules.ZoneInfo("America/New_York"))
+        assert (local.hour, local.minute) == at
     assert scheduler.next_due() == min(r[1] for r in rows.values())
 
 
@@ -176,4 +179,4 @@ def test_the_worker_loop_drives_the_scheduler_until_the_next_slot(
     finally:
         dispatcher.close()
     assert wait is not None and 0 < wait <= 15 * 60  # the clock's next quarter hour
-    assert set(_rows(acme)) == {"clock", "unpark", "full-run"}
+    assert set(_rows(acme)) == {"clock", "unpark", "check-connections", "sync", "full-run"}

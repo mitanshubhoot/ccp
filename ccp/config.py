@@ -36,7 +36,7 @@ class ScheduleSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")
-    job: Literal["clock", "unpark", "full_run"]
+    job: Literal["clock", "unpark", "full_run", "check_connections", "sync"]
     every: str = Field(
         pattern=r"^(every [1-9][0-9]* (minutes|hours)|daily ([01][0-9]|2[0-3]):[0-5][0-9])$"
     )
@@ -49,7 +49,31 @@ DEFAULT_SCHEDULES: tuple[ScheduleSpec, ...] = (
     ScheduleSpec(id="clock", job="clock", every="every 15 minutes"),
     # the model budget's day is a UTC day, so parked work is released just after it turns
     ScheduleSpec(id="unpark", job="unpark", every="daily 00:05", time_zone="UTC"),
+    # every connection probed, then pulled, before the nightly full run (A-121)
+    ScheduleSpec(id="check-connections", job="check_connections", every="daily 01:00"),
+    ScheduleSpec(id="sync", job="sync", every="daily 01:30"),
     ScheduleSpec(id="full-run", job="full_run", every="daily 02:00"),
+)
+
+
+class ConnectionSpec(BaseModel):
+    """One connection of a tenant (A-121): a connector reading one provider account, from a
+    fixture or live. `account` defaults to the tenant's GitHub organization for GitHub and to
+    the tenant itself otherwise; `credential` names a purpose in `ccp.credentials`, never a
+    secret."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    connector: Literal["github", "hris", "manual"]
+    source: Literal["fixture", "live"] = "fixture"
+    account: str | None = Field(default=None, min_length=1)
+    credential: Literal["github:read"] | None = None
+
+
+DEFAULT_CONNECTIONS: tuple[ConnectionSpec, ...] = (
+    ConnectionSpec(connector="github"),
+    ConnectionSpec(connector="hris"),
+    ConnectionSpec(connector="manual"),
 )
 
 
@@ -71,6 +95,8 @@ class TenantSettings(BaseModel):
     # The tenant's wall clock for its schedules (A-108), an IANA name.
     time_zone: str = "UTC"
     schedules: tuple[ScheduleSpec, ...] = DEFAULT_SCHEDULES
+    # The provider accounts it reads (A-121); one per connector and source.
+    connections: tuple[ConnectionSpec, ...] = DEFAULT_CONNECTIONS
 
     @field_validator("time_zone")
     @classmethod
@@ -85,6 +111,14 @@ class TenantSettings(BaseModel):
         ids = [s.id for s in value]
         if len(ids) != len(set(ids)):
             raise ValueError(f"schedule ids repeat: {sorted(ids)}")
+        return value
+
+    @field_validator("connections")
+    @classmethod
+    def _one_per_source(cls, value: tuple[ConnectionSpec, ...]) -> tuple[ConnectionSpec, ...]:
+        keys = [(c.connector, c.source) for c in value]
+        if len(keys) != len(set(keys)):
+            raise ValueError(f"more than one connection for a connector and source: {keys}")
         return value
 
 
@@ -117,6 +151,9 @@ class Settings(BaseSettings):
     ccp_max_attempts: int = Field(default=5, ge=1)
     # The first retry waits this long, doubling each try up to 15 minutes, with jitter (A-97).
     ccp_retry_base_seconds: float = Field(default=2.0, ge=0)
+    # A connection with no complete pull for this long is stale (A-121): a daily sync, and
+    # two hours' grace for a slow one.
+    ccp_sync_stale_hours: int = Field(default=26, gt=0)
     ccp_golden_dir: Path = REPO_ROOT / "evals" / "golden"
     ccp_eval_runs_dir: Path = REPO_ROOT / "evals" / "runs"
     ccp_rubrics_dir: Path = REPO_ROOT / "evals" / "rubrics"

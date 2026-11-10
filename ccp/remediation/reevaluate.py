@@ -17,6 +17,7 @@ from ccp.connectors.base import Connector
 from ccp.evaluators import runner as evaluations
 from ccp.evaluators.impact import ImpactConsumer
 from ccp.evaluators.tier2 import Providers
+from ccp.ingest import connections
 from ccp.ingest.landing import sync_connector
 from ccp.normalize.consumer import normalize_all
 from ccp.observability import steps
@@ -37,7 +38,14 @@ def reevaluate(
     db: ScopedDB, settings: Settings, connector: Connector, providers: Providers | None = None
 ) -> ReevaluationSummary:
     with steps.step("remediate.reevaluate", layer="remediation", tenant=db.tenant) as s:
-        pulled = sync_connector(settings, db, db.tenant, connector)
+        connection = connections.for_pull(db, connector.name, connector.source)
+        pulled = sync_connector(
+            settings,
+            db,
+            db.tenant,
+            connector,
+            connection_id=connection.connection_id if connection else None,
+        )
         landed = pulled.landed
         normalized = normalize_all(db, settings)
         prepare_changes(db, settings, providers or Providers.from_settings(settings))

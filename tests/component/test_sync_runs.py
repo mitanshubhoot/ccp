@@ -94,8 +94,8 @@ def test_one_connector_failing_ends_only_its_own_run(
     settings, acme = own
     real = landing.build_connector
 
-    def build(name: Any, s: Settings, source: Any = "fixture") -> Any:
-        return _Breaks() if name == "github" else real(name, s, source)
+    def build(name: Any, s: Settings, source: Any = "fixture", connection: Any = None) -> Any:
+        return _Breaks() if name == "github" else real(name, s, source, connection)
 
     monkeypatch.setattr(landing, "build_connector", build)
     summary = ingest_tenant(settings, acme, acme.tenant)

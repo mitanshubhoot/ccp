@@ -44,6 +44,20 @@ class PullError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class Connection:
+    """One connector reading one provider account (A-121), as declared and versioned in the
+    `connections` table. `credential` is the purpose name of the secret it reads."""
+
+    connection_id: str
+    version: int
+    connector: ConnectorName
+    source: SourceKind
+    account: str
+    credential: str | None
+    enabled: bool
+
+
+@dataclass(frozen=True)
 class ScopeOutcome:
     status: ScopeStatus
     items: int = 0

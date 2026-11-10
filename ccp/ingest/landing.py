@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 
 from ccp.config import Settings
 from ccp.connectors.base import (
+    Connection,
     Connector,
     ConnectorName,
     PullError,
@@ -29,7 +30,7 @@ from ccp.connectors.base import (
     SyncReport,
 )
 from ccp.connectors.registry import CONNECTOR_NAMES, build_connector
-from ccp.ingest import event_log, sync_runs
+from ccp.ingest import connections, event_log, sync_runs
 from ccp.ingest.partition import partition_key
 from ccp.ingest.raw_zone import RawZone
 from ccp.ingest.sync_runs import SyncRun
@@ -172,7 +173,9 @@ def _kind(exc: Exception) -> PullErrorKind:
     return exc.kind if isinstance(exc, PullError) else "fail"
 
 
-def _failed_to_start(db: ScopedDB, name: str, source: str, exc: Exception) -> SyncRun:
+def _failed_to_start(
+    db: ScopedDB, name: str, source: str, exc: Exception, connection_id: str | None = None
+) -> SyncRun:
     """A connector that could not even be built (no credential for a live source): a failed
     run with no scopes, recorded like any other."""
     now = datetime.now(UTC)
@@ -189,7 +192,7 @@ def _failed_to_start(db: ScopedDB, name: str, source: str, exc: Exception) -> Sy
         error=f"{type(exc).__name__}: {exc}",
         error_kind=_kind(exc),
     )
-    sync_runs.record(db, run)
+    sync_runs.record(db, run, connection_id)
     return run
 
 
@@ -200,14 +203,41 @@ def ingest_tenant(
     connectors: Sequence[ConnectorName] = CONNECTOR_NAMES,
     source: SourceKind = "fixture",
 ) -> LandingSummary:
-    """Pull every requested connector for one tenant, each its own recorded sync run."""
+    """Pull every requested connector for one tenant, each its own recorded sync run, under
+    its declared connection when there is one (A-121); a pull with none is recorded too."""
+    connections.sync(db)
     zone = RawZone(settings.raw_dir)
     summary = LandingSummary()
     for name in connectors:
-        try:
-            connector = build_connector(name, settings, source)
-        except Exception as exc:  # the next connector still runs
-            summary.add(_failed_to_start(db, name, source, exc))
-            continue
-        summary.add(sync_connector(settings, db, tenant, connector, zone=zone))
+        connection = connections.for_pull(db, name, source)
+        summary.add(_pull(settings, db, tenant, name, source, connection, zone))
     return summary
+
+
+def sync_connections(settings: Settings, db: ScopedDB, tenant: TenantContext) -> LandingSummary:
+    """The scheduled sync (A-121): every enabled connection pulled, each its own run."""
+    connections.sync(db)
+    zone = RawZone(settings.raw_dir)
+    summary = LandingSummary()
+    for connection in connections.enabled(db):
+        summary.add(
+            _pull(settings, db, tenant, connection.connector, connection.source, connection, zone)
+        )
+    return summary
+
+
+def _pull(
+    settings: Settings,
+    db: ScopedDB,
+    tenant: TenantContext,
+    name: ConnectorName,
+    source: SourceKind,
+    connection: Connection | None,
+    zone: RawZone,
+) -> SyncRun:
+    cid = connection.connection_id if connection else None
+    try:
+        connector = build_connector(name, settings, source, connection)
+    except Exception as exc:  # the next connector still runs
+        return _failed_to_start(db, name, source, exc, cid)
+    return sync_connector(settings, db, tenant, connector, zone=zone, connection_id=cid)

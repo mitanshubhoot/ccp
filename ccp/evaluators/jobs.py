@@ -5,9 +5,12 @@
     unpark     parked evaluations and investigations back to pending (the model budget's
                day has rolled over)
     full_run   every (test, subject) pair, idempotent at the verdict table
+    check_connections   every enabled connection's credential probed, each check recorded
+    sync       every enabled connection pulled, each pull its own sync run (A-121)
 
 Every job is safe to run twice: the clock and the full run enqueue through the evaluation
-key, and unparking an unparked topic moves nothing.
+key, unparking an unparked topic moves nothing, a second check is another record, and a
+second pull of unchanged data lands no snapshot.
 """
 
 from __future__ import annotations
@@ -20,9 +23,10 @@ from typing import Any
 from ccp.config import Settings
 from ccp.evaluators import clock
 from ccp.evaluators import runner as evaluations
-from ccp.ingest import ops
+from ccp.ingest import connections, ops
 from ccp.ingest.consumers import ParallelConsumer, TerminalError
 from ccp.ingest.event_log import LogRecord
+from ccp.ingest.landing import sync_connections
 from ccp.ingest.schedules import JOBS_TOPIC
 from ccp.ingest.worker import register
 from ccp.observability import steps
@@ -34,6 +38,8 @@ JOBS: dict[str, Job] = {
     "clock": lambda db, settings, slot: clock.tick(db).enqueued,
     "unpark": lambda db, settings, slot: sum(ops.unpark(db, t) for t in UNPARKED),
     "full_run": lambda db, settings, slot: evaluations.enqueue_all(db, settings),
+    "check_connections": lambda db, settings, slot: len(connections.check_all(settings, db)),
+    "sync": lambda db, settings, slot: len(sync_connections(settings, db, db.tenant).runs),
 }
 
 

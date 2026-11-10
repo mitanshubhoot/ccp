@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ccp import credentials
 from ccp.config import Settings
-from ccp.connectors.base import Connector, ConnectorName, SourceKind
+from ccp.connectors.base import Connection, Connector, ConnectorName, SourceKind
 from ccp.connectors.github.client import GitHubLiveConnector
 from ccp.connectors.github.fixture import GitHubFixtureConnector
 from ccp.connectors.hris.fixture import HrisFixtureConnector
@@ -27,14 +27,23 @@ def pdf_limits(settings: Settings) -> PdfLimits:
 
 
 def build_connector(
-    name: ConnectorName, settings: Settings, source: SourceKind = "fixture"
+    name: ConnectorName,
+    settings: Settings,
+    source: SourceKind = "fixture",
+    connection: Connection | None = None,
 ) -> Connector:
+    """The connector for a name and source; with a connection (A-121), the one reading that
+    connection's account, spending from that connection's rate bucket."""
     if name == "github":
         if source == "live":
             token = credentials.secret(settings, "github:read")
             if token is None:
                 raise RuntimeError("GITHUB_TOKEN is not set; the live GitHub client needs it")
-            return GitHubLiveConnector(token)
+            if connection is None:
+                return GitHubLiveConnector(token)
+            return GitHubLiveConnector(
+                token, org=connection.account, connection_id=connection.connection_id
+            )
         return GitHubFixtureConnector(settings.ccp_fixtures_dir)
     if name == "hris":
         if source == "live":

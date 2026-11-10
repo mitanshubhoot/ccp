@@ -118,6 +118,8 @@ class GitHubLiveConnector:
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], datetime] | None = None,
         bucket: rate.RateBucket | None = None,
+        org: str | None = None,
+        connection_id: str | None = None,
     ) -> None:
         self._client = httpx.Client(
             base_url=base_url,
@@ -133,6 +135,8 @@ class GitHubLiveConnector:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._given_bucket = bucket
         self._bucket: rate.RateBucket | None = bucket  # else the tenant's, chosen per pull
+        self._org = org  # the connection's account; else the tenant's organization
+        self._connection_id = connection_id
         self.incomplete: list[str] = []  # what this pull could not see: path and reason
 
     def pull(
@@ -145,6 +149,31 @@ class GitHubLiveConnector:
 
     def _gaps(self, fragment: str) -> list[str]:
         return [g for g in self.incomplete if fragment in g]
+
+    def _start(self, tenant: TenantContext) -> str:
+        """Ready a pull or a check: the organization, this pull's gaps cleared, and the bucket
+        it spends from, one per (tenant, connection) (A-120, A-121)."""
+        org = self._org or tenant.settings.github_org
+        self.incomplete = []  # this pull's gaps only, whatever an earlier pull saw
+        self._bucket = self._given_bucket or rate.bucket_for(
+            tenant.tenant_id,
+            self._connection_id or f"github:{org}",
+            lambda: rate.RateBucket(RATE_PER_SECOND, BURST, QUOTA_RESERVE),
+        )
+        return org
+
+    def check(self, tenant: TenantContext) -> tuple[str, str]:
+        """The daily probe of the credential (A-121): can it see the organization and its
+        members? Two cheap reads, through the same error table and bucket as a pull."""
+        org = self._start(tenant)
+        probes = ((f"/orgs/{org}", errors.ORG, None), (f"/orgs/{org}/members", errors.MEMBERS, 1))
+        for path, endpoint, per_page in probes:
+            params = {"per_page": per_page} if per_page else None
+            response, meaning, why = self._request("GET", path, endpoint, params=params)
+            if meaning != "ok":
+                kind = meaning if meaning in ("auth", "not_visible") else "fail"
+                return kind, f"GET {path}: HTTP {response.status_code} ({why})"
+        return "ok", f"the organization {org} and its members are visible"
 
     # -- helpers -------------------------------------------------------------------
 
@@ -245,14 +274,8 @@ class GitHubLiveConnector:
     def _events(
         self, tenant: TenantContext, report: SyncReport | None = None
     ) -> Iterator[SourceEvent]:
-        org = tenant.settings.github_org
+        org = self._start(tenant)
         snapshot_ts = self._now()
-        self.incomplete = []  # this pull's gaps only, whatever an earlier pull saw
-        self._bucket = self._given_bucket or rate.bucket_for(
-            tenant.tenant_id,
-            f"github:{org}",
-            lambda: rate.RateBucket(RATE_PER_SECOND, BURST, QUOTA_RESERVE),
-        )
 
         def event(
             event_type: str, source_event_id: str, ts: str, payload: dict[str, Any]

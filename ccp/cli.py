@@ -66,6 +66,7 @@ identity_app = typer.Typer(no_args_is_help=True, help="Identity resolution and t
 knowledge_app = typer.Typer(no_args_is_help=True, help="Frameworks, controls, tests")
 evaluate_app = typer.Typer(no_args_is_help=True, help="Trigger and run evaluations")
 index_app = typer.Typer(no_args_is_help=True, help="The retrieval index over current evidence")
+connections_app = typer.Typer(no_args_is_help=True, help="Connections and their health (A-121)")
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(tenants_app, name="tenants")
 app.add_typer(evaluate_app, name="evaluate")
@@ -453,6 +454,7 @@ def report(
 app.add_typer(db_app, name="db")
 app.add_typer(connectors_app, name="connectors")
 app.add_typer(ingest_app, name="ingest")
+app.add_typer(connections_app, name="connections")
 app.add_typer(worker_app, name="worker")
 app.add_typer(evals_app, name="evals")
 app.add_typer(normalize_app, name="normalize")
@@ -556,6 +558,46 @@ def ingest_run(
             typer.echo(f"         {run.error}", err=True)
     typer.echo(f"total landed {summary.landed}, duplicates {summary.duplicates}")
     if summary.failed:
+        raise typer.Exit(1)
+
+
+@connections_app.command("list")
+def connections_list(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """The tenant's connections, each with its health, from its checks and sync runs."""
+    from ccp.ingest import connections
+
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        scoped = ScopedDB(pool, ctx)
+        connections.sync(scoped)
+        found = [connections.health(scoped, settings, c) for c in connections.current(scoped)]
+    finally:
+        pool.close()
+    for h in found:
+        c = h.connection
+        typer.echo(
+            f"{c.connection_id:<32} {c.source:<8} {c.account:<20} v{c.version}"
+            f"  {h.state:<12} {h.reason}"
+        )
+
+
+@connections_app.command("check")
+def connections_check(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """Probe every enabled connection's credential now, as the daily job does."""
+    from ccp.ingest import connections
+
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        checks = connections.check_all(settings, ScopedDB(pool, ctx))
+    finally:
+        pool.close()
+    for c in checks:
+        typer.echo(f"{c.connection_id:<32} {c.outcome:<12} {c.detail}")
+    if any(c.outcome != "ok" for c in checks):
         raise typer.Exit(1)
 
 
