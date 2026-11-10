@@ -4,7 +4,9 @@ The tenant is taken from the directory the files sit in and from nothing else. A
 is required; a file present in the directory but absent from the manifest is logged and
 ignored (A-29); a manifest entry whose file is missing is logged and skipped. Anything a
 manifest entry says about a tenant is carried in the payload for the normalization layer
-to reject with a guardrail event (S13), never acted on here.
+to reject with a guardrail event (S13), never acted on here. A manifest entry is read only
+from inside the tenant's folder: a parent reference, an absolute or drive path, or a link
+that resolves elsewhere yields a `manual.refused` event and nothing is read (A-96).
 """
 
 from __future__ import annotations
@@ -27,6 +29,22 @@ from ccp.types import EvidenceType
 log = logging.getLogger(__name__)
 SCHEMA_VERSION = "manual.v1"
 _TEXT_SUFFIXES = {".md", ".txt"}
+REFUSED_OUTSIDE = "path_outside_tenant_folder"
+
+
+def contained_path(root: Path, name: str) -> Path | None:
+    """The file a manifest entry names, resolved inside ``root``, or None when the name is
+    absolute, carries a drive or a parent reference, or resolves (through a link) elsewhere."""
+    relative = Path(name)
+    if not name or relative.is_absolute() or relative.drive or relative.root:
+        return None
+    if ".." in relative.parts:
+        return None
+    base = root.resolve()
+    target = (base / relative).resolve()
+    if target == base or not target.is_relative_to(base):
+        return None
+    return target
 
 
 class ManifestEntry(BaseModel):
@@ -85,7 +103,25 @@ class ManualUploadConnector:
                 log.warning("upload %s/%s is not in the manifest; ignored", tenant.tenant_id, stray)
 
         for entry in manifest.uploads:
-            path = root / entry.file
+            path = contained_path(root, entry.file)
+            if path is None:
+                log.warning(
+                    "manifest entry %s/%r points outside the tenant's upload folder; refused",
+                    tenant.tenant_id,
+                    entry.file,
+                )
+                yield SourceEvent(
+                    tenant_id=tenant.tenant_id,
+                    connector="manual",
+                    source_event_id=(
+                        f"upload-refused:{sha256_bytes(entry.file.encode('utf-8'))[:16]}"
+                    ),
+                    source_ts=entry.uploaded_at,
+                    event_type="manual.refused",
+                    payload={"filename": entry.file[:200], "reason": REFUSED_OUTSIDE},
+                    schema_version=SCHEMA_VERSION,
+                )
+                continue
             if not path.is_file():
                 log.warning(
                     "manifest entry %s/%s has no file on disk; skipped",

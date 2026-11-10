@@ -202,8 +202,10 @@ class GitHubLiveConnector:
             listing = self._get(f"/repos/{full}/contents")
             if listing:
                 files: list[dict[str, Any]] = []
+                not_listed: list[dict[str, Any]] = []  # GH-5 cannot pass over these (A-96)
                 for item in listing:
                     if item.get("type") != "file":
+                        not_listed.append({"path": item.get("path"), "type": item.get("type")})
                         continue
                     entry: dict[str, Any] = {
                         "path": item["path"],
@@ -227,5 +229,6 @@ class GitHubLiveConnector:
                         "repo_node_id": node_id,
                         "updated_at": snapshot_ts,
                         "files": files,
+                        "not_listed": not_listed,
                     },
                 )

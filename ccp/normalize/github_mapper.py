@@ -30,6 +30,9 @@ from ccp.normalize.entities import (
 from ccp.types import AccountKind, EmploymentStatus, EvidenceType, GrantState
 
 _SERVICE_PATTERNS = ("-bot", "-svc", "ci-", "deploy-")
+# A file listing says what it did not read, so GH-5 cannot pass over it (A-96).
+NOT_INLINED = "(content not inlined)"
+UNREAD_EVENT_PREFIXES = ("files_not_read:", "entries_not_listed:")
 
 
 def account_kind_of(login: str, gh_type: str | None) -> AccountKind:
@@ -277,22 +280,29 @@ def map_github_event(event: SourceEvent) -> MappingResult:
 
     if kind == "repo.file_listing.snapshot":
         parts = []
+        unread = 0
         for f in p.get("files", []):
             body = f.get("content")
-            parts.append(
-                f"### {f['path']}\n{body if body is not None else '(content not inlined)'}"
-            )
-        out.append(
-            _evidence(
-                event,
-                f"github:evidence:{p['repo_node_id']}:files",
-                EvidenceType.repo_file_listing,
-                f"Tracked files: {p['org']}/{p['repo']}",
-                "\n\n".join(parts),
-                asset_id(p["repo_node_id"]),
-                f"github:repos/{p['org']}/{p['repo']}/contents",
-            )
+            unread += body is None
+            parts.append(f"### {f['path']}\n{body if body is not None else NOT_INLINED}")
+        not_listed = [str(e.get("path")) for e in p.get("not_listed", [])]
+        if not_listed:
+            parts.append("### Not listed\n" + "\n".join(f"- {path}" for path in not_listed))
+        events = []
+        if unread:
+            events.append(f"files_not_read:{unread}")
+        if not_listed:
+            events.append(f"entries_not_listed:{len(not_listed)}")
+        listing = _evidence(
+            event,
+            f"github:evidence:{p['repo_node_id']}:files",
+            EvidenceType.repo_file_listing,
+            f"Tracked files: {p['org']}/{p['repo']}",
+            "\n\n".join(parts),
+            asset_id(p["repo_node_id"]),
+            f"github:repos/{p['org']}/{p['repo']}/contents",
         )
+        out.append(listing.model_copy(update={"guardrail_events": tuple(events)}))
         return MappingResult(entities=tuple(out))
 
     if kind in ("org.member_added", "org.member_removed"):

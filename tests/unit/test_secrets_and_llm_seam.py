@@ -29,7 +29,7 @@ GHP = "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
         ("aws_access_key_id = AKIAIOSFODNN7EXAMPLE", "aws_access_key_id"),
         ("SLACK=xoxb-123456789012-abcdefghijkl", "slack_token"),
         ("-----BEGIN RSA PRIVATE KEY-----", "private_key_header"),
-        ("api_key: sk_live_abcdefghijklmnopqrstuvwxyz", "generic_api_key"),
+        ("api_key: abcdefghijklmnopqrstuvwxyz0123", "generic_api_key"),
     ],
 )
 def test_each_pattern_matches_its_example(text: str, pattern: str) -> None:

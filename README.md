@@ -32,7 +32,8 @@ deterministic tier, ingestion, identity resolution, state, remediation dry runs,
 stubbed agent path run offline. Set `ANTHROPIC_API_KEY` for tiers 2 and 3, the agents, the
 Copilot, the judge, and the adversarial suite; `VOYAGE_API_KEY` (or `OPENAI_API_KEY`) for
 hosted embeddings and reranking (a local hashing embedder and a lexical reranker stand in
-otherwise); `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` for traces.
+otherwise; Voyage also needs `VOYAGE_TRAINING_OPT_OUT=true`, set after opting out of
+training in the Voyage organization settings); `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` for traces.
 
 ## What the commands are
 

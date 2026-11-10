@@ -3,7 +3,8 @@
 The tenant is the event's tenant (which the connector took from the directory). Any tenant
 named in the manifest entry or the document's front matter is ignored and recorded as a
 guardrail event (spec.md S13). A PDF without a text layer is rejected here with
-``pdf_no_text_layer`` rather than indexed as empty.
+``pdf_no_text_layer`` rather than indexed as empty. A refused upload (a path outside the
+tenant's folder, A-96) becomes an ``upload_refused`` guardrail event and no evidence.
 """
 
 from __future__ import annotations
@@ -16,6 +17,9 @@ from ccp.types import EvidenceType
 
 def map_manual_event(event: SourceEvent) -> MappingResult:
     p = event.payload
+    if event.event_type == "manual.refused":
+        name = str(p.get("filename") or "")[:120]
+        return MappingResult(guardrail_events=(f"upload_refused:{p.get('reason')}:{name}",))
     events: list[str] = []
     for source in ("manifest", "front_matter"):
         claim = (p.get(source) or {}).get("tenant")

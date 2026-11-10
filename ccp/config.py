@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     ccp_embed_provider: Literal["voyage", "openai"] = "voyage"
     ccp_embed_model: str = "voyage-3-large"
     voyage_api_key: SecretStr | None = None
+    # Set true only after opting out of training in the Voyage organization settings; Voyage
+    # clients are refused until then (A-96).
+    voyage_training_opt_out: bool = False
     openai_api_key: SecretStr | None = None
 
     # Retrieval feature flags

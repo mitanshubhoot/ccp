@@ -8,7 +8,9 @@
                              mixes it with a hosted model's vectors.
 
 Hosted calls are plain HTTPS through httpx (no vendor SDK); failures map onto the model
-error taxonomy and retry with backoff before surfacing.
+error taxonomy and retry with backoff before surfacing. Every text a hosted client sends is
+redacted first, at the client itself, so no caller can forget to (A-96); and Voyage is
+refused until the operator records the training opt-out (VOYAGE_TRAINING_OPT_OUT=true).
 """
 
 from __future__ import annotations
@@ -27,6 +29,21 @@ import httpx
 from ccp.config import Settings
 from ccp.llm.errors import RetryableModelError, TerminalModelError, classify_status
 from ccp.observability import cost
+from ccp.security.secrets_patterns import redact_all
+
+
+class ProviderTermsNotRecorded(RuntimeError):
+    """A provider whose terms need an operator action was configured before that action was
+    recorded. Voyage may train on self-serve data unless the organization opts out."""
+
+
+def require_voyage_terms(settings: Settings) -> None:
+    if not settings.voyage_training_opt_out:
+        raise ProviderTermsNotRecorded(
+            "VOYAGE_API_KEY is set but the Voyage training opt-out is not recorded: opt out in"
+            " the Voyage organization settings, then set VOYAGE_TRAINING_OPT_OUT=true"
+        )
+
 
 DIMENSION = 1024
 InputType = Literal["document", "query"]
@@ -112,7 +129,7 @@ class VoyageEmbeddingClient:
         vectors: list[list[float]] = []
         tokens = 0
         for start in range(0, len(texts), self.batch_size):
-            batch = list(texts[start : start + self.batch_size])
+            batch = redact_all(list(texts[start : start + self.batch_size]))
             body = {
                 "input": batch,
                 "model": self.model_id,
@@ -155,7 +172,7 @@ class OpenAIEmbeddingClient:
         vectors: list[list[float]] = []
         tokens = 0
         for start in range(0, len(texts), self.batch_size):
-            batch = list(texts[start : start + self.batch_size])
+            batch = redact_all(list(texts[start : start + self.batch_size]))
             body = {"input": batch, "model": self.model_id, "dimensions": self.dimension}
 
             def call(body: dict[str, Any] = body) -> Any:
@@ -179,6 +196,7 @@ def build_embedding_client(settings: Settings) -> EmbeddingClient:
             settings.openai_api_key.get_secret_value(), settings.ccp_embed_model
         )
     if settings.ccp_embed_provider == "voyage" and settings.voyage_api_key is not None:
+        require_voyage_terms(settings)
         return VoyageEmbeddingClient(
             settings.voyage_api_key.get_secret_value(), settings.ccp_embed_model
         )

@@ -212,6 +212,13 @@ def note_model_call(
     )
 
 
+def _masked(value: Any) -> Any:
+    """The registered trace mask (secret redaction, A-96) applied before anything is written
+    to the local log, the same mask the Langfuse export uses."""
+    mask = tracing.registered_mask()
+    return value if mask is None or value is None else mask(data=value)
+
+
 def _offload(step_id: str, kind: str, value: Any) -> Any:
     """Inputs and outputs over the limit go to logs/blobs/, referenced by relative path."""
     if value is None:
@@ -310,16 +317,16 @@ def step(
             "gen_ai.operation.name": record.name,
             "started_at": started.isoformat(),
             "latency_ms": latency_ms,
-            "inputs": _offload(record.step_id, "inputs", record.inputs),
-            "output": _offload(record.step_id, "output", record.output),
+            "inputs": _offload(record.step_id, "inputs", _masked(record.inputs)),
+            "output": _offload(record.step_id, "output", _masked(record.output)),
             "gen_ai.request.model": record.model_id,
             "ccp.prompt_version": record.prompt_version,
             "ccp.prompt_sha256": record.prompt_sha256,
             **record.usage_fields,
             "ccp.cost_usd": usd,
             "ccp.cost_basis": cost.COST_BASIS if usd is not None else None,
-            "ccp.guardrail_events": record.events,
-            "error": record.error,
+            "ccp.guardrail_events": _masked(record.events),
+            "error": _masked(record.error),
         }
         _append(line)
         if _sink is not None and record.handle is not None:

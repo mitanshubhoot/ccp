@@ -1,5 +1,6 @@
 """Reranker seam: Voyage rerank-2.5 behind RETRIEVAL_RERANK. An outage degrades to the
-fused order with a guardrail event; it never fails an evaluation."""
+fused order with a guardrail event; it never fails an evaluation. The query and every
+document are redacted before they leave (A-96), and Voyage needs the recorded opt-out."""
 
 from __future__ import annotations
 
@@ -14,6 +15,8 @@ import httpx
 from ccp.config import Settings
 from ccp.llm.errors import RetryableModelError, TerminalModelError, classify_status
 from ccp.observability import cost
+from ccp.retrieval.embeddings import require_voyage_terms
+from ccp.security.secrets_patterns import redact, redact_all
 
 RETRY_ATTEMPTS = 3
 
@@ -58,8 +61,8 @@ class VoyageReranker:
 
     def rerank(self, query: str, documents: Sequence[str], top_k: int) -> RerankResult:
         body: dict[str, Any] = {
-            "query": query,
-            "documents": list(documents),
+            "query": redact(query)[0],
+            "documents": redact_all(list(documents)),
             "model": self.model_id,
             "top_k": top_k,
             "return_documents": False,
@@ -109,5 +112,6 @@ def build_reranker(settings: Settings) -> Reranker | None:
     if not settings.retrieval_rerank:
         return None
     if settings.voyage_api_key is not None:
+        require_voyage_terms(settings)
         return VoyageReranker(settings.voyage_api_key.get_secret_value())
     return LexicalOverlapReranker()
