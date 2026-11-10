@@ -23,6 +23,7 @@ TOPICS: dict[str, TopicKind] = {
     "entities": TopicKind.ordered,
     "evaluations": TopicKind.parallel,
     "investigations": TopicKind.parallel,
+    "jobs": TopicKind.parallel,  # scheduled jobs (A-108)
     "verdicts": TopicKind.ordered,
 }
 

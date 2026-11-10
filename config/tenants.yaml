@@ -9,6 +9,7 @@ tenants:
     termination_revocation_sla_hours: 24
     daily_budget_usd: 5.00
     max_concurrency: 4
+    time_zone: America/New_York
   globex:
     display_name: Globex Corporation
     github_org: globex-example
@@ -17,3 +18,4 @@ tenants:
     termination_revocation_sla_hours: 24
     daily_budget_usd: 5.00
     max_concurrency: 4
+    time_zone: Europe/Berlin

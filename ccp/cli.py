@@ -24,6 +24,7 @@ from ccp.evals import runner as eval_runner
 from ccp.evals.schema import GoldenCase
 from ccp.evaluators import clock as clock_producer
 from ccp.evaluators import impact as impact_step
+from ccp.evaluators import jobs as _jobs  # noqa: F401 - registers jobs and the scheduler
 from ccp.evaluators import runner as evaluations
 from ccp.evaluators import thresholds, tier2
 from ccp.evaluators import verdict as verdicts

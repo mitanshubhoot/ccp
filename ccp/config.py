@@ -10,12 +10,47 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _zone(value: str | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ValueError(f"unknown time zone {value!r}; use an IANA name") from None
+    return value
+
+
+class ScheduleSpec(BaseModel):
+    """One scheduled job of a tenant (A-108). `every` is `every N minutes`, `every N hours`
+    or `daily HH:MM` on the wall clock of `time_zone` (default: the tenant's)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")
+    job: Literal["clock", "unpark", "full_run"]
+    every: str = Field(
+        pattern=r"^(every [1-9][0-9]* (minutes|hours)|daily ([01][0-9]|2[0-3]):[0-5][0-9])$"
+    )
+    time_zone: str | None = None
+
+    _check_zone = field_validator("time_zone")(_zone)
+
+
+DEFAULT_SCHEDULES: tuple[ScheduleSpec, ...] = (
+    ScheduleSpec(id="clock", job="clock", every="every 15 minutes"),
+    # the model budget's day is a UTC day, so parked work is released just after it turns
+    ScheduleSpec(id="unpark", job="unpark", every="daily 00:05", time_zone="UTC"),
+    ScheduleSpec(id="full-run", job="full_run", every="daily 02:00"),
+)
 
 
 class TenantSettings(BaseModel):
@@ -33,6 +68,24 @@ class TenantSettings(BaseModel):
     # What a reviewer's decisions may be used for (A-100): none, eval, or training. A tenant
     # admin opts in; each label keeps the scope in force when it was recorded.
     label_consent: Literal["none", "eval", "training"] = "none"
+    # The tenant's wall clock for its schedules (A-108), an IANA name.
+    time_zone: str = "UTC"
+    schedules: tuple[ScheduleSpec, ...] = DEFAULT_SCHEDULES
+
+    @field_validator("time_zone")
+    @classmethod
+    def _real_zone(cls, value: str) -> str:
+        checked = _zone(value)
+        assert checked is not None
+        return checked
+
+    @field_validator("schedules")
+    @classmethod
+    def _unique_ids(cls, value: tuple[ScheduleSpec, ...]) -> tuple[ScheduleSpec, ...]:
+        ids = [s.id for s in value]
+        if len(ids) != len(set(ids)):
+            raise ValueError(f"schedule ids repeat: {sorted(ids)}")
+        return value
 
 
 class TenantsFile(BaseModel):
