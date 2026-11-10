@@ -1,0 +1,21 @@
+# Release gates on confidence bounds for the AI tests (spec.md 5.3, A-103): the targets whose
+# cases call a model or are graded by one. A deterministic case still blocks on a single
+# pass-to-fail flip. A model-backed case does not: with 50 cases that are each 95% reliable,
+# a single-flip gate fires about 92% of the time on noise alone.
+#
+# `ccp evals regress` blocks when, for a target with at least `min_cases` executed cases,
+#   - the 95% Wilson lower bound of its pass^k rate is below `pass_k_floor`, or
+#   - with at least `min_fail_cases` FAIL-labelled cases, the 95% upper bound of its
+#     false-PASS rate is above `false_pass_ceiling`.
+# Below those counts the bound is reported as ungated: too few cases to say either way.
+# Run the nightly job with `--runs 5`, so pass^k is pass^5.
+#
+# The margins are the owner's call. These defaults are a starting point, not a measurement:
+# at n = 10 a floor of 0.5 tolerates one failing case (lower bound 0.60 at 9 of 10). With 0
+# of 35 FAIL cases passed, the false-PASS upper bound is just under 0.10.
+default:
+  pass_k_floor: 0.5
+  false_pass_ceiling: 0.10
+  min_cases: 5
+  min_fail_cases: 35
+targets: {}

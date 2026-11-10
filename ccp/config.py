@@ -66,21 +66,28 @@ class Settings(BaseSettings):
     ccp_labeled_dir: Path = REPO_ROOT / "evals" / "labeled"
     ccp_adversarial_path: Path = REPO_ROOT / "evals" / "adversarial" / "cases.yaml"
     ccp_slos_path: Path = REPO_ROOT / "config" / "slos.yaml"
+    # Release gates on confidence bounds for the AI tests (A-103).
+    ccp_eval_gates_path: Path = REPO_ROOT / "config" / "eval_gates.yaml"
+    # Runs per model-backed eval case; pass^k counts a case only when all k pass (A-103).
+    ccp_eval_runs: int = Field(default=1, ge=1)
 
     # PDF extraction caps (spec.md A-54); a file over any cap is rejected, never parsed.
     ccp_pdf_max_bytes: int = Field(default=25_000_000, ge=1)
     ccp_pdf_max_pages: int = Field(default=500, ge=1)
     ccp_pdf_timeout_seconds: float = Field(default=60.0, gt=0)
 
-    # Models
+    # Models: pinned snapshot ids only (ccp/llm/models.py refuses aliases, A-103).
     anthropic_api_key: SecretStr | None = None
     ccp_llm_provider: Literal["anthropic"] = "anthropic"
-    ccp_tier2_model: str = "claude-haiku-4-5"
+    ccp_tier2_model: str = "claude-haiku-5-5"  # thinking off (A-100)
     ccp_tier3_model: str = "claude-sonnet-5"
     # The judge is a different model from every generating tier, and never grades its own
     # output; it runs ccp_judge_runs times and passes a case only when the runs agree.
     ccp_judge_model: str = "claude-opus-5"
     ccp_judge_runs: int = Field(default=3, ge=1)
+    # A judge from another model family, for fixture suites only (Decision 9, A-103): it
+    # never sees a case derived from customer data. None keeps the Claude judge everywhere.
+    ccp_fixture_judge_model: str | None = None
     ccp_investigator_model: str | None = None
     ccp_policy_model: str | None = None
     ccp_copilot_model: str | None = None

@@ -30,9 +30,9 @@ from ccp.approvals import store as approvals
 from ccp.config import Settings
 from ccp.evals import judge as judging
 from ccp.evals.schema import CriterionResult
-from ccp.llm.anthropic_client import sampling_params
 from ccp.llm.budget import BudgetTracker, RunBudget
 from ccp.llm.client import StubLLMClient, SystemBlock, ToolCall
+from ccp.llm.models import sampling_params
 from ccp.observability import steps
 from ccp.retrieval.config import RetrievalConfig
 from ccp.retrieval.embeddings import HashingEmbeddingClient
@@ -278,7 +278,10 @@ def test_the_bundle_hash_covers_tool_texts_and_prompts(monkeypatch: pytest.Monke
 
 
 def test_extraction_calls_do_not_think_and_reasoning_calls_do() -> None:
-    assert sampling_params("claude-sonnet-5", reasoning=False) == {"thinking": {"type": "disabled"}}
+    assert sampling_params("claude-sonnet-5", reasoning=False) == {
+        "thinking": {"type": "disabled"},
+        "output_config": {"effort": "medium"},
+    }
     assert sampling_params("claude-sonnet-5", reasoning=True)["thinking"] == {"type": "adaptive"}
 
 

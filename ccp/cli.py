@@ -19,6 +19,7 @@ from ccp.connectors.registry import CONNECTOR_NAMES, SOURCE_KINDS, build_connect
 from ccp.copilot import cli as copilot_cli
 from ccp.evals import calibration as judge_calibration
 from ccp.evals import capture, regress
+from ccp.evals import labels as eval_labels
 from ccp.evals import runner as eval_runner
 from ccp.evals.schema import GoldenCase
 from ccp.evaluators import clock as clock_producer
@@ -653,11 +654,14 @@ def evals_run(
     unit: bool = typer.Option(
         True, "--unit/--no-unit", help="run pytest tests/unit for the unit row"
     ),
+    runs: int | None = typer.Option(
+        None, "--runs", min=1, help="runs per model-backed case; pass^k needs all k (A-103)"
+    ),
 ) -> None:
     """Run the golden dataset and write evals/runs/latest.json. Exit code 1 on any failure."""
     settings = _settings()
     chosen, hashes = _eval_selection(settings, suite, level, tag, case_id)
-    report = eval_runner.run(settings, chosen, hashes, unit=unit)
+    report = eval_runner.run(settings, chosen, hashes, unit=unit, runs=runs)
     path = eval_runner.write_report(report, settings.ccp_eval_runs_dir)
     typer.echo(eval_runner.format_table(report))
     typer.echo(f"report: {path}")
@@ -699,10 +703,15 @@ def evals_regress(
     strict: bool = typer.Option(
         False, "--strict", help="first failures and new failures block too (nightly)"
     ),
+    runs: int | None = typer.Option(
+        None, "--runs", min=1, help="runs per model-backed case (the nightly job uses 5)"
+    ),
 ) -> None:
-    """Rerun the suite and diff against the last run; non-zero on a pass-to-fail flip, an
-    attack-success-rate increase, or a p95 breach, and with --strict also on a case that
-    first runs and fails or a new case that fails."""
+    """Rerun the suite and diff against the last run; non-zero on a deterministic case's
+    pass-to-fail flip, an attack-success-rate increase, a p95 breach, or an AI test whose
+    confidence bound crosses its gate (config/eval_gates.yaml), and with --strict also on a
+    deterministic case that first runs and fails or a new one that fails. A model-backed
+    case's flip is reported, not blocking: bounds gate those (A-103)."""
     settings = _settings()
     base_path = baseline or settings.ccp_eval_runs_dir / "latest.json"
     if not base_path.exists():
@@ -710,14 +719,36 @@ def evals_regress(
         raise typer.Exit(code=2)
     base = regress.load_report(base_path)
     chosen, hashes = _eval_selection(settings, suite, None, None, None)
-    report = eval_runner.run(settings, chosen, hashes, unit=unit)
-    reg = regress.diff(base, report, strict=strict)
+    report = eval_runner.run(settings, chosen, hashes, unit=unit, runs=runs)
+    gates = regress.load_gates(settings.ccp_eval_gates_path)
+    reg = regress.diff(base, report, strict=strict, gates=gates)
     # a regressed run never becomes the baseline: the next run must still see the flip
     path = eval_runner.write_report(report, settings.ccp_eval_runs_dir, promote=reg.exit_code == 0)
     typer.echo(regress.format_regression(reg))
     typer.echo(f"report: {path}" + ("" if reg.exit_code == 0 else " (not promoted to latest)"))
     if reg.exit_code:
         raise typer.Exit(code=reg.exit_code)
+
+
+@evals_app.command("labels")
+def evals_labels(
+    out: Path = typer.Option(..., "--out", help="a YAML file outside the repository"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Export the tenant's reviewer labels (eval or training consent) on tier 3 drafts as
+    labelled-set intake: overall label from the decision, criteria for a person to add."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        written, skipped = eval_labels.export(ScopedDB(pool, ctx), out)
+    except eval_labels.InsideRepository as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        pool.close()
+    typer.echo(f"{written} labelled case(s) -> {out}")
+    for why, count in sorted(skipped.items()):
+        typer.echo(f"  skipped {count}: {why}")
 
 
 @evals_app.command("capture")

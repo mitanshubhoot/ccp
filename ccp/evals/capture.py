@@ -116,6 +116,7 @@ def case_from_step(line: dict[str, Any], *, now: datetime | None = None) -> Gold
         notes=notes,
         tags=["captured", target],
         requires=list(inputs.get("requires") or []),
+        origin="customer",  # a trace may hold tenant data: never a cross-family judge (A-103)
     )
 
 

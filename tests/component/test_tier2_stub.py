@@ -89,7 +89,9 @@ def test_gh4_acme_platform_passes_with_verified_citations(world) -> None:  # typ
     assert "github:evidence:R_kgDOAcmeP001:security" in v.evidence_refs
     assert v.confidence > 0.5 and v.confidence_cap == 1.0 and v.model_confidence is None
     assert v.prompt_version == "gh4_extract_v1" and v.schema_version == "gh4_fields_v1"
-    assert v.chunker_version == "v1" and v.fence_nonce and v.model == "stub:claude-haiku-4-5"
+    # the verdict records the configured tier 2 model as the stub served it, whatever .env says
+    assert v.chunker_version == "v1" and v.fence_nonce
+    assert v.model == f"stub:{world[0].ccp_tier2_model}"
     assert "retrieval_uncalibrated" not in v.guardrail_events  # the module fixture calibrated
 
 

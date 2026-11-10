@@ -25,6 +25,7 @@ from ccp.evals import judge as judging
 from ccp.evals.judge import Rubric
 from ccp.llm.budget import BudgetTracker
 from ccp.llm.client import LLMClient
+from ccp.llm.models import family
 
 LABELED_DIR = REPO_ROOT / "evals" / "labeled"
 
@@ -44,6 +45,7 @@ class LabeledCase(BaseModel):
     second_labels: dict[str, bool] | None = None
     second_overall: bool | None = None
     note: str | None = None
+    origin: Literal["fixture", "customer"] = "fixture"  # customer: a reviewer's label (A-103)
 
 
 def load_labeled(labeled_dir: Path = LABELED_DIR) -> list[LabeledCase]:
@@ -164,6 +166,12 @@ def calibrate(
     def fresh() -> BudgetTracker:
         return BudgetTracker(tracker.budget, clock=tracker.clock)
 
+    customer = [c.id for c in cases if c.origin == "customer"]
+    if customer and family(model) != "anthropic":
+        raise judging.DataBoundary(
+            f"judge model {model!r} is not a Claude model; reviewer labels {customer[:3]}"
+            " come from customer data"
+        )
     rubrics: dict[str, Rubric] = {}
     per_key_human: dict[str, list[bool]] = {}
     per_key_judge: dict[str, list[bool]] = {}

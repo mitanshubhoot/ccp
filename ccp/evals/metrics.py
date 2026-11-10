@@ -1,12 +1,13 @@
 """Cross-cutting metrics the runner prints on every run (spec.md Layer 11): the reliability
 curve and expected calibration error over verdict confidence, attack-success-rate per
 adversarial class, latency percentiles per target against ``config/slos.yaml``, cost per
-target from the step log, the extraction accuracy and support-precision suite, and the
-judged-case summary."""
+target from the step log, the extraction accuracy and support-precision suite, the
+judged-case summary, and per AI test the pass^k baseline with Wilson intervals (A-103)."""
 
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -14,7 +15,13 @@ from typing import Any
 import yaml
 
 from ccp.config import REPO_ROOT
-from ccp.evals.schema import CaseResult, LatencyPercentiles, ReliabilityBin
+from ccp.evals.schema import (
+    AITestStats,
+    CaseResult,
+    Interval,
+    LatencyPercentiles,
+    ReliabilityBin,
+)
 from ccp.observability import cost
 
 SLOS_PATH = REPO_ROOT / "config" / "slos.yaml"
@@ -275,3 +282,75 @@ def judge_summary(cases: list[CaseResult]) -> dict[str, Any]:
         "overall_pass": sum(1 for r in judged if r.judge and r.judge.overall_pass),
         "criteria_met_rate": {k: round(sum(v) / len(v), 3) for k, v in sorted(met.items())},
     }
+
+
+Z95 = 1.959964
+
+
+def wilson(rate: float, n: int, z: float = Z95) -> Interval:
+    """The Wilson score interval for a rate observed over n units. It stays inside [0, 1] and
+    is honest at small n and at 0 or 1, where the normal interval collapses to a point."""
+    if n <= 0:
+        return Interval(estimate=0.0, lower=0.0, upper=1.0, n=0)
+    p = min(1.0, max(0.0, rate))
+    z2 = z * z
+    centre = (p + z2 / (2 * n)) / (1 + z2 / n)
+    half = z * math.sqrt(p * (1 - p) / n + z2 / (4 * n * n)) / (1 + z2 / n)
+    return Interval(
+        estimate=round(p, 4),
+        lower=round(max(0.0, centre - half), 4),
+        upper=round(min(1.0, centre + half), 4),
+        n=n,
+    )
+
+
+def _status(value: str | None) -> str | None:
+    return value.lower() if isinstance(value, str) else None
+
+
+def ai_test_stats(cases: list[CaseResult]) -> dict[str, AITestStats]:
+    """Per model-backed target: pass@1 and pass^k over cases, false PASS among FAIL-labelled
+    cases and false FAIL among PASS-labelled ones (share of runs, averaged per case), the
+    refusal rate, and cost per task. Skipped cases are left out; errored runs count as
+    failures. Every interval uses n = cases: k runs of one case are not k independent
+    observations."""
+    by_target: dict[str, list[CaseResult]] = {}
+    for r in cases:
+        if r.model_backed and not r.skipped:
+            by_target.setdefault(r.target, []).append(r)
+    out: dict[str, AITestStats] = {}
+    for target, rows in sorted(by_target.items()):
+        k = max(r.runs for r in rows)
+        per_case = [
+            (r.run_passes if r.run_passes is not None else int(r.passed)) / max(1, r.runs)
+            for r in rows
+        ]
+        all_pass = sum(1 for r in rows if r.passed)
+        fails = [r for r in rows if _status(r.expected_status) == "fail"]
+        passes = [r for r in rows if _status(r.expected_status) == "pass"]
+
+        def share(group: list[CaseResult], answer: str) -> Interval | None:
+            if not group:
+                return None
+            rates = [
+                sum(1 for s in r.run_statuses if _status(s) == answer) / max(1, len(r.run_statuses))
+                for r in group
+            ]
+            return wilson(sum(rates) / len(rates), len(group))
+
+        runs_total = sum(r.runs for r in rows)
+        spend = [r.cost_usd for r in rows if r.cost_usd is not None]
+        out[target] = AITestStats(
+            target=target,
+            cases=len(rows),
+            runs_per_case=k,
+            pass_at_1=wilson(sum(per_case) / len(per_case), len(rows)),
+            pass_k=wilson(all_pass / len(rows), len(rows)),
+            false_pass=share(fails, "pass"),
+            false_fail=share(passes, "fail"),
+            fail_labelled=len(fails),
+            pass_labelled=len(passes),
+            refusal_rate=round(sum(r.refusals for r in rows) / max(1, runs_total), 4),
+            cost_per_task_usd=round(sum(spend) / runs_total, 6) if spend else None,
+        )
+    return out

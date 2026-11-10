@@ -2,19 +2,52 @@
 confidence deltas above 0.15, cost delta, golden files whose hash changed (a golden edit is
 distinguishable from a behaviour change), attack-success-rate increases per class, and p95
 latency breaches. The exit code is non-zero on a pass-to-fail flip, an ASR increase, or a
-p95 breach, which is what a CI job keys on."""
+p95 breach, which is what a CI job keys on.
+
+Model-backed cases are gated on confidence bounds, not flips (A-103): their flips are
+reported as noise, and a target blocks when the 95% lower bound of its pass^k rate falls
+below its floor, or the upper bound of its false-PASS rate rises above its ceiling
+(``config/eval_gates.yaml``), once it has enough cases to say. Against a baseline with
+the same cases, each AI test also gets a paired difference of per-case pass rates with a
+standard error clustered by tenant: the comparison a model or prompt change is signed on."""
 
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
+import yaml
 from pydantic import BaseModel, Field
 
-from ccp.evals.schema import CaseResult, RunReport
+from ccp.config import REPO_ROOT
+from ccp.evals.schema import AITestStats, CaseResult, RunReport
 
 CONFIDENCE_DELTA = 0.15
+GATES_PATH = REPO_ROOT / "config" / "eval_gates.yaml"
+
+
+class Gate(BaseModel):
+    pass_k_floor: float = 0.5
+    false_pass_ceiling: float = 0.10
+    min_cases: int = 5
+    min_fail_cases: int = 35
+
+
+class Gates(BaseModel):
+    default: Gate = Field(default_factory=Gate)
+    targets: dict[str, Gate] = Field(default_factory=dict)
+
+    def for_target(self, target: str) -> Gate:
+        return self.targets.get(target, self.default)
+
+
+def load_gates(path: Path = GATES_PATH) -> Gates:
+    if not path.exists():
+        return Gates()
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return Gates.model_validate(loaded)
 
 
 class Regression(BaseModel):
@@ -33,10 +66,17 @@ class Regression(BaseModel):
     added_cases: list[str] = Field(default_factory=list)
     removed_cases: list[str] = Field(default_factory=list)
     strict: bool = False  # first failures and new failures block too (the nightly job)
+    # model-backed cases: flips, first and new failures are noise to report (A-103)
+    noisy_flips: list[str] = Field(default_factory=list)
+    bound_breaches: list[dict[str, Any]] = Field(default_factory=list)
+    ungated: list[str] = Field(default_factory=list)  # AI tests with too few cases
+    paired: dict[str, dict[str, float]] = Field(default_factory=dict)
 
     @property
     def exit_code(self) -> int:
-        blocking = self.flips_to_fail or self.asr_increases or self.p95_breaches
+        blocking = (
+            self.flips_to_fail or self.asr_increases or self.p95_breaches or self.bound_breaches
+        )
         if self.strict:
             blocking = blocking or self.new_failures or self.first_failures
         return 1 if blocking else 0
@@ -61,6 +101,7 @@ def diff(
     *,
     confidence_delta: float = CONFIDENCE_DELTA,
     strict: bool = False,
+    gates: Gates | None = None,
 ) -> Regression:
     """Strict mode is for the keyed nightly job, whose keyless baseline skipped every keyed
     case: there a case that first runs and fails, or a new case that fails, is the only
@@ -70,16 +111,18 @@ def diff(
     reg = Regression(baseline_run_id=baseline.run_id, current_run_id=current.run_id, strict=strict)
     for case_id, now in after.items():
         was = before.get(case_id)
+        noisy = now.model_backed or (was is not None and was.model_backed)
         if was is None:
             reg.added_cases.append(case_id)
             if _executed(now) and not now.passed:
-                reg.new_failures.append(case_id)
+                (reg.noisy_flips if noisy else reg.new_failures).append(case_id)
             continue
         if not _executed(was) and _executed(now) and not now.passed:
-            reg.first_failures.append(case_id)  # skipped in the baseline (no key), failing now
+            # skipped in the baseline (no key), failing now
+            (reg.noisy_flips if noisy else reg.first_failures).append(case_id)
         if _executed(was) and _executed(now):
             if was.passed and not now.passed:
-                reg.flips_to_fail.append(case_id)
+                (reg.noisy_flips if noisy else reg.flips_to_fail).append(case_id)
             elif not was.passed and now.passed:
                 reg.flips_to_pass.append(case_id)
             b, c = _confidence(was), _confidence(now)
@@ -110,7 +153,93 @@ def diff(
         reg.p95_breaches = sorted(
             target for target, row in current.metrics.latency.items() if row.breached
         )
+        rules = gates or Gates()
+        for target, stats in sorted(current.metrics.ai_tests.items()):
+            breaches, ungated = check_bounds(stats, rules.for_target(target))
+            reg.bound_breaches.extend(breaches)
+            if ungated:
+                reg.ungated.append(f"{target}: {ungated}")
+    reg.paired = paired_differences(baseline, current)
     return reg
+
+
+def check_bounds(stats: AITestStats, gate: Gate) -> tuple[list[dict[str, Any]], str]:
+    """Breaches of the floor and ceiling, and why a bound was not gated, if it was not."""
+    breaches: list[dict[str, Any]] = []
+    reasons: list[str] = []
+    if stats.cases < gate.min_cases:
+        reasons.append(f"pass^k on {stats.cases} cases < {gate.min_cases}")
+    elif stats.pass_k.lower < gate.pass_k_floor:
+        breaches.append(
+            {
+                "target": stats.target,
+                "metric": f"pass^{stats.runs_per_case} lower bound",
+                "value": stats.pass_k.lower,
+                "limit": gate.pass_k_floor,
+            }
+        )
+    if stats.false_pass is not None:
+        if stats.fail_labelled < gate.min_fail_cases:
+            reasons.append(
+                f"false PASS on {stats.fail_labelled} FAIL-labelled cases < {gate.min_fail_cases}"
+            )
+        elif stats.false_pass.upper > gate.false_pass_ceiling:
+            breaches.append(
+                {
+                    "target": stats.target,
+                    "metric": "false PASS upper bound",
+                    "value": stats.false_pass.upper,
+                    "limit": gate.false_pass_ceiling,
+                }
+            )
+    return breaches, "; ".join(reasons)
+
+
+def _rate(r: CaseResult) -> float:
+    passes = r.run_passes if r.run_passes is not None else int(r.passed)
+    return passes / max(1, r.runs)
+
+
+def clustered_se(diffs: list[float], clusters: list[str]) -> float:
+    """Standard error of the mean of paired differences, clustered (CR1): cases from one
+    tenant fail together, so treating them as independent understates the error."""
+    n = len(diffs)
+    if n < 2:
+        return 0.0
+    mean = sum(diffs) / n
+    sums: dict[str, float] = {}
+    for d, c in zip(diffs, clusters, strict=True):
+        sums[c] = sums.get(c, 0.0) + (d - mean)
+    groups = len(sums)
+    if groups < 2:
+        return math.sqrt(sum((d - mean) ** 2 for d in diffs) / (n - 1) / n)
+    return math.sqrt(groups / (groups - 1) * sum(s * s for s in sums.values())) / n
+
+
+def paired_differences(baseline: RunReport, current: RunReport) -> dict[str, dict[str, float]]:
+    """Per AI test, over cases executed in both runs: the mean change in per-case pass rate
+    with a tenant-clustered 95 percent interval. Reported, never gating on its own."""
+    before = {r.id: r for r in baseline.cases if _executed(r)}
+    rows: dict[str, list[tuple[float, str]]] = {}
+    for now in current.cases:
+        was = before.get(now.id)
+        if was is None or not _executed(now) or not now.model_backed:
+            continue
+        cluster = now.tenant or was.tenant or now.id
+        rows.setdefault(now.target, []).append((_rate(now) - _rate(was), cluster))
+    out: dict[str, dict[str, float]] = {}
+    for target, pairs in sorted(rows.items()):
+        diffs = [d for d, _ in pairs]
+        mean = sum(diffs) / len(diffs)
+        se = clustered_se(diffs, [c for _, c in pairs])
+        out[target] = {
+            "n": float(len(diffs)),
+            "difference": round(mean, 4),
+            "se": round(se, 4),
+            "lower": round(mean - 1.96 * se, 4),
+            "upper": round(mean + 1.96 * se, 4),
+        }
+    return out
 
 
 def format_regression(reg: Regression) -> str:
@@ -118,6 +247,19 @@ def format_regression(reg: Regression) -> str:
     if reg.strict:
         lines.append("  mode: strict (first failures and new failures block)")
     lines.append(f"  pass -> fail: {reg.flips_to_fail or 'none'}")
+    if reg.noisy_flips:
+        lines.append(f"  model-backed failures (gated by bounds, not flips): {reg.noisy_flips}")
+    for b in reg.bound_breaches:
+        lines.append(
+            f"  BOUND: {b['target']} {b['metric']} {b['value']:.3f} beyond limit {b['limit']:.3f}"
+        )
+    for note in reg.ungated:
+        lines.append(f"  ungated (too few cases): {note}")
+    for target, p in reg.paired.items():
+        lines.append(
+            f"  paired {target}: {p['difference']:+.3f} (95% {p['lower']:+.3f} to"
+            f" {p['upper']:+.3f}, n={int(p['n'])})"
+        )
     lines.append(f"  fail -> pass: {reg.flips_to_pass or 'none'}")
     if reg.new_failures:
         lines.append(f"  new cases failing: {reg.new_failures}")

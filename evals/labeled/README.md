@@ -38,3 +38,11 @@ Cases captured with `ccp evals capture <trace_id>` and labelled by a human grow 
 toward 100 with a 30-case two-annotator overlap (`second_labels`, `second_overall`), at
 which point the report's human-human kappa becomes the ceiling the judge is measured
 against (TODOS.md).
+
+Reviewer decisions grow it too (spec.md A-103). `ccp evals labels --tenant T --out PATH`
+exports the labels a tenant consented to eval use for, on tier 3 drafts. Each case carries
+the overall label from the decision (approve: right; override or reject: wrong), the
+reviewer as annotator, and `origin: customer`. The file must sit outside this repository,
+because it holds customer data. A person adds c1..c5 before a case joins a calibration set:
+calibration refuses a case without them. A judge from another model family never grades
+these cases.

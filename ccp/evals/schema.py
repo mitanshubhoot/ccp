@@ -11,6 +11,9 @@ Level = Literal["component", "workflow", "e2e"]
 Difficulty = Literal["easy", "hard", "edge"]
 Source = Literal["manual", "synthetic"]
 Grading = Literal["exact", "judge"]
+# fixture: written against the synthetic fixture world; customer: derived from a real trace
+# or a reviewer's label. Only fixture cases may meet a judge from another family (A-103).
+Origin = Literal["fixture", "customer"]
 
 
 class GoldenCase(BaseModel):
@@ -31,6 +34,17 @@ class GoldenCase(BaseModel):
     requires: list[Literal["anthropic", "voyage", "openai"]] = Field(default_factory=list)
     control_id: str | None = None  # adversarial: the unpoisoned control this case must match
     attack_class: str | None = None  # adversarial: the S17 class
+    origin: Origin = "fixture"
+
+    @property
+    def model_backed(self) -> bool:
+        """The output or its grade comes from a model: it is run k times and gated on
+        bounds, never on a single flip (A-103)."""
+        return "anthropic" in self.requires or self.grading == "judge"
+
+    @property
+    def customer_data(self) -> bool:
+        return self.origin == "customer" or "captured" in self.tags
 
 
 class CriterionResult(BaseModel):
@@ -66,6 +80,15 @@ class CaseResult(BaseModel):
     cost_usd: float | None = None
     tokens: int | None = None
     trace_id: str | None = None  # the eval step id, for `ccp evals capture`
+    # pass^k (A-103): a model-backed case runs k times and passes only when every run does;
+    # an errored run counts as a failure.
+    model_backed: bool = False
+    tenant: str | None = None  # the cluster for paired comparisons
+    runs: int = 1
+    run_passes: int | None = None
+    run_statuses: list[str | None] = Field(default_factory=list)  # the verdict status per run
+    expected_status: str | None = None  # the labelled verdict, for false PASS and false FAIL
+    refusals: int = 0  # runs the model refused
 
 
 class LevelSummary(BaseModel):
@@ -91,6 +114,32 @@ class LatencyPercentiles(BaseModel):
     breached: bool = False
 
 
+class Interval(BaseModel):
+    """A rate with its 95 percent Wilson interval; n is the number of cases (runs of one
+    case are not independent, so the interval is clustered by case)."""
+
+    estimate: float
+    lower: float
+    upper: float
+    n: int
+
+
+class AITestStats(BaseModel):
+    """One AI test's baseline (A-103): what the nightly gate reads."""
+
+    target: str
+    cases: int
+    runs_per_case: int
+    pass_at_1: Interval  # mean share of runs passing
+    pass_k: Interval  # share of cases whose every run passed
+    false_pass: Interval | None = None  # FAIL-labelled cases answered PASS
+    false_fail: Interval | None = None  # PASS-labelled cases answered FAIL
+    fail_labelled: int = 0
+    pass_labelled: int = 0
+    refusal_rate: float = 0.0
+    cost_per_task_usd: float | None = None
+
+
 class RunMetrics(BaseModel):
     reliability: list[ReliabilityBin] = Field(default_factory=list)
     ece: float | None = None
@@ -103,6 +152,7 @@ class RunMetrics(BaseModel):
     total_cost_usd: float = 0.0
     extraction: dict[str, Any] = Field(default_factory=dict)  # per schema
     judge: dict[str, Any] = Field(default_factory=dict)
+    ai_tests: dict[str, AITestStats] = Field(default_factory=dict)  # per model-backed target
 
 
 class RunReport(BaseModel):

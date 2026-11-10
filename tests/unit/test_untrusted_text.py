@@ -123,7 +123,7 @@ def test_documents_go_as_document_blocks_and_replay_reads_them() -> None:
         schema=_Answer,
         system=[SystemBlock("s")],
         user="Fill every field.",
-        model="claude-haiku-4-5",
+        model="claude-haiku-4-5-20251001",
         tracker=_tracker(),
         documents=[evidence],
     )

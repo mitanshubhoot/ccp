@@ -40,7 +40,7 @@ def _response(
         parsed_output=parsed,
         usage=SimpleNamespace(input_tokens=10, output_tokens=5),
         stop_reason=stop,
-        model="claude-haiku-4-5",
+        model="claude-haiku-4-5-20251001",
         content=blocks or [],
         to_dict=lambda: {"stop_reason": stop},
     )
@@ -115,7 +115,7 @@ def test_a_malformed_answer_is_asked_about_once_more_then_parsed() -> None:
         schema=_Fields,
         system=[SystemBlock("s")],
         user="u",
-        model="claude-haiku-4-5",
+        model="claude-haiku-4-5-20251001",
         tracker=_tracker(),
     )
     assert out.parsed.answer == "ok"
@@ -131,7 +131,7 @@ def test_two_malformed_answers_are_terminal() -> None:
             schema=_Fields,
             system=[SystemBlock("s")],
             user="u",
-            model="claude-haiku-4-5",
+            model="claude-haiku-4-5-20251001",
             tracker=_tracker(),
         )
 
@@ -144,7 +144,7 @@ def test_streamed_deltas_are_forwarded_and_parsed() -> None:
         schema=_Fields,
         system=[SystemBlock("s")],
         user="u",
-        model="claude-haiku-4-5",
+        model="claude-haiku-4-5-20251001",
         tracker=_tracker(),
         on_token=tokens.append,
     )
@@ -162,7 +162,7 @@ def test_a_stream_that_breaks_after_output_began_is_not_replayed() -> None:
             schema=_Fields,
             system=[SystemBlock("s")],
             user="u",
-            model="claude-haiku-4-5",
+            model="claude-haiku-4-5-20251001",
             tracker=_tracker(),
             on_token=tokens.append,
         )
@@ -181,7 +181,7 @@ def test_thinking_blocks_return_verbatim_in_the_assistant_turn() -> None:
         system=[SystemBlock("s")],
         messages=[{"role": "user", "content": "go"}],
         tools=[{"name": "search_evidence"}],
-        model="claude-haiku-4-5",
+        model="claude-haiku-4-5-20251001",
         tracker=_tracker(),
         reasoning=True,
     )

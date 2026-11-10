@@ -61,12 +61,16 @@ jobs:
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
           LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
           LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          # a judge from another model family for the fixture suites (A-103); unset keeps Claude
+          CCP_FIXTURE_JUDGE_MODEL: ${{ vars.CCP_FIXTURE_JUDGE_MODEL }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        # five runs per model-backed case: pass^5, gated on confidence bounds (A-103)
         run: |
           if [ -f evals/runs/latest.json ]; then
-            uv run ccp evals regress --suite all --no-unit --strict
+            uv run ccp evals regress --suite all --no-unit --strict --runs 5
           else
             echo "no baseline restored: this run becomes the baseline"
-            uv run ccp evals run --suite all --no-unit
+            uv run ccp evals run --suite all --no-unit --runs 5
           fi
       - name: judge calibration (keyed)
         id: calibrate

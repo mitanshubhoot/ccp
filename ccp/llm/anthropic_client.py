@@ -12,10 +12,15 @@ timeout retry with exponential backoff and jitter inside the client, then bubble
 retryable; 400, 401, 403, 404 and refusals are terminal. The budget tracker is charged
 after every response and raises past a cap.
 
+Models and version (A-103): every call names a pinned model id from ccp/llm/models.py,
+which also says how that model turns thinking off and takes effort; no call sends
+temperature, top_p or top_k; and the client sends anthropic-version
+ANTHROPIC_API_VERSION itself, so an SDK upgrade cannot change it.
+
 Prompt layout (spec.md R16): `system` blocks are stable-first and the block flagged
 `cache=True` carries an explicit `cache_control` breakpoint; per-call material lives in the
-user turn. Note the model-specific minimum cacheable prefix (4096 tokens on Haiku 4.5):
-a shorter prefix silently does not cache.
+user turn. Note the model-specific minimum cacheable prefix (4096 tokens on Haiku 4.5,
+512 on Haiku 5.5): a shorter prefix silently does not cache.
 """
 
 from __future__ import annotations
@@ -38,6 +43,7 @@ from ccp.llm.errors import (
     UnpricedModel,
     classify_status,
 )
+from ccp.llm.models import ANTHROPIC_API_VERSION, sampling_params, spec_for, thinks
 from ccp.observability import cost
 
 T = TypeVar("T", bound=BaseModel)
@@ -60,32 +66,16 @@ def system_param(system: list[SystemBlock]) -> list[dict[str, Any]]:
     return blocks
 
 
-ADAPTIVE_THINKING_PREFIXES = ("claude-sonnet-5", "claude-opus-5", "claude-fable", "claude-mythos")
 # max_tokens bounds the thinking and the answer together; a structured answer behind a
 # 2048-token cap would be cut off mid-JSON on a live reasoning model (a stub never is).
 REASONING_MIN_MAX_TOKENS = 8192
-TEMPERATURE_ZERO_PREFIXES = ("claude-haiku-4-5",)  # models that still accept sampling params
 
 
-def sampling_params(model: str, *, reasoning: bool) -> dict[str, Any]:
-    """Thinking and effort set per call type (spec.md Layer 8 "Model configuration", A-100).
-    Reasoning calls (tier 3, the agents): adaptive thinking at medium effort where supported.
-    Extraction calls (tier 2, classification, the judge): thinking explicitly off on models
-    that would otherwise think, so a short structured answer is never cut off by its own
-    thinking; temperature 0 on the models that still take it."""
-    params: dict[str, Any] = {}
-    if reasoning and model.startswith(ADAPTIVE_THINKING_PREFIXES):
-        params["thinking"] = {"type": "adaptive"}
-        params["output_config"] = {"effort": "medium"}
-    elif not reasoning and model.startswith(ADAPTIVE_THINKING_PREFIXES):
-        params["thinking"] = {"type": "disabled"}
-    elif not reasoning and model.startswith(TEMPERATURE_ZERO_PREFIXES):
-        params["extra_body"] = {"temperature": 0}
-    return params
-
-
-def _room_for_thinking(params: dict[str, Any]) -> None:
-    if (params.get("thinking") or {}).get("type") not in (None, "disabled"):
+def _room_for_thinking(model: str, params: dict[str, Any]) -> None:
+    """A call that can think gets room to think and still answer: adaptive thinking asked
+    for, or a model that thinks unless told not to (Haiku 5.5 and the 5.x models think
+    when `thinking` is left out; Opus 5.5 and Fable always think)."""
+    if thinks(model, params):
         params["max_tokens"] = max(int(params["max_tokens"]), REASONING_MIN_MAX_TOKENS)
 
 
@@ -133,11 +123,13 @@ def _user_content(user: str, documents: Sequence[str]) -> str | list[dict[str, A
 
 def _require_price(model: str) -> None:
     """A model the price table does not know would be charged $0, so no dollar cap could
-    stop it: refused before any call (A-97)."""
+    stop it: refused before any call (A-97). An alias that can move, or an id the model
+    table does not know, is refused next (A-103): pinned ids only."""
     if not cost.is_priced(model):
         raise UnpricedModel(
             f"no price for model {model!r} in ccp/observability/cost.py; add it before use"
         )
+    spec_for(model)
 
 
 def _classify(exc: Exception) -> Exception:
@@ -184,7 +176,11 @@ class AnthropicClient:
             key = settings.anthropic_api_key
             if key is None:
                 raise RuntimeError("ANTHROPIC_API_KEY is not set")
-            client = anthropic.Anthropic(api_key=key.get_secret_value(), max_retries=0)
+            client = anthropic.Anthropic(
+                api_key=key.get_secret_value(),
+                max_retries=0,
+                default_headers={"anthropic-version": ANTHROPIC_API_VERSION},
+            )
         self._client = client
         self._sleep = sleep
 
@@ -253,7 +249,7 @@ class AnthropicClient:
             "messages": [{"role": "user", "content": _user_content(user, documents)}],
             **sampling_params(model, reasoning=reasoning),
         }
-        _room_for_thinking(params)
+        _room_for_thinking(model, params)
         request = {**params, "output_format": schema.__name__}
         if on_token is not None:
             response = self._with_retry(lambda: self._stream_parse(params, schema, on_token))
@@ -321,7 +317,9 @@ class AnthropicClient:
             "max_tokens": max_tokens,
             "system": system_param(system),
             "messages": [{"role": "user", "content": user}],
+            **sampling_params(model, reasoning=False),
         }
+        _room_for_thinking(model, params)
         response = self._with_retry(lambda: self._client.messages.create(**params))
         usage = _usage(model, response.usage)
         tracker.charge(
@@ -360,7 +358,7 @@ class AnthropicClient:
             "messages": messages,
             **sampling_params(model, reasoning=reasoning),
         }
-        _room_for_thinking(params)
+        _room_for_thinking(model, params)
         if tools:
             params["tools"] = tools
         response = self._with_retry(lambda: self._client.messages.create(**params))
@@ -409,6 +407,8 @@ class AnthropicClient:
         from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
         from anthropic.types.messages.batch_create_params import Request
 
+        for item in items:
+            _require_price(item.model)
         requests = [
             Request(
                 custom_id=item.custom_id,
@@ -475,10 +475,13 @@ class BatchItem:
             "max_tokens": self.max_tokens,
             "system": system_param(self.system),
             "messages": [{"role": "user", "content": self.user}],
+            **sampling_params(self.model, reasoning=False),
         }
+        _room_for_thinking(self.model, params)
         if self.schema is not None:
             params["output_config"] = {
-                "format": {"type": "json_schema", "schema": self.schema.model_json_schema()}
+                **params.get("output_config", {}),
+                "format": {"type": "json_schema", "schema": self.schema.model_json_schema()},
             }
         return params
 

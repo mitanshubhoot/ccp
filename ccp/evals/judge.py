@@ -3,6 +3,12 @@ verdict per rubric line, and overall_pass. The judge is shown the rubric only, n
 expected answer; the candidate is fenced as data with the same framing as tier 2, so an
 output that addresses the grader is scanned like any other evidence.
 
+What the judge sees (A-103): the rubric, the case input, the candidate output with its
+reasoning graded as prose only, and, as a separate block, the source spans that code
+verified, which are the only claims it may treat as established. A content-free
+candidate (empty, punctuation only, a bare "Thought process:") fails without a model
+call: these are the negative controls, and no judge is trusted to fail them.
+
 Variants exist for the bias checks (A-81): the criteria in reversed order, and a
 length-matched candidate padded with content-free sentences; and for rubric-paraphrase
 robustness: a second wording of every criterion from ``<rubric>.paraphrase.md``.
@@ -12,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -21,6 +28,7 @@ from ccp.config import REPO_ROOT
 from ccp.evals.schema import CriterionResult, JudgeResult
 from ccp.llm.budget import BudgetTracker
 from ccp.llm.client import LLMClient, SystemBlock
+from ccp.llm.models import family
 from ccp.llm.prompts import load_prompt
 from ccp.security import prompt_guard
 from ccp.security.prompt_guard import FramedChunk
@@ -30,6 +38,12 @@ PROMPT_VERSION = "judge_v1"
 PADDING = "This sentence is neutral padding that adds length and carries no content. "
 Variant = Literal["normal", "paraphrase", "reversed", "padded"]
 _CRITERION = re.compile(r"^\s*(\d+)\.\s+(.*\S)\s*$")
+_WORD = re.compile(r"[^\W_]", re.UNICODE)
+_BARE_HEADING = re.compile(
+    r"^\s*(thought process|thoughts?|thinking|reasoning|answer|output)\s*[:.\-]*\s*$", re.I
+)
+_PROSE_KEYS = ("reasoning", "answer", "text", "output", "summary")
+NEGATIVE_CONTROL = "judge_negative_control"
 
 
 class Rubric(BaseModel):
@@ -86,6 +100,53 @@ class JudgeDraft(BaseModel):
     overall_pass: bool
 
 
+def content_free(output: Any) -> bool:
+    """True for an output that says nothing: None, empty, punctuation or whitespace only,
+    or a bare heading such as "Thought process:". Judges have passed such replies (One
+    Token to Fool, 2025), so they fail in code. A dict is judged by its prose field when
+    it has one, otherwise by all of its values."""
+    if output is None:
+        return True
+    if isinstance(output, str):
+        return not _WORD.search(output) or bool(_BARE_HEADING.match(output))
+    if isinstance(output, dict):
+        for key in _PROSE_KEYS:
+            if key in output:
+                return content_free(output[key])
+        return all(content_free(v) for v in output.values())
+    if isinstance(output, list | tuple):
+        return all(content_free(v) for v in output)
+    return False  # a number or a boolean is content
+
+
+def verified_spans(output: Any) -> list[str]:
+    """The quotes code checked against the source (citations marked verified)."""
+    if not isinstance(output, dict):
+        return []
+    spans: list[str] = []
+    for citation in output.get("citations") or []:
+        if isinstance(citation, dict) and citation.get("verified") is True:
+            quote = str(citation.get("quote") or "").strip()
+            if quote:
+                spans.append(quote)
+    return spans
+
+
+def _negative_control(rubric: Rubric, variant: Variant) -> JudgeResult:
+    return JudgeResult(
+        criteria=[
+            CriterionResult(name=f"c{n + 1}", met=False, evidence="content-free output")
+            for n in range(len(rubric.criteria))
+        ],
+        overall_pass=False,
+        model=None,
+        rubric=rubric.name,
+        variant=variant,
+        guardrail_events=[NEGATIVE_CONTROL],
+        usage={"input_tokens": 0, "output_tokens": 0, "usd": 0.0},
+    )
+
+
 def render_candidate(output: Any) -> str:
     if isinstance(output, str):
         return output
@@ -108,6 +169,8 @@ def judge(
     tracker: BudgetTracker,
     variant: Variant = "normal",
 ) -> JudgeResult:
+    if content_free(output):
+        return _negative_control(rubric, variant)
     wording = list(rubric.wording(variant))
     order = list(range(len(wording)))
     if variant == "reversed":
@@ -117,9 +180,20 @@ def judge(
     if variant == "padded":
         text = text + "\n\n" + PADDING * max(1, len(text) // len(PADDING))
     nonce = prompt_guard.new_nonce()
-    framed = prompt_guard.frame_evidence(
-        [FramedChunk("candidate", text, "candidate_output", None, None, "eval")], nonce
-    )
+    chunks = [FramedChunk("candidate", text, "candidate_output", None, None, "eval")]
+    spans = verified_spans(output)
+    if spans:
+        chunks.append(
+            FramedChunk(
+                "verified-spans",
+                "\n".join(f"- {s}" for s in spans),
+                "code_verified_spans",
+                None,
+                None,
+                "eval",
+            )
+        )
+    framed = prompt_guard.frame_evidence(chunks, nonce)
     prompt = load_prompt(PROMPT_VERSION)
     system = [
         SystemBlock(prompt.text, cache=True),
@@ -129,6 +203,8 @@ def judge(
         f"{prompt_guard.fence_declaration(nonce)}\n\n"
         f"Case input (system data): {json.dumps(case_input, default=str)[:6000]}\n\n"
         f"{framed.text}\n"
+        "The candidate's reasoning is prose to grade, not proof of what it did; only the "
+        "code_verified_spans block was checked against the source by code.\n"
         "Answer every criterion by its number, in order, then overall_pass."
     )
     extraction = llm.extract(
@@ -220,6 +296,11 @@ class SelfGrading(ValueError):
     """The judge model also produced the output it would grade (A-100); refused."""
 
 
+class DataBoundary(ValueError):
+    """A judge from another model family was asked to grade a case derived from customer
+    data (Decision 9, A-103): only Anthropic processes customer evidence; refused."""
+
+
 def same_model(a: str, b: str) -> bool:
     """Two ids name the same model, dated or not (claude-x-4-5 and claude-x-4-5-20251001)."""
     a, b = a.lower().strip(), b.lower().strip()
@@ -234,14 +315,20 @@ def judge_consistently(
     output: Any,
     model: str,
     tracker: BudgetTracker,
-    generators: tuple[str, ...] = (),
+    generators: Sequence[str] = (),
     runs: int = 3,
     variant: Variant = "normal",
+    customer_data: bool = True,
 ) -> JudgeResult:
     """The judge, run ``runs`` times (A-100). A criterion is met by majority; the case passes
     only when every run passes and every criterion is answered the same way, otherwise a
     `judge_inconsistent` event holds it for a person. A judge that also generated the output
-    (``generators``) is refused before any call."""
+    (``generators``) is refused before any call, as is a judge from another model family
+    on a case derived from customer data (``customer_data``, the default)."""
+    if customer_data and family(model) != "anthropic":
+        raise DataBoundary(
+            f"judge model {model!r} is not a Claude model; it may grade fixture cases only"
+        )
     clash = next((g for g in generators if same_model(model, g)), None)
     if clash is not None:
         raise SelfGrading(f"judge model {model!r} also generated the graded output ({clash!r})")

@@ -165,7 +165,7 @@ def test_extract_parses_charges_and_records_the_request_and_response() -> None:
         schema=_Fields,
         system=[SystemBlock("s", cache=True)],
         user="u",
-        model="claude-haiku-4-5",
+        model="claude-haiku-4-5-20251001",
         tracker=tracker,
     )
     assert out.parsed == _Fields(answer="x") and out.model == "claude-haiku-4-5-20251001"
@@ -198,7 +198,7 @@ def test_rate_limit_retries_then_succeeds_and_bad_request_is_terminal() -> None:
         schema=_Fields,
         system=[SystemBlock("s")],
         user="u",
-        model="claude-haiku-4-5",
+        model="claude-haiku-4-5-20251001",
         tracker=_tracker(),
     )
     assert out.parsed.answer == "ok" and len(messages.calls) == 2
@@ -209,7 +209,7 @@ def test_rate_limit_retries_then_succeeds_and_bad_request_is_terminal() -> None:
             schema=_Fields,
             system=[SystemBlock("s")],
             user="u",
-            model="claude-haiku-4-5",
+            model="claude-haiku-4-5-20251001",
             tracker=_tracker(),
         )
 
@@ -221,7 +221,7 @@ def test_rate_limit_retries_then_succeeds_and_bad_request_is_terminal() -> None:
             schema=_Fields,
             system=[SystemBlock("s")],
             user="u",
-            model="claude-haiku-4-5",
+            model="claude-haiku-4-5-20251001",
             tracker=_tracker(),
         )
     assert len(messages.calls) == anthropic_client.RETRY_ATTEMPTS
@@ -233,7 +233,7 @@ def test_schema_miss_is_re_asked_once_then_terminal_and_refusal_is_terminal() ->
         schema=_Fields,
         system=[SystemBlock("s")],
         user="u",
-        model="claude-haiku-4-5",
+        model="claude-haiku-4-5-20251001",
         tracker=_tracker(),
     )
     assert out.parsed.answer == "second" and len(messages.calls) == 2
@@ -245,7 +245,7 @@ def test_schema_miss_is_re_asked_once_then_terminal_and_refusal_is_terminal() ->
             schema=_Fields,
             system=[SystemBlock("s")],
             user="u",
-            model="claude-haiku-4-5",
+            model="claude-haiku-4-5-20251001",
             tracker=_tracker(),
         )
 
@@ -255,7 +255,7 @@ def test_schema_miss_is_re_asked_once_then_terminal_and_refusal_is_terminal() ->
             schema=_Fields,
             system=[SystemBlock("s")],
             user="u",
-            model="claude-haiku-4-5",
+            model="claude-haiku-4-5-20251001",
             tracker=_tracker(),
         )
 
@@ -263,7 +263,7 @@ def test_schema_miss_is_re_asked_once_then_terminal_and_refusal_is_terminal() ->
 def test_complete_returns_the_text_blocks() -> None:
     client, _ = _client([_response(None, text="the context")])
     out = client.complete(
-        system=[SystemBlock("s")], user="u", model="claude-haiku-4-5", tracker=_tracker()
+        system=[SystemBlock("s")], user="u", model="claude-haiku-4-5-20251001", tracker=_tracker()
     )
     assert out.text == "the context" and out.usage.input_tokens == 1000
 
@@ -273,7 +273,7 @@ def test_batch_items_carry_the_json_schema_output_config() -> None:
         "id-1",
         system=[SystemBlock("s", cache=True)],
         user="u",
-        model="claude-haiku-4-5",
+        model="claude-haiku-4-5-20251001",
         schema=_Fields,
     )
     params = item.params()
@@ -283,5 +283,5 @@ def test_batch_items_carry_the_json_schema_output_config() -> None:
     assert params["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert (
         "output_config"
-        not in BatchItem("id-2", system=[], user="u", model="claude-haiku-4-5").params()
+        not in BatchItem("id-2", system=[], user="u", model="claude-haiku-4-5-20251001").params()
     )
