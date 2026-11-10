@@ -168,13 +168,16 @@ def test_the_consumer_investigates_only_fail_and_needs_review_and_parks_without_
             embedder=HashingEmbeddingClient(), reranker=None, llm=None, retrieval=RetrievalConfig()
         ),
     )
-    assert keyless.consumed == 0 and keyless.investigated == 0
+    # the consumer reads every verdict and queues one job per uninvestigated fail or
+    # needs_review verdict; the partial HR-4 verdict and the two investigated above are
+    # skipped; without a model key every queued job parks (A-109)
+    assert keyless.consumed >= 3 and keyless.skipped >= 3 and keyless.investigated == 0
+    assert keyless.parked == keyless.enqueued
     summary = runner.drain(acme, settings, providers)
-    # the partial HR-4 verdict and the two investigated above are skipped by the consumer
-    assert summary.consumed >= 3 and summary.skipped >= 3
-    assert summary.investigated == 0 or summary.proposals >= 0
+    assert summary.consumed == 0  # the cursor advanced
+    assert summary.investigated == keyless.enqueued  # the parked jobs ran once a key was set
     again = runner.drain(acme, settings, providers)
-    assert again.consumed == 0  # the cursor advanced
+    assert again.consumed == 0 and again.investigated == 0
 
 
 def test_investigator_never_reads_another_tenant_or_writes_state(world) -> None:  # type: ignore[no-untyped-def]

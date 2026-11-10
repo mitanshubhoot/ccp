@@ -9,7 +9,7 @@ import json
 
 import typer
 
-from ccp.agent import decisions, threads
+from ccp.agent import decisions, threads, tier3
 from ccp.approvals import store as approvals
 from ccp.config import Settings
 from ccp.observability import steps
@@ -168,3 +168,27 @@ def resume(
         f" inserted={result.inserted}, approval {item.approval_id})"
     )
     typer.echo(verdict.reasoning)
+
+
+@app.command("replay")
+def replay(
+    thread: str = typer.Option(..., "--thread"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Run a recorded tier 3 run again from its log alone (A-109): every request must come
+    out as recorded. Exits 1 on the first request the log does not hold."""
+    settings = _settings()
+    ctx = _guarded_tenant(settings, thread, tenant)
+    pool = db.app_pool(settings)
+    try:
+        report = tier3.replay(ScopedDB(pool, ctx), settings, thread)
+    except LookupError as exc:
+        typer.echo(f"refused: {exc}", err=True)
+        raise typer.Exit(2) from None
+    finally:
+        pool.close()
+    typer.echo(f"replayed {thread}: {report.served} recorded steps, trajectory {report.trajectory}")
+    if report.diverged is not None:
+        typer.echo(f"diverged: {report.diverged}", err=True)
+        raise typer.Exit(1)
+    typer.echo("every request matched the record")

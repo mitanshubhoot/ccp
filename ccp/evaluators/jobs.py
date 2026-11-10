@@ -2,7 +2,8 @@
 `jobs` topic, and this consumer runs it, one at a time per schedule.
 
     clock      the staleness check: enqueue subjects whose verdict or evidence is too old
-    unpark     parked evaluations back to pending (the model budget's day has rolled over)
+    unpark     parked evaluations and investigations back to pending (the model budget's
+               day has rolled over)
     full_run   every (test, subject) pair, idempotent at the verdict table
 
 Every job is safe to run twice: the clock and the full run enqueue through the evaluation
@@ -28,9 +29,10 @@ from ccp.observability import steps
 from ccp.storage.scoped import ScopedDB
 
 Job = Callable[[ScopedDB, Settings, datetime], int]
+UNPARKED = ("evaluations", "investigations")  # the topics that park for the model budget
 JOBS: dict[str, Job] = {
     "clock": lambda db, settings, slot: clock.tick(db).enqueued,
-    "unpark": lambda db, settings, slot: ops.unpark(db, "evaluations"),
+    "unpark": lambda db, settings, slot: sum(ops.unpark(db, t) for t in UNPARKED),
     "full_run": lambda db, settings, slot: evaluations.enqueue_all(db, settings),
 }
 

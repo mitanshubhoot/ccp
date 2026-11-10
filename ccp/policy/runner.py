@@ -83,7 +83,7 @@ def _build(
         tuple(sorted(ALLOWLISTS[GRAPH])),
         fixed={"search_evidence": {"evidence_type": "policy_document"}},
     )
-    deps = core.ModelDeps(providers.llm, settings.policy_model, tracker, reasoning=True)
+    deps = core.ModelDeps(providers.llm, settings.policy_model, tracker, reasoning=True, log_db=db)
     spec = graph_module.build_spec(
         db.tenant,
         tools,
@@ -135,7 +135,7 @@ def _run(
             tenant=db.tenant,
             inputs={"control_id": control_id, "thread_id": thread_id},
         ) as s:
-            for update in graph.stream(initial, config, stream_mode="updates"):
+            for update in graph.stream(initial, config, stream_mode="updates", durability="sync"):
                 trajectory.extend(str(k) for k in update)
             final = dict(graph.get_state(config).values.get("final") or {})
             if not final:

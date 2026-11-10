@@ -61,7 +61,8 @@ def run(
     finally:
         pool.close()
     typer.echo(
-        f"consumed {summary.consumed}, investigated {summary.investigated},"
+        f"consumed {summary.consumed}, queued {summary.enqueued},"
+        f" investigated {summary.investigated}, parked {summary.parked},"
         f" skipped {summary.skipped}, proposals {summary.proposals},"
         f" evidence requests {summary.evidence_requests}"
     )

@@ -13,8 +13,9 @@ separate process resumes it later from the decision recorded on that item (A-95)
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command
@@ -23,6 +24,7 @@ from ulid import ULID
 from ccp.agent import core, threads
 from ccp.agent.allowlists import ALLOWLISTS
 from ccp.agent.graphs import tier3 as graph_module
+from ccp.agent.runlog import ReplayDiverged
 from ccp.agent.tools import ToolContext, bind_tools
 from ccp.approvals import store as approvals
 from ccp.config import Settings
@@ -61,14 +63,26 @@ def _check_tenant(db: ScopedDB, thread_id: str) -> None:
 
 
 def _build(
-    db: ScopedDB, settings: Settings, spec: TestSpec, providers: Providers, now: datetime
+    db: ScopedDB,
+    settings: Settings,
+    spec: TestSpec,
+    providers: Providers,
+    now: datetime,
+    replay_of: str | None = None,
 ) -> tuple[Any, PostgresSaver, Any, BudgetTracker]:
     tracker = BudgetTracker(RunBudget.from_settings(settings))
     tools = bind_tools(
         ToolContext(db, providers.embedder, providers.reranker, providers.retrieval),
         tuple(sorted(ALLOWLISTS[GRAPH])),
     )
-    deps = core.ModelDeps(providers.llm, settings.ccp_tier3_model, tracker, reasoning=True)
+    deps = core.ModelDeps(
+        providers.llm,
+        settings.ccp_tier3_model,
+        tracker,
+        reasoning=True,
+        log_db=db,
+        replay_of=replay_of,
+    )
     graph_spec = graph_module.build_spec(
         db.tenant, spec, tools, deps, now=now, retrieval=providers.retrieval
     )
@@ -83,7 +97,8 @@ def _run(
     """Stream the graph, appending each step to ``into`` as it completes, so a run that
     fails part way still records how far it got."""
     trajectory = into if into is not None else []
-    for update in graph.stream(payload, config, stream_mode="updates"):
+    # synchronous checkpoints: a step is durable before the next one starts (A-109)
+    for update in graph.stream(payload, config, stream_mode="updates", durability="sync"):
         for key in update:
             trajectory.append("interrupt" if key == "__interrupt__" else str(key))
     return trajectory
@@ -221,6 +236,7 @@ def evaluate(
         "extracted": {},
         "requests": {},
     }
+    threads.set_input(db, thread_id, initial)  # once, so a replay can start it again
     trajectory: list[str] = list(previous.trajectory) if previous is not None else []
     try:
         with steps.step(
@@ -402,6 +418,79 @@ def resume(
         raise
     finally:
         pool.close()
+
+
+@dataclass(frozen=True)
+class ReplayReport:
+    """A recorded run replayed against its log (A-109). `diverged` names the first request
+    the log does not hold; None means every request came out the same."""
+
+    thread_id: str
+    served: int
+    diverged: str | None
+    trajectory: tuple[str, ...]
+
+
+class _NoModel:
+    """The model client of a replay: any call means the request was not in the log."""
+
+    provider = "replay"
+
+    def extract(self, **_: Any) -> Any:
+        raise ReplayDiverged("a replay asked the model for an extraction")
+
+    def complete(self, **_: Any) -> Any:
+        raise ReplayDiverged("a replay asked the model for a completion")
+
+    def chat(self, **_: Any) -> Any:
+        raise ReplayDiverged("a replay asked the model for a turn")
+
+
+def replay(
+    db: ScopedDB, settings: Settings, thread_id: str, providers: Providers | None = None
+) -> ReplayReport:
+    """Run a recorded tier 3 run again from the state it started in, on a scratch thread,
+    with every model turn, tool result and fence nonce served from the original run's log
+    and no model at all. It stops at the gate, as the original did."""
+    _check_tenant(db, thread_id)
+    row = threads.get(db, thread_id)
+    initial = threads.input_of(db, thread_id)
+    if row is None or not row.test_id or initial is None:
+        raise LookupError(f"thread {thread_id!r} has no recorded start to replay")
+    spec = knowledge.load().tests[row.test_id]
+    active = providers or Providers.from_settings(settings)
+    replaying = Providers(
+        embedder=active.embedder,
+        reranker=active.reranker,
+        llm=cast(Any, _NoModel()),
+        retrieval=active.retrieval,
+    )
+    moment = datetime.fromisoformat(str(initial["now"]))
+    graph, _saver, pool, _tracker = _build(
+        db, settings, spec, replaying, moment, replay_of=thread_id
+    )
+    scratch = f"{db.tenant.tenant_id}:replay:{row.test_id}:{ULID()}"
+    trajectory: list[str] = []
+    diverged: str | None = None
+    served = 0
+    try:
+        with steps.step(
+            "tier3.replay", layer="agent", tenant=db.tenant, inputs={"thread_id": thread_id}
+        ) as s:
+            try:
+                _run(graph, dict(initial), {"configurable": {"thread_id": scratch}}, trajectory)
+            except ReplayDiverged as exc:
+                diverged = str(exc)
+            served = runlog_size(db, thread_id)
+            s.set_output({"diverged": diverged, "trajectory": trajectory})
+    finally:
+        pool.close()
+    return ReplayReport(thread_id, served, diverged, tuple(trajectory))
+
+
+def runlog_size(db: ScopedDB, thread_id: str) -> int:
+    row = db.fetch_one("SELECT count(*) FROM agent_steps WHERE thread_id = %s", (thread_id,))
+    return int(row[0]) if row else 0
 
 
 def evaluate_subject(

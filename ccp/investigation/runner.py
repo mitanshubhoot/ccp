@@ -3,6 +3,16 @@ It runs the graph for every fail or needs_review verdict, persists the Investiga
 validates every proposed target, writes one remediation_proposals row per surviving
 action, and opens one approval item per proposal plus one evidence_request when
 evidence is missing. Compliance state never waits for it.
+
+An investigation is a job (A-109):
+
+    verdicts ──► investigator (ordered) ──► investigations (parallel, one job per verdict)
+                 reads every verdict, queues        a lease, a heartbeat, parking without a
+                 fail and needs_review; no model    key or budget; the agent runs outside any
+                 call inside its transaction        transaction, on thread
+                                                    <tenant>:investigate:<verdict>:run, so a
+                                                    retried job resumes its own run and the
+                                                    run log serves what it already did
 """
 
 from __future__ import annotations
@@ -12,7 +22,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 import psycopg
-from ulid import ULID
 
 from ccp.agent import core, threads
 from ccp.agent.allowlists import ALLOWLISTS
@@ -24,7 +33,8 @@ from ccp.evaluators import budget_gate, targets
 from ccp.evaluators import verdict as verdicts
 from ccp.evaluators.tier2 import AITierUnavailable, Providers
 from ccp.evaluators.verdict import Citation, Verdict
-from ccp.ingest.consumers import OrderedConsumer, ParkedError
+from ccp.ingest import event_log, ops
+from ccp.ingest.consumers import OrderedConsumer, ParallelConsumer, ParkedError, TerminalError
 from ccp.ingest.event_log import LogRecord
 from ccp.ingest.worker import register
 from ccp.investigation import schema
@@ -38,16 +48,24 @@ from ccp.types import VerdictStatus
 
 GRAPH = graph_module.GRAPH_NAME
 INVESTIGATED_STATUSES = (VerdictStatus.failed, VerdictStatus.needs_review)
+JOB_TOPIC = "investigations"
 
 
 @dataclass
 class RunSummary:
-    consumed: int = 0
+    consumed: int = 0  # verdict records read off the topic
+    enqueued: int = 0  # investigation jobs queued
     investigated: int = 0
     skipped: int = 0
+    parked: int = 0  # jobs held for a model key or the budget
     proposals: int = 0
     evidence_requests: int = 0
     rejected_targets: list[str] = field(default_factory=list)
+
+
+def thread_id_of(db: ScopedDB, verdict_id: str) -> str:
+    """One run per verdict, named by it, so a retried job finds its own run (A-109)."""
+    return checkpoints.thread_id_for(db.tenant, "investigate", verdict_id, "run")
 
 
 def _build(
@@ -58,7 +76,9 @@ def _build(
         ToolContext(db, providers.embedder, providers.reranker, providers.retrieval),
         tuple(sorted(ALLOWLISTS[GRAPH])),
     )
-    deps = core.ModelDeps(providers.llm, settings.investigator_model, tracker, reasoning=True)
+    deps = core.ModelDeps(
+        providers.llm, settings.investigator_model, tracker, reasoning=True, log_db=db
+    )
     spec = graph_module.build_spec(db.tenant, tools, deps, now=now)
     pool = checkpoints.saver_pool(settings, db.tenant)
     saver = checkpoints.tenant_saver(pool, db.tenant)
@@ -80,9 +100,13 @@ def investigate(
         return existing
     moment = now or datetime.now(UTC)
     budget_gate.check_daily_budget(db, moment)  # ParkedError past the cap
-    thread_id = checkpoints.thread_id_for(db.tenant, "investigate", verdict.verdict_id, str(ULID()))
+    thread_id = thread_id_of(db, verdict.verdict_id)
+    previous = threads.get(db, thread_id)
+    if previous is None:
+        threads.create(db, thread_id, GRAPH, verdict.test_id, verdict.subject_key)
+    else:  # a retried job: continue its own run from the last checkpoint
+        threads.mark_running(db, thread_id)
     graph, pool, tracker = _build(db, settings, providers, moment)
-    threads.create(db, thread_id, GRAPH, verdict.test_id, verdict.subject_key)
     config = {"configurable": {"thread_id": thread_id}}
     initial: dict[str, Any] = {
         "tenant_id": db.tenant.tenant_id,
@@ -99,7 +123,8 @@ def investigate(
         "requests": {},
         "context": {},
     }
-    trajectory: list[str] = []
+    threads.set_input(db, thread_id, initial)
+    trajectory: list[str] = list(previous.trajectory) if previous is not None else []
     try:
         with steps.step(
             "investigate.run",
@@ -107,7 +132,11 @@ def investigate(
             tenant=db.tenant,
             inputs={"verdict_id": verdict.verdict_id, "thread_id": thread_id},
         ) as s:
-            for update in graph.stream(initial, config, stream_mode="updates"):
+            checkpointed = previous is not None and bool(graph.get_state(config).values)
+            if checkpointed:
+                s.event(f"resumed_thread:{thread_id}")
+            payload = None if checkpointed else initial  # resume: only what is left runs
+            for update in graph.stream(payload, config, stream_mode="updates", durability="sync"):
                 trajectory.extend(str(k) for k in update)
             final = dict(graph.get_state(config).values.get("final") or {})
             if not final:
@@ -206,24 +235,23 @@ def _proposal_row(db: ScopedDB, verdict: Verdict, proposal: RemediationProposal)
 
 
 class InvestigationsConsumer(OrderedConsumer):
-    """Second consumer of the verdicts topic; acts on fail and needs_review only."""
+    """Second consumer of the verdicts topic: queues one investigation job per fail or
+    needs_review verdict that has none (A-109). It makes no model call, so it never parks
+    and never holds its batch open across one."""
 
     name = "investigator"
     topic = "verdicts"
 
     def __init__(
-        self, db: ScopedDB, settings: Settings, providers: Providers | None = None
+        self,
+        db: ScopedDB,
+        settings: Settings,
+        providers: Providers | None = None,
+        summary: RunSummary | None = None,
     ) -> None:
         super().__init__(db)
         self.settings = settings
-        self._providers = providers
-        self.summary = RunSummary()
-
-    @property
-    def providers(self) -> Providers:
-        if self._providers is None:
-            self._providers = Providers.from_settings(self.settings)
-        return self._providers
+        self.summary = summary if summary is not None else RunSummary()
 
     def handle(self, cur: psycopg.Cursor[Any], record: LogRecord) -> None:
         self.summary.consumed += 1
@@ -234,9 +262,72 @@ class InvestigationsConsumer(OrderedConsumer):
         if schema.for_verdict(self._db, verdict.verdict_id) is not None:
             self.summary.skipped += 1
             return
+        key = f"{verdict.tenant_id}:{verdict.verdict_id}"
+        queued = cur.execute(
+            "SELECT 1 FROM event_log WHERE topic = %s AND partition_key = %s"
+            " AND status <> 'dead' LIMIT 1",
+            (JOB_TOPIC, key),
+        ).fetchone()
+        if queued is not None:  # a redelivered verdict: its job is already queued
+            self.summary.skipped += 1
+            return
+        event_log.append(
+            cur,
+            tenant_id=verdict.tenant_id,
+            topic=JOB_TOPIC,
+            partition_key=key,
+            source_ts=verdict.valid_from,
+            ref=verdict.verdict_id,
+        )
+        self.summary.enqueued += 1
+
+
+class InvestigationJobs(ParallelConsumer):
+    """Runs one investigation per job, outside any transaction (A-109): parks without a
+    model key or past the budget, and a retried job resumes the verdict's own run."""
+
+    name = "investigations"
+    topic = JOB_TOPIC
+    one_per_key = True  # one run per verdict at a time
+
+    def __init__(
+        self,
+        db: ScopedDB,
+        settings: Settings,
+        providers: Providers | None = None,
+        summary: RunSummary | None = None,
+    ) -> None:
+        super().__init__(
+            db,
+            max_attempts=settings.ccp_max_attempts,
+            visibility_seconds=settings.ccp_claim_visibility_seconds,
+            base_delay=settings.ccp_retry_base_seconds,
+        )
+        self.settings = settings
+        self._providers = providers
+        self.summary = summary if summary is not None else RunSummary()
+
+    @property
+    def providers(self) -> Providers:
+        if self._providers is None:
+            self._providers = Providers.from_settings(self.settings)
+        return self._providers
+
+    def handle(self, record: LogRecord) -> None:
+        verdict = verdicts.load(self._db, record.ref)
+        if verdict is None:
+            raise TerminalError(f"verdict {record.ref!r} is not stored")
+        if schema.for_verdict(self._db, verdict.verdict_id) is not None:
+            self.summary.skipped += 1
+            return
         if self.providers.llm is None:
+            self.summary.parked += 1
             raise ParkedError("ANTHROPIC_API_KEY is not set; the Investigator is unavailable")
-        investigation = investigate(self._db, self.settings, verdict, self.providers)
+        try:
+            investigation = investigate(self._db, self.settings, verdict, self.providers)
+        except ParkedError:
+            self.summary.parked += 1
+            raise
         self.summary.investigated += 1
         self.summary.proposals += len(investigation.proposed_actions)
         self.summary.evidence_requests += 1 if investigation.missing_evidence else 0
@@ -246,14 +337,20 @@ class InvestigationsConsumer(OrderedConsumer):
 
 
 register("investigator")(lambda db, settings: InvestigationsConsumer(db, settings))
+register("investigations")(lambda db, settings: InvestigationJobs(db, settings))
 
 
 def drain(db: ScopedDB, settings: Settings, providers: Providers | None = None) -> RunSummary:
-    """Consume the verdicts topic for the Investigator. Without a model client the pending
-    fail/needs_review verdicts stay unconsumed (an ordered consumer cannot park a subset)."""
-    consumer = InvestigationsConsumer(db, settings, providers)
-    if consumer.providers.llm is None:
-        return consumer.summary
-    while consumer.run_once():
+    """Queue the jobs for every new fail and needs_review verdict, then run them. Jobs
+    parked for want of a model key go back to pending when one is configured; without a key
+    they park again (A-109)."""
+    summary = RunSummary()
+    queue = InvestigationsConsumer(db, settings, providers, summary)
+    while queue.run_once():
         pass
-    return consumer.summary
+    jobs = InvestigationJobs(db, settings, providers, summary)
+    if jobs.providers.llm is not None:
+        ops.unpark(db, JOB_TOPIC)
+    while jobs.run_once():
+        pass
+    return summary

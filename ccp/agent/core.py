@@ -31,17 +31,19 @@ from pydantic import ValidationError
 
 from ccp.agent.allowlists import check_allowlist
 from ccp.agent.bundle import bundle_sha256
+from ccp.agent.runlog import RunLog
 from ccp.agent.state import AgentState
 from ccp.agent.tools import BoundTool
 from ccp.evaluators import citations
 from ccp.evaluators.extraction import SchemaMeta, schema_block
 from ccp.ingest.consumers import RetryableError
 from ccp.llm.budget import BudgetTracker
-from ccp.llm.client import LLMClient, SystemBlock, tool_result_message
+from ccp.llm.client import ChatTurn, Extraction, LLMClient, SystemBlock, tool_result_message
 from ccp.llm.prompts import load_prompt
 from ccp.observability import steps
 from ccp.security import prompt_guard
 from ccp.security.prompt_guard import FramedChunk
+from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
 
 NodeFn = Callable[[AgentState], dict[str, Any]]
@@ -174,11 +176,27 @@ class ModelDeps:
     tracker: BudgetTracker
     reasoning: bool = False
     stream: Callable[[str], None] | None = None  # token sink for nodes built with stream=True
+    # The run log (A-109): with a database, every model call, tool call and fence nonce of a
+    # run is recorded under the state's thread_id, and a resumed node is served what it
+    # already did. `replay_of` names a recorded run to replay against its log alone.
+    log_db: ScopedDB | None = None
+    replay_of: str | None = None
 
     def require(self) -> LLMClient:
         if self.llm is None:
             raise RuntimeError("no model client configured for this node")
         return self.llm
+
+    def runlog(self, state: AgentState) -> RunLog | None:
+        thread_id = state.get("thread_id")
+        if self.log_db is None or not thread_id:
+            return None
+        return RunLog(
+            self.log_db,
+            str(thread_id),
+            source=self.replay_of,
+            replay=self.replay_of is not None,
+        )
 
 
 def frame_state_chunks(
@@ -223,7 +241,10 @@ def make_structured_node(
         chunks = select_chunks(state)
         if not chunks and require_chunks:
             return {"extracted_raw": {name: None}, "guardrail_events": [f"no_evidence:{name}"]}
-        nonce = state.get("fence_nonce") or prompt_guard.new_nonce()
+        log = deps.runlog(state)
+        nonce = state.get("fence_nonce") or (
+            log.nonce(name) if log is not None else prompt_guard.new_nonce()
+        )
         framed, shown = frame_state_chunks(chunks, nonce)
         if not shown and require_chunks:
             return {
@@ -242,24 +263,34 @@ def make_structured_node(
             "Fill every field of the schema from the fenced evidence in the documents and the"
             " system data only."
         )
-        extraction = deps.require().extract(
-            schema=meta.model,
-            system=system,
-            user=user,
-            model=deps.model,
-            tracker=deps.tracker,
-            reasoning=deps.reasoning,
-            on_token=deps.stream if stream else None,
-            documents=[evidence, *(documents(state) if documents else [])],
-        )
-        steps.note_model_call(
-            extraction.model,
-            input_tokens=extraction.usage.input_tokens,
-            output_tokens=extraction.usage.output_tokens,
-            cache_read=extraction.usage.cache_read_input_tokens,
-            cache_write=extraction.usage.cache_creation_input_tokens,
-            prompt_version=prompt_version,
-        )
+        docs = [evidence, *(documents(state) if documents else [])]
+
+        def call() -> Extraction:
+            return deps.require().extract(
+                schema=meta.model,
+                system=system,
+                user=user,
+                model=deps.model,
+                tracker=deps.tracker,
+                reasoning=deps.reasoning,
+                on_token=deps.stream if stream else None,
+                documents=docs,
+            )
+
+        if log is not None:  # recorded: a resumed or replayed node is served, not sampled
+            digest = _extract_digest(meta.model, system, user, docs, deps.model, deps.reasoning)
+            extraction, replayed = log.extract(name, digest, meta.model, call)
+        else:
+            extraction, replayed = call(), False
+        if not replayed:
+            steps.note_model_call(
+                extraction.model,
+                input_tokens=extraction.usage.input_tokens,
+                output_tokens=extraction.usage.output_tokens,
+                cache_read=extraction.usage.cache_read_input_tokens,
+                cache_write=extraction.usage.cache_creation_input_tokens,
+                prompt_version=prompt_version,
+            )
         fields = extraction.parsed.model_dump(mode="json")
         events = list(framed.events)
         try:
@@ -332,10 +363,37 @@ def stop_reason(
 
 
 def _request_digest(
-    system: list[SystemBlock], messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    system: list[SystemBlock],
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    model: str = "",
 ) -> str:
     material = json.dumps(
-        {"system": [b.text for b in system], "messages": messages, "tools": tools},
+        {"system": [b.text for b in system], "messages": messages, "tools": tools, "model": model},
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _extract_digest(
+    schema: type[Any],
+    system: list[SystemBlock],
+    user: str,
+    documents: list[str],
+    model: str,
+    reasoning: bool,
+) -> str:
+    """What a structured call sends, as one hash: the run log's key for it (A-109)."""
+    material = json.dumps(
+        {
+            "schema": f"{schema.__module__}.{schema.__qualname__}",
+            "system": [b.text for b in system],
+            "user": user,
+            "documents": documents,
+            "model": model,
+            "reasoning": reasoning,
+        },
         sort_keys=True,
         default=str,
     )
@@ -358,13 +416,17 @@ def make_tool_loop(
     loop ends only through `stop_reason` (A-100), and any stop but a normal end is a
     `tool_loop_stopped:<node>:<reason>` event that holds the outcome for review. Each model
     turn is its own step; a retried node replays the turns it already took (`memo`) instead
-    of sampling the model again."""
+    of sampling the model again. With a run log (A-109) every turn, tool result and the
+    fence nonce are recorded as they happen, so a node restarted by a resume, in a new
+    process, is served all of them and its requests come out the same."""
     offered = [tools[n].spec.schema() for n in sorted(tools) if n in allowed]
-    nonce = prompt_guard.new_nonce()  # one fence per graph build: stable across node retries
+    build_nonce = prompt_guard.new_nonce()  # without a run log: one fence per graph build
     memo: dict[str, Any] = {}  # request digest -> ChatTurn, for this graph build
 
     def node(state: AgentState) -> dict[str, Any]:
         llm = deps.require()
+        log = deps.runlog(state)
+        nonce = log.nonce(name) if log is not None else build_nonce
         prompt = load_prompt(prompt_version)
         system = [SystemBlock(prompt.text, cache=True)]
         messages: list[dict[str, Any]] = [
@@ -390,25 +452,34 @@ def make_tool_loop(
         turn_no = 0
         while reason is None:
             turn_no += 1
-            digest = _request_digest(system, messages, offered)
+            digest = _request_digest(system, messages, offered, deps.model)
+
+            def sample() -> ChatTurn:
+                return llm.chat(
+                    system=system,
+                    messages=messages,
+                    tools=offered,
+                    model=deps.model,
+                    tracker=deps.tracker,
+                    reasoning=deps.reasoning,
+                )
+
             with steps.step(
                 f"{name}.turn",
                 layer="agent",
                 kind="generation",
                 inputs={"turn": turn_no, "replayed": digest in memo},
-            ):
+            ) as turn_step:
                 if digest in memo:  # a retried node: this turn was already taken
-                    turn = memo[digest]
+                    turn, served = memo[digest], True
+                elif log is not None:  # a resumed or replayed node: the recorded turn
+                    turn, served = log.chat(name, digest, sample)
+                    if served:
+                        turn_step.event("served_from_run_log")
                 else:
-                    turn = llm.chat(
-                        system=system,
-                        messages=messages,
-                        tools=offered,
-                        model=deps.model,
-                        tracker=deps.tracker,
-                        reasoning=deps.reasoning,
-                    )
-                    memo[digest] = turn
+                    turn, served = sample(), False
+                memo[digest] = turn
+                if not served:
                     steps.note_model_call(
                         turn.model,
                         input_tokens=turn.usage.input_tokens,
@@ -431,7 +502,19 @@ def make_tool_loop(
                     result = {"is_error": True, "error": "tool not permitted in this graph"}
                     updates["guardrail_events"].append(f"tool_not_permitted:{call.name}")
                 else:
-                    result = tools[call.name].call(call.arguments)
+                    bound = tools[call.name]
+                    if log is not None:  # recorded, so a resumed loop sees the same result
+                        # keyed by the turn that asked and the call: ids alone repeat across
+                        # turns and conversations
+                        result = log.tool(
+                            name,
+                            f"{digest}:{call.id}",
+                            call.name,
+                            call.arguments,
+                            lambda b=bound, c=call: b.call(c.arguments),  # type: ignore[misc]
+                        )
+                    else:
+                        result = bound.call(call.arguments)
                     if result.get("redactions"):
                         updates["guardrail_events"].append(
                             f"secret_redacted_in_tool_result:{call.name}:{result['redactions']}"

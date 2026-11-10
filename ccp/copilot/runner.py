@@ -144,6 +144,7 @@ class Session:
             tracker,
             reasoning=True,
             stream=stream,
+            log_db=self.db,
         )
         spec = graph_module.build_spec(
             self.db.tenant,
@@ -206,7 +207,9 @@ class Session:
             },
         ) as s:
             try:
-                for update in graph.stream(initial, config, stream_mode="updates"):
+                for update in graph.stream(
+                    initial, config, stream_mode="updates", durability="sync"
+                ):
                     turn_nodes.extend(str(k) for k in update)
             except Exception as exc:
                 threads.mark_failed(

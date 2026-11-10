@@ -70,6 +70,21 @@ def create(
     )
 
 
+def set_input(db: ScopedDB, thread_id: str, initial: dict[str, Any]) -> None:
+    """The state the run started from, kept once, so a replay can start it again (A-109)."""
+    db.execute(
+        "UPDATE agent_threads SET input = %s WHERE thread_id = %s AND input IS NULL",
+        (json.dumps(initial, default=str), thread_id),
+    )
+
+
+def input_of(db: ScopedDB, thread_id: str) -> dict[str, Any] | None:
+    row = db.fetch_one("SELECT input FROM agent_threads WHERE thread_id = %s", (thread_id,))
+    if row is None or row[0] is None:
+        return None
+    return dict(_load(row[0]))
+
+
 def resumable(db: ScopedDB, evaluation_key: str) -> ThreadRow | None:
     """The newest thread for this evaluation that stopped without an outcome (it failed, or
     its worker died while running): a retry continues it instead of starting over (A-97)."""

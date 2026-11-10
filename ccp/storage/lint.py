@@ -54,6 +54,7 @@ INSERT_ONLY: frozenset[str] = frozenset(
         "copilot_answers",
         "review_labels",
         "schedule_runs",
+        "agent_steps",
     }
 )
 # Operational state that is updated in place by design.
