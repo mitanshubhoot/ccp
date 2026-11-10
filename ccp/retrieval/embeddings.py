@@ -26,6 +26,7 @@ from typing import Any, Literal, Protocol
 
 import httpx
 
+from ccp import credentials
 from ccp.config import Settings
 from ccp.llm.errors import RetryableModelError, TerminalModelError, classify_status
 from ccp.observability import cost
@@ -191,15 +192,13 @@ class OpenAIEmbeddingClient:
 
 def build_embedding_client(settings: Settings) -> EmbeddingClient:
     """The configured hosted provider when its key is set; the local hashing client otherwise."""
-    if settings.ccp_embed_provider == "openai" and settings.openai_api_key is not None:
-        return OpenAIEmbeddingClient(
-            settings.openai_api_key.get_secret_value(), settings.ccp_embed_model
-        )
-    if settings.ccp_embed_provider == "voyage" and settings.voyage_api_key is not None:
+    openai_key = credentials.secret(settings, "embed:openai")
+    if settings.ccp_embed_provider == "openai" and openai_key is not None:
+        return OpenAIEmbeddingClient(openai_key, settings.ccp_embed_model)
+    voyage_key = credentials.secret(settings, "embed:voyage")
+    if settings.ccp_embed_provider == "voyage" and voyage_key is not None:
         require_voyage_terms(settings)
-        return VoyageEmbeddingClient(
-            settings.voyage_api_key.get_secret_value(), settings.ccp_embed_model
-        )
+        return VoyageEmbeddingClient(voyage_key, settings.ccp_embed_model)
     return HashingEmbeddingClient()
 
 

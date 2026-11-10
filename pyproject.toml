@@ -98,7 +98,15 @@ layers = [
     "ccp.storage",
     "ccp.security",
     "ccp.observability",
+    "ccp.credentials",
     "ccp.tenancy",
     "ccp.config",
     "ccp.types",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Agents never hold a credential (A-116)"
+type = "forbidden"
+source_modules = ["ccp.agent", "ccp.copilot", "ccp.investigation", "ccp.policy"]
+forbidden_modules = ["ccp.credentials", "ccp.remediation.broker"]
+allow_indirect_imports = true

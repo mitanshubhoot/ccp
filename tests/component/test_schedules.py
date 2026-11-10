@@ -87,24 +87,23 @@ def test_a_slot_fires_once_across_racing_schedulers(own: tuple[Settings, ScopedD
     for t in threads:
         t.join(30)
     assert sorted(fired) == [0, 0, 0, 1]
-    runs = acme.fetch_all("SELECT schedule_id, missed FROM schedule_runs")
-    assert runs == [("clock", 0)]
+    runs = acme.fetch_all("SELECT schedule_id FROM schedule_runs")
+    assert runs == [("clock",)]  # one firing (how many slots it folds in depends on the hour)
     assert acme.fetch_one("SELECT count(*) FROM event_log WHERE topic = 'jobs'") == (1,)
 
 
 def test_missed_slots_fold_into_one_run_that_counts_them(own: tuple[Settings, ScopedDB]) -> None:
     settings, acme = own
-    schedules.Scheduler(acme, settings).run_once()
-    three_days = datetime.now(UTC) - timedelta(days=3, hours=1)
-    acme.execute(
-        "UPDATE schedules SET next_run_at = %s WHERE schedule_id = 'full-run'", (three_days,)
-    )
-    scheduler = schedules.Scheduler(acme, settings)
+    utc = _with(acme, time_zone="UTC")  # whole days apart, whatever the date
+    schedules.Scheduler(utc, settings).run_once()
+    last = schedules.next_slot("daily 02:00", "UTC", datetime.now(UTC) - timedelta(days=1))
+    slot = last - timedelta(days=3)  # four slots due: this one and three after it
+    acme.execute("UPDATE schedules SET next_run_at = %s WHERE schedule_id = 'full-run'", (slot,))
+    scheduler = schedules.Scheduler(utc, settings)
     assert scheduler.run_once() == 1
     (run,) = scheduler.fired
-    assert run.schedule_id == "full-run" and run.slot == three_days and run.missed == 3
-    next_at = _rows(acme)["full-run"][1]
-    assert datetime.now(UTC) < next_at <= datetime.now(UTC) + timedelta(days=1)
+    assert run.schedule_id == "full-run" and run.slot == slot and run.missed == 3
+    assert _rows(acme)["full-run"][1] == last + timedelta(days=1)
 
 
 def test_a_changed_schedule_moves_and_a_removed_one_is_disabled(

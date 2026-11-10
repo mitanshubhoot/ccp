@@ -34,6 +34,7 @@ from typing import Any, TypeVar, cast
 import anthropic
 from pydantic import BaseModel
 
+from ccp import credentials
 from ccp.config import Settings
 from ccp.llm.budget import BudgetTracker
 from ccp.llm.client import ChatTurn, Completion, Extraction, SystemBlock, ToolCall, Usage
@@ -173,11 +174,11 @@ class AnthropicClient:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         if client is None:
-            key = settings.anthropic_api_key
+            key = credentials.secret(settings, "model:anthropic")
             if key is None:
                 raise RuntimeError("ANTHROPIC_API_KEY is not set")
             client = anthropic.Anthropic(
-                api_key=key.get_secret_value(),
+                api_key=key,
                 max_retries=0,
                 default_headers={"anthropic-version": ANTHROPIC_API_VERSION},
             )

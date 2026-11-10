@@ -35,6 +35,7 @@ from typing import Any, Literal
 import psycopg
 import yaml
 
+from ccp import credentials
 from ccp.agent.bundle import bundle_sha256
 from ccp.config import REPO_ROOT, Settings
 from ccp.evals import metrics as metrics_mod
@@ -220,8 +221,8 @@ def judge_model_for(settings: Settings, case: GoldenCase) -> str:
 def _judge_client(ctx: EvalContext, model: str) -> LLMClient | None:
     if family(model) == "anthropic" or ctx.judge_llm is not None:
         return ctx.judge_llm or try_build_client(ctx.settings)
-    key = ctx.settings.openai_api_key
-    return CrossFamilyJudgeClient(key.get_secret_value()) if key is not None else None
+    key = credentials.secret(ctx.settings, "judge:openai")
+    return CrossFamilyJudgeClient(key) if key is not None else None
 
 
 def run_case(ctx: EvalContext, case: GoldenCase) -> CaseResult:

@@ -17,6 +17,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from ccp import credentials
 from ccp.config import Settings
 
 Usage = dict[str, int]
@@ -227,11 +228,11 @@ def build_sink(
     settings: Settings, *, probe: Callable[[str], None] | None = None
 ) -> tuple[Sink | None, str | None]:
     """(sink, warning): no keys -> (None, None); unreachable or SDK failure -> (None, why)."""
-    public = settings.langfuse_public_key
-    secret = settings.langfuse_secret_key
+    public = credentials.secret(settings, "trace:langfuse_public")
+    secret = credentials.secret(settings, "trace:langfuse_secret")
     if public is None or secret is None:
         return None, None
-    if not public.get_secret_value().strip() or not secret.get_secret_value().strip():
+    if not public.strip() or not secret.strip():
         return None, None  # an empty variable (an unset CI secret) is not a key
     host = settings.langfuse_host
     try:
@@ -245,8 +246,8 @@ def build_sink(
         from langfuse import Langfuse
 
         client = Langfuse(
-            public_key=public.get_secret_value(),
-            secret_key=secret.get_secret_value(),
+            public_key=public,
+            secret_key=secret,
             host=host,
             flush_interval=2.0,
             mask=_mask,

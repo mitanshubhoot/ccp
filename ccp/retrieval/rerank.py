@@ -12,6 +12,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from ccp import credentials
 from ccp.config import Settings
 from ccp.llm.errors import RetryableModelError, TerminalModelError, classify_status
 from ccp.observability import cost
@@ -111,7 +112,8 @@ def build_reranker(settings: Settings) -> Reranker | None:
     """None when the flag is off; Voyage when its key is set; the local stand-in otherwise."""
     if not settings.retrieval_rerank:
         return None
-    if settings.voyage_api_key is not None:
+    key = credentials.secret(settings, "rerank:voyage")
+    if key is not None:
         require_voyage_terms(settings)
-        return VoyageReranker(settings.voyage_api_key.get_secret_value())
+        return VoyageReranker(key)
     return LexicalOverlapReranker()

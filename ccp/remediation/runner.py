@@ -22,7 +22,7 @@ from ccp.config import Settings
 from ccp.evaluators import verdict as verdicts
 from ccp.evaluators.verdict import Verdict
 from ccp.observability import steps
-from ccp.remediation import actions, gates, github_admin, targets
+from ccp.remediation import actions, broker, gates, github_admin, targets
 from ccp.remediation import proposals as proposal_store
 from ccp.remediation.proposals import Proposal
 from ccp.storage.scoped import ScopedDB
@@ -184,13 +184,21 @@ def execute(
                 s.event(f"refused:{gate}")
             s.set_output({"mode": "refused", "missing": list(check.missing)})
             return ExecutionResult(updated, "refused", check.describe())
-        if github is None:
-            if settings.github_token is None:
+        if github is None:  # the write credential comes from the broker alone (A-116)
+            credential = broker.issue(
+                db,
+                settings,
+                operation=proposal_id,
+                action="execute",
+                approval=approval,
+                scope=f"github:{owner or org}/{repo_name or repo}:remove_collaborator:{login}",
+            )
+            if credential is None:
                 updated = proposal_store.update(
                     db, proposal_id, status="refused", refusal="GITHUB_TOKEN is not set"
                 )
                 return ExecutionResult(updated, "refused", "GITHUB_TOKEN is not set")
-            github = github_admin.LiveGitHubAdmin(settings.github_token.get_secret_value())
+            github = github_admin.LiveGitHubAdmin(credential.token)
         # pre-state first, so the action is reversible
         permission = github.collaborator_permission(owner or org, repo_name or repo, login)
         proposal_store.update(db, proposal_id, pre_state={"permission": permission})
@@ -323,10 +331,18 @@ def rollback(
                 s.event(f"refused:{gate}")
             s.set_output({"mode": "refused", "missing": list(check.missing)})
             return ExecutionResult(proposal, "refused", check.describe())
-        if github is None:
-            if settings.github_token is None:
+        if github is None:  # the write credential comes from the broker alone (A-116)
+            credential = broker.issue(
+                db,
+                settings,
+                operation=proposal_id,
+                action="rollback",
+                approval=approval,
+                scope=f"github:{owner or org}/{repo_name or repo}:add_collaborator:{login}",
+            )
+            if credential is None:
                 return ExecutionResult(proposal, "refused", "GITHUB_TOKEN is not set")
-            github = github_admin.LiveGitHubAdmin(settings.github_token.get_secret_value())
+            github = github_admin.LiveGitHubAdmin(credential.token)
         result = github.add_collaborator(owner or org, repo_name or repo, login, str(permission))
         updated = proposal_store.update(
             db,

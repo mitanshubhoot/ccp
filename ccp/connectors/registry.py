@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ccp import credentials
 from ccp.config import Settings
 from ccp.connectors.base import Connector, ConnectorName, SourceKind
 from ccp.connectors.github.client import GitHubLiveConnector
@@ -30,9 +31,10 @@ def build_connector(
 ) -> Connector:
     if name == "github":
         if source == "live":
-            if settings.github_token is None:
+            token = credentials.secret(settings, "github:read")
+            if token is None:
                 raise RuntimeError("GITHUB_TOKEN is not set; the live GitHub client needs it")
-            return GitHubLiveConnector(settings.github_token.get_secret_value())
+            return GitHubLiveConnector(token)
         return GitHubFixtureConnector(settings.ccp_fixtures_dir)
     if name == "hris":
         if source == "live":
