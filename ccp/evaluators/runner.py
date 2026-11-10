@@ -168,9 +168,11 @@ class EvaluationsConsumer(ParallelConsumer):
         return self._providers
 
     def in_flight(self) -> int:
+        """Records held under a live lease (A-105); a claim from before leases counts until
+        its old visibility timeout."""
         row = self._db.fetch_one(
             "SELECT count(*) FROM event_log WHERE topic = %s AND status = 'claimed'"
-            " AND claimed_at >= now() - make_interval(secs => %s)",
+            " AND coalesce(lease_expires_at, claimed_at + make_interval(secs => %s)) > now()",
             (self.topic, self.visibility_seconds),
         )
         return int(row[0]) if row else 0

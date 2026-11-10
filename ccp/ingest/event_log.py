@@ -15,11 +15,17 @@ offset it saw could pass a lower one that committed later and never read it. A r
 ordered topic takes the next number of its (tenant, topic) counter, whose row the producing
 transaction holds until it commits: producers on one tenant's topic take turns, numbers
 become visible in order, and a cursor never passes a number that has yet to appear.
+
+A parallel claim is a lease (A-105): a fresh token and an expiry that the holder's heartbeat
+pushes forward while it works. Another worker re-claims the record only once the lease has
+run out, and every status change after the claim presents the token, so a worker that lost
+its lease (a long pause, a dropped connection) changes nothing.
 """
 
 from __future__ import annotations
 
 import random
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -31,8 +37,10 @@ from ccp.ingest.topics import TopicKind, kind_of
 
 _COLUMNS = (
     '"offset", tenant_id, topic, partition_key, source_ts, ref, produced_at, '
-    "status, attempts, claimed_at, last_error, seq"
+    "status, attempts, claimed_at, last_error, seq, lease_token"
 )
+# Leaving the claimed state clears the lease, so no token matches a record nobody holds.
+_RELEASE = "lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL"
 _QUALIFIED = ", ".join(f"e.{c.strip()}" for c in _COLUMNS.split(","))
 BACKOFF_CAP_SECONDS = 900.0
 
@@ -60,6 +68,7 @@ class LogRecord:
     claimed_at: datetime | None
     last_error: str | None
     seq: int | None = None  # ordered topics: its place in the tenant's topic (A-104)
+    lease_token: str | None = None  # parallel topics: the claim this copy was handed (A-105)
 
     @classmethod
     def from_row(cls, row: tuple[Any, ...]) -> LogRecord:
@@ -148,54 +157,106 @@ def advance_cursor(cur: psycopg.Cursor[Any], consumer: str, topic: str, last_seq
 
 
 def claim(
-    cur: psycopg.Cursor[Any], topic: str, limit: int, visibility_seconds: int
+    cur: psycopg.Cursor[Any], topic: str, limit: int, lease_seconds: float, owner: str = ""
 ) -> list[LogRecord]:
-    """Claim pending rows whose wait is over, or claimed rows whose visibility timeout has
-    expired. At most `limit`: the pick is a materialized CTE, run once. As `IN (SELECT ...
-    LIMIT n FOR UPDATE SKIP LOCKED)` the planner could rescan the subquery once per row of
-    a nested loop, and every rescan skipped the rows this statement had just claimed, so one
-    pass took the whole topic past the tenant's concurrency cap (A-104)."""
+    """Claim up to `limit` records: pending ones whose wait is over, and claimed ones whose
+    lease has run out. Each claim is a lease of `lease_seconds` with a fresh token, which the
+    holder's heartbeat renews and every later status change must present (A-105). A claim
+    from before leases has no expiry and runs out `lease_seconds` after it was made.
+
+    At most `limit`: the pick is a materialized CTE, run once. As `IN (SELECT ... LIMIT n FOR
+    UPDATE SKIP LOCKED)` the planner could rescan the subquery once per row of a nested loop,
+    and every rescan skipped the rows this statement had just claimed, so one pass took the
+    whole topic past the tenant's concurrency cap (A-104)."""
     rows = cur.execute(
         "WITH picked AS MATERIALIZED ("
         '   SELECT "offset" FROM event_log'
-        "   WHERE topic = %s AND ("
+        "   WHERE topic = %(topic)s AND ("
         "     (status = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= now()))"
-        "     OR (status = 'claimed' AND claimed_at < now() - make_interval(secs => %s))"
+        "     OR (status = 'claimed' AND coalesce(lease_expires_at,"
+        "         claimed_at + make_interval(secs => %(lease)s)) < now())"
         "   )"
-        '   ORDER BY "offset" LIMIT %s FOR UPDATE SKIP LOCKED'
+        '   ORDER BY "offset" LIMIT %(limit)s FOR UPDATE SKIP LOCKED'
         ") UPDATE event_log e SET status = 'claimed', claimed_at = now(),"
-        ' attempts = e.attempts + 1 FROM picked WHERE e."offset" = picked."offset"'
+        " attempts = e.attempts + 1, lease_token = gen_random_uuid()::text,"
+        " lease_owner = %(owner)s, lease_expires_at = now() + make_interval(secs => %(lease)s)"
+        ' FROM picked WHERE e."offset" = picked."offset"'
         f" RETURNING {_QUALIFIED}",
-        (topic, visibility_seconds, limit),
+        {"topic": topic, "lease": lease_seconds, "limit": limit, "owner": owner or None},
     ).fetchall()
     return sorted((LogRecord.from_row(r) for r in rows), key=lambda r: r.offset)
 
 
-def mark_done(cur: psycopg.Cursor[Any], offset: int) -> None:
+def renew(cur: psycopg.Cursor[Any], held: Mapping[int, str], lease_seconds: float) -> set[int]:
+    """Push the given leases (offset -> token) forward. Returns the offsets still held; a
+    missing one was re-claimed by another worker after its lease ran out."""
+    if not held:
+        return set()
+    offsets = list(held)
+    rows = cur.execute(
+        "UPDATE event_log SET lease_expires_at = now() + make_interval(secs => %s)"
+        " WHERE status = 'claimed' AND (\"offset\", lease_token) IN"
+        " (SELECT * FROM unnest(%s::bigint[], %s::text[]))"
+        ' RETURNING "offset"',
+        (lease_seconds, offsets, [held[o] for o in offsets]),
+    ).fetchall()
+    return {int(r[0]) for r in rows}
+
+
+def _transition(
+    cur: psycopg.Cursor[Any],
+    offset: int,
+    lease: str | None,
+    assignments: str,
+    params: tuple[Any, ...] = (),
+) -> bool:
+    """Move a record on and release its lease. Given a lease token, only while that lease
+    still holds the record: a worker whose lease ran out and was re-claimed changes nothing
+    (A-105). Returns whether the record moved."""
+    fence = " AND status = 'claimed' AND lease_token = %s" if lease is not None else ""
     cur.execute(
-        "UPDATE event_log SET status = 'done', last_error = NULL, next_attempt_at = NULL"
-        ' WHERE "offset" = %s',
-        (offset,),
+        f'UPDATE event_log SET {assignments}, {_RELEASE} WHERE "offset" = %s{fence}',
+        (*params, offset, *(() if lease is None else (lease,))),
+    )
+    return cur.rowcount == 1
+
+
+def mark_done(cur: psycopg.Cursor[Any], offset: int, *, lease: str | None) -> bool:
+    return _transition(
+        cur, offset, lease, "status = 'done', last_error = NULL, next_attempt_at = NULL"
     )
 
 
 def mark_retry(
-    cur: psycopg.Cursor[Any], offset: int, error: str, delay_seconds: float = 0.0
-) -> None:
-    cur.execute(
-        "UPDATE event_log SET status = 'pending', claimed_at = NULL, last_error = %s,"
-        ' next_attempt_at = now() + make_interval(secs => %s) WHERE "offset" = %s',
-        (error[:2000], delay_seconds, offset),
+    cur: psycopg.Cursor[Any],
+    offset: int,
+    error: str,
+    delay_seconds: float = 0.0,
+    *,
+    lease: str | None,
+) -> bool:
+    return _transition(
+        cur,
+        offset,
+        lease,
+        "status = 'pending', claimed_at = NULL, last_error = %s,"
+        " next_attempt_at = now() + make_interval(secs => %s)",
+        (error[:2000], delay_seconds),
     )
 
 
-def mark_deferred(cur: psycopg.Cursor[Any], offset: int, reason: str, delay_seconds: float) -> None:
+def mark_deferred(
+    cur: psycopg.Cursor[Any], offset: int, reason: str, delay_seconds: float, *, lease: str | None
+) -> bool:
     """A throttle: pending again after the wait, and the claim's attempt is given back."""
-    cur.execute(
-        "UPDATE event_log SET status = 'pending', claimed_at = NULL, last_error = %s,"
+    return _transition(
+        cur,
+        offset,
+        lease,
+        "status = 'pending', claimed_at = NULL, last_error = %s,"
         " attempts = greatest(attempts - 1, 0), deferrals = deferrals + 1,"
-        ' next_attempt_at = now() + make_interval(secs => %s) WHERE "offset" = %s',
-        (reason[:2000], delay_seconds, offset),
+        " next_attempt_at = now() + make_interval(secs => %s)",
+        (reason[:2000], delay_seconds),
     )
 
 
@@ -204,25 +265,43 @@ def deferrals_of(cur: psycopg.Cursor[Any], offset: int) -> int:
     return int(row[0]) if row else 0
 
 
-def mark_parked(cur: psycopg.Cursor[Any], offset: int, reason: str) -> None:
-    cur.execute(
-        "UPDATE event_log SET status = 'parked', claimed_at = NULL, last_error = %s"
-        ' WHERE "offset" = %s',
-        (reason[:2000], offset),
+def mark_parked(
+    cur: psycopg.Cursor[Any],
+    offset: int,
+    reason: str,
+    *,
+    lease: str | None,
+    give_back_attempt: bool = False,
+) -> bool:
+    """Not now: parked until someone unparks it. A park is not a failed try, so the claim's
+    attempt can be given back."""
+    refund = ", attempts = greatest(attempts - 1, 0)" if give_back_attempt else ""
+    return _transition(
+        cur,
+        offset,
+        lease,
+        f"status = 'parked', claimed_at = NULL, last_error = %s{refund}",
+        (reason[:2000],),
     )
 
 
-def mark_dead(cur: psycopg.Cursor[Any], record: LogRecord, error: str) -> None:
-    cur.execute(
-        "UPDATE event_log SET status = 'dead', last_error = %s, next_attempt_at = NULL"
-        ' WHERE "offset" = %s',
-        (error[:2000], record.offset),
+def mark_dead(
+    cur: psycopg.Cursor[Any], record: LogRecord, error: str, *, lease: str | None
+) -> bool:
+    moved = _transition(
+        cur,
+        record.offset,
+        lease,
+        "status = 'dead', last_error = %s, next_attempt_at = NULL",
+        (error[:2000],),
     )
-    cur.execute(  # a replayed record that dies again keeps its first dead-letter row
-        'INSERT INTO dead_letter ("offset", tenant_id, topic, attempts, last_error)'
-        ' VALUES (%s, %s, %s, %s, %s) ON CONFLICT ("offset") DO NOTHING',
-        (record.offset, record.tenant_id, record.topic, record.attempts, error[:2000]),
-    )
+    if moved:
+        cur.execute(  # a replayed record that dies again keeps its first dead-letter row
+            'INSERT INTO dead_letter ("offset", tenant_id, topic, attempts, last_error)'
+            ' VALUES (%s, %s, %s, %s, %s) ON CONFLICT ("offset") DO NOTHING',
+            (record.offset, record.tenant_id, record.topic, record.attempts, error[:2000]),
+        )
+    return moved
 
 
 def requeue_dead(cur: psycopg.Cursor[Any], offset: int) -> bool:

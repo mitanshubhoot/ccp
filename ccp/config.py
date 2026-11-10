@@ -54,9 +54,10 @@ class Settings(BaseSettings):
     ccp_fixtures_dir: Path = REPO_ROOT / "fixtures"
     ccp_tenant: str | None = None
 
-    # Queue (spec.md Layer 2, A-48): parallel-topic claims expire after this many seconds,
-    # which must exceed the run wall-clock budget so a live run is never re-claimed.
-    ccp_claim_visibility_seconds: int = Field(default=300, ge=1)
+    # Queue (spec.md Layer 2, A-48, A-105): a parallel-topic claim is a lease of this many
+    # seconds, renewed by the holder's heartbeat every third of it, so a live run of any
+    # length keeps its records and a crashed worker's records are re-claimed one lease later.
+    ccp_claim_visibility_seconds: float = Field(default=60, gt=0)
     ccp_max_attempts: int = Field(default=5, ge=1)
     # The first retry waits this long, doubling each try up to 15 minutes, with jitter (A-97).
     ccp_retry_base_seconds: float = Field(default=2.0, ge=0)
