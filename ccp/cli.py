@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import typer
 
@@ -20,6 +21,7 @@ from ccp.compliance_state import reader as state_reader
 from ccp.compliance_state import run as pipeline
 from ccp.compliance_state import writer as state_writer  # noqa: F401 - registers the state consumer
 from ccp.config import Settings
+from ccp.connectors.aws import onboarding as aws_onboarding
 from ccp.connectors.base import parse_ts
 from ccp.connectors.registry import CONNECTOR_NAMES, SOURCE_KINDS, build_connector
 from ccp.copilot import cli as copilot_cli
@@ -35,8 +37,8 @@ from ccp.evaluators import jobs as _jobs  # noqa: F401 - registers jobs and the 
 from ccp.evaluators import runner as evaluations
 from ccp.evaluators import verdict as verdicts
 from ccp.identity import resolver
+from ccp.ingest import aws_accounts, raw_audit, worker
 from ccp.ingest import ops as queue_ops
-from ccp.ingest import raw_audit, worker
 from ccp.ingest.landing import ingest_tenant
 from ccp.investigation import cli as investigate_cli
 from ccp.knowledge import graph as knowledge_graph
@@ -80,6 +82,7 @@ connections_app = typer.Typer(no_args_is_help=True, help="Connections and their 
 auth_app = typer.Typer(no_args_is_help=True, help="Sign-in tokens (A-129)")
 members_app = typer.Typer(no_args_is_help=True, help="Roles per tenant (A-129)")
 audit_app = typer.Typer(no_args_is_help=True, help="Check the record against itself (MT5)")
+aws_app = typer.Typer(no_args_is_help=True, help="Onboard AWS accounts to a read-only role (A-139)")
 rules_app = typer.Typer(
     no_args_is_help=True, help="Rule changes: amendments by default, corrections by decision"
 )
@@ -481,6 +484,7 @@ app.add_typer(rules_app, name="rules")
 app.add_typer(auth_app, name="auth")
 app.add_typer(members_app, name="members")
 app.add_typer(audit_app, name="audit")
+app.add_typer(aws_app, name="aws")
 app.add_typer(worker_app, name="worker")
 app.add_typer(evals_app, name="evals")
 app.add_typer(normalize_app, name="normalize")
@@ -1225,6 +1229,76 @@ def serve(
     settings = _settings()
     typer.echo(f"serving on http://{host}:{port} (sign-in: {settings.ccp_auth_mode})")
     uvicorn.run(create_app(settings), host=host, port=port, log_level="info")
+
+
+@aws_app.command("onboard")
+def aws_onboard(
+    account: str = typer.Option(..., "--account", help="the 12-digit AWS account id"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Generate the account's external ID and print the quick-create link for the role."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        found = aws_accounts.start(ScopedDB(pool, ctx), account, members.OPERATOR)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        pool.close()
+    typer.echo(f"account {found.account_id}: {found.status}; external ID {found.external_id}")
+    typer.echo(
+        aws_onboarding.quick_create_url(
+            settings.ccp_aws_template_url,
+            found.external_id,
+            settings.ccp_aws_principal_arn,
+            settings.aws_region,
+        )
+    )
+    typer.echo("deploy the stack, then: ccp aws verify --account ... --role-arn <its RoleArn>")
+
+
+@aws_app.command("verify")
+def aws_verify(
+    account: str = typer.Option(..., "--account"),
+    role_arn: str = typer.Option(..., "--role-arn"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Check the role before anything is read: it works with CCP's external ID, fails without
+    it, and can neither write nor read a secret. Exits 1 when it is refused."""
+    import boto3
+
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    make: Any = boto3.client
+    pool = db.app_pool(settings)
+    try:
+        scoped = ScopedDB(pool, ctx)
+        started = aws_accounts.current(scoped, account)
+        if started is None:
+            raise typer.BadParameter(f"run `ccp aws onboard --account {account}` first")
+        result = aws_onboarding.verify(
+            account,
+            role_arn,
+            started.external_id,
+            make("sts", region_name=settings.aws_region),
+            lambda creds: make(
+                "iam",
+                region_name=settings.aws_region,
+                aws_access_key_id=creds["AccessKeyId"],
+                aws_secret_access_key=creds["SecretAccessKey"],
+                aws_session_token=creds["SessionToken"],
+            ),
+        )
+        recorded = aws_accounts.record(scoped, result, members.OPERATOR)
+    finally:
+        pool.close()
+    for finding in recorded.findings:
+        typer.echo(f"refused: {finding}")
+    typer.echo(f"account {account}: {recorded.status}")
+    if recorded.status != "verified":
+        raise typer.Exit(1)
+    typer.echo("add the connection: connector aws, source live, account " + account)
 
 
 @audit_app.command("verify")

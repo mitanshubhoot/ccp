@@ -138,15 +138,15 @@ TABLES = ("persons", "person_links", "access_grants", "assets", "evidence")
 CONDITIONS: dict[str, frozenset[str]] = {
     "persons": frozenset({"hris_person", "group_terminated"}),
     "person_links": frozenset({"group_terminated"}),
-    "access_grants": frozenset({"grantee_terminated", "on_org"}),
+    "access_grants": frozenset({"grantee_terminated", "on_org", "asset_prefix"}),
     "assets": frozenset({"asset_type", "tagged"}),
     "evidence": frozenset({"evidence_type", "about_repo", "has_subject"}),
 }
-LISTED = frozenset({"asset_type", "evidence_type"})
+LISTED = frozenset({"asset_type", "evidence_type", "asset_prefix"})
 SUBJECTS: dict[str, frozenset[str]] = {
     "persons": frozenset({"person"}),
     "person_links": frozenset({"person"}),
-    "access_grants": frozenset({"grantee", "grant_org"}),
+    "access_grants": frozenset({"grantee", "grant_org", "tenant"}),
     "assets": frozenset({"asset_repo", "asset_org", "tenant"}),
     "evidence": frozenset(
         {"evidence_repo", "evidence_repo_or_tenant", "evidence_person", "tenant"}
@@ -246,6 +246,8 @@ class _Change:
             return _group_is_terminated(self.db, self._canonical(str(row[0])))
         if name == "on_org":
             return str(row[1]).startswith(ORG_ASSET_PREFIX)
+        if name == "asset_prefix":  # a grant on an AWS account or an IdP (A-140)
+            return isinstance(value, list) and str(row[1]).startswith(tuple(value))
         if name in ("asset_type", "evidence_type"):
             return isinstance(value, list) and str(row[0]) in value
         if name == "tagged":

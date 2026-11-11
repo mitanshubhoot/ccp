@@ -20,6 +20,8 @@ TOPICS: dict[str, TopicKind] = {
     "raw.github": TopicKind.ordered,
     "raw.hris": TopicKind.ordered,
     "raw.manual": TopicKind.ordered,
+    "raw.aws": TopicKind.ordered,  # A-140
+    "raw.idp": TopicKind.ordered,  # A-141
     "entities": TopicKind.ordered,
     "evaluations": TopicKind.parallel,
     "investigations": TopicKind.parallel,

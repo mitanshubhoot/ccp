@@ -32,7 +32,7 @@ controls:
     title: All active identities use multi-factor authentication
     description: Every active human identity in the identity provider has MFA enabled.
     requirements: [soc2:CC6.1, iso27001:A.8.5]
-    tests: [HR-2]
+    tests: [HR-2, AWS-2]
   - control_id: CTL-AWARENESS
     title: Personnel complete security awareness training
     description: Every active employee has a completed, current, individually attributable training record.
@@ -48,3 +48,16 @@ controls:
     description: The account registry records an active individual owner for every shared account.
     requirements: [soc2:CC6.1, iso27001:A.5.16]
     tests: [HR-5]
+  - control_id: CTL-CLOUD-PUBLIC
+    title: Cloud storage is not open to the public
+    description: >-
+      No storage bucket is publicly accessible; S3 public access is blocked at the account
+      or on each bucket, judged on the setting AWS actually enforces.
+    requirements: [soc2:CC6.6, iso27001:A.8.12]
+    tests: [AWS-1]
+  - control_id: CTL-LOGGING
+    title: Cloud activity is logged in every region
+    description: >-
+      Every AWS account has a CloudTrail trail that covers all regions and is logging.
+    requirements: [soc2:CC7.2, iso27001:A.8.15]
+    tests: [AWS-3]

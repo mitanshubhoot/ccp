@@ -1,0 +1,15 @@
+# AWS-3 as a declarative check (spec.md A-140): each AWS account has a multi-region
+# CloudTrail trail that is logging; the mapper writes that fact onto the account asset.
+test_id: AWS-3
+subject: tenant
+read:
+  from: assets
+  where:
+    - {field: asset_type, equals: aws_account}
+abstain:
+  reason: no AWS account observed
+require:
+  - {field: settings.multi_region_trail_logging, truthy: true}
+fail: "{failing} of {population} AWS accounts have no logging multi-region trail: {failing_list}"
+failing_list: name
+pass: "all {population} AWS accounts log through a multi-region trail"

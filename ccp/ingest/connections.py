@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -34,6 +34,7 @@ from ulid import ULID
 from ccp.config import Settings
 from ccp.connectors.base import Connection, Connector, ConnectorName, PullError, SourceKind
 from ccp.connectors.registry import build_connector
+from ccp.ingest import aws_accounts
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
 
@@ -101,7 +102,19 @@ _COLUMNS = "connection_id, version, connector, source, account, credential, enab
 
 def current(db: ScopedDB) -> list[Connection]:
     rows = db.fetch_all(f"SELECT {_COLUMNS} FROM current_connections ORDER BY connection_id")
-    return [_row(r) for r in rows]
+    return [_with_params(db, _row(r)) for r in rows]
+
+
+def _with_params(db: ScopedDB, connection: Connection) -> Connection:
+    """An AWS connection carries its account's verified role and external ID (A-139); one
+    not verified carries none, and its connector refuses to pull."""
+    if connection.connector != "aws":
+        return connection
+    found = aws_accounts.current(db, connection.account)
+    if found is None or found.status != "verified" or not found.role_arn:
+        return connection
+    params = {"role_arn": found.role_arn, "external_id": found.external_id}
+    return replace(connection, params=params)
 
 
 def enabled(db: ScopedDB) -> list[Connection]:

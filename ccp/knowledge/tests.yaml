@@ -132,3 +132,36 @@ tests:
     requires_complete: [hris:accounts]
     valid_from_strategy: evidence_observed
     revalidate_every_days: 30
+  - test_id: AWS-1
+    title: No S3 bucket is open to the public, on the setting AWS enforces
+    connector_scope: [aws]
+    evaluation: deterministic
+    evidence_types: [cloud_configuration]
+    subject_kind: tenant
+    controls: [CTL-CLOUD-PUBLIC]
+    rule: aws1_s3_public  # a declarative check: knowledge/checks/aws1.yaml (A-140)
+    requires_complete: [aws:account, aws:buckets]
+    valid_from_strategy: evidence_observed
+    revalidate_every_days: 1
+  - test_id: AWS-2
+    title: Every IAM user with console access has MFA
+    connector_scope: [aws]
+    evaluation: deterministic
+    evidence_types: [cloud_configuration]
+    subject_kind: tenant
+    controls: [CTL-MFA]
+    rule: aws2_iam_mfa  # a declarative check: knowledge/checks/aws2.yaml (A-140)
+    requires_complete: [aws:iam_users]
+    valid_from_strategy: evidence_observed
+    revalidate_every_days: 1
+  - test_id: AWS-3
+    title: Every AWS account logs through a multi-region CloudTrail trail
+    connector_scope: [aws]
+    evaluation: deterministic
+    evidence_types: [cloud_configuration]
+    subject_kind: tenant
+    controls: [CTL-LOGGING]
+    rule: aws3_cloudtrail  # a declarative check: knowledge/checks/aws3.yaml (A-140)
+    requires_complete: [aws:account]
+    valid_from_strategy: evidence_observed
+    revalidate_every_days: 1

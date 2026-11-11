@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  CCP read-only role (spec.md A-139). SecurityAudit for configuration metadata, with explicit
+  denies on every read that could return a secret or customer data. CCP assumes it only with
+  the external ID it generated for this account; deploy it with quick-create from CCP, or
+  across an organization with a service-managed StackSet using the same template.
+
+Parameters:
+  ExternalId:
+    Type: String
+    MinLength: 32
+    Description: The external ID CCP generated for this account. Do not reuse it elsewhere.
+  CcpPrincipal:
+    Type: String
+    Description: The AWS principal CCP assumes roles from (its task role ARN).
+  RoleName:
+    Type: String
+    Default: CCPReadOnly
+
+Resources:
+  CcpReadRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref CcpPrincipal
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/SecurityAudit
+      Policies:
+        - PolicyName: ccp-deny-secret-bearing-reads
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: NoSecretsOrData
+                Effect: Deny
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                  - kms:Decrypt
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - lambda:GetFunction
+                  - ec2:GetPasswordData
+                  - dynamodb:GetItem
+                  - dynamodb:BatchGetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - rds:DownloadDBLogFilePortion
+                  - logs:GetLogEvents
+                  - logs:FilterLogEvents
+                Resource: "*"
+              - Sid: NoWrites
+                Effect: Deny
+                NotAction:
+                  - "access-analyzer:Get*"
+                  - "access-analyzer:List*"
+                  - "cloudtrail:Describe*"
+                  - "cloudtrail:Get*"
+                  - "cloudtrail:List*"
+                  - "cloudtrail:LookupEvents"
+                  - "config:Describe*"
+                  - "config:Get*"
+                  - "config:List*"
+                  - "config:Select*"
+                  - "config:BatchGet*"
+                  - "ec2:Describe*"
+                  - "iam:Get*"
+                  - "iam:List*"
+                  - "iam:Generate*"
+                  - "iam:SimulatePrincipalPolicy"
+                  - "kms:Describe*"
+                  - "kms:Get*"
+                  - "kms:List*"
+                  - "organizations:Describe*"
+                  - "organizations:List*"
+                  - "rds:Describe*"
+                  - "s3:GetAccountPublicAccessBlock"
+                  - "s3:GetBucket*"
+                  - "s3:GetEncryptionConfiguration"
+                  - "s3:GetLifecycleConfiguration"
+                  - "s3:ListAllMyBuckets"
+                  - "s3:ListBucket"
+                  - "securityhub:Describe*"
+                  - "securityhub:Get*"
+                  - "securityhub:List*"
+                  - "sts:GetCallerIdentity"
+                Resource: "*"
+
+Outputs:
+  RoleArn:
+    Description: Give this to CCP to finish onboarding.
+    Value: !GetAtt CcpReadRole.Arn

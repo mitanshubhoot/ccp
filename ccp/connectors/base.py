@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from ccp.tenancy import TenantContext, TenantId
 
-ConnectorName = Literal["github", "hris", "manual"]
+ConnectorName = Literal["github", "hris", "manual", "aws", "idp"]
 SourceKind = Literal["fixture", "live"]
 ScopeStatus = Literal["complete", "partial", "not_visible", "failed"]
 RunStatus = Literal["complete", "partial", "failed"]
@@ -55,6 +55,9 @@ class Connection:
     account: str
     credential: str | None
     enabled: bool
+    # what a connector needs beyond its account, found by CCP, never a secret: for AWS the
+    # verified role and CCP's external ID (A-139)
+    params: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

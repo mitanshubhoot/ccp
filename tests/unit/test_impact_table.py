@@ -21,11 +21,14 @@ BEFORE = {
     "assets": {"GH-2", "GH-3", "HR-4"},
     "evidence": {"GH-4", "GH-5", "HR-2", "HR-3", "HR-4", "HR-5"},
 }
+# What later steps added to the table, as data from the start (A-140).
+ADDED = {"access_grants": {"AWS-2"}, "assets": {"AWS-1", "AWS-3"}}
 TESTS = ("HR-1", "GH-1", "GH-2", "GH-3", "GH-4", "GH-5", "HR-2", "HR-3", "HR-4", "HR-5")
 
 
 def test_the_data_reproduces_the_code_tables_reach() -> None:
-    assert {table: set(tests) for table, tests in impact.IMPACT_REACH.items()} == BEFORE
+    expected = {table: BEFORE[table] | ADDED.get(table, set()) for table in BEFORE}
+    assert {table: set(tests) for table, tests in impact.IMPACT_REACH.items()} == expected
 
 
 def _load(tmp_path: Path, rule: str) -> tuple[impact.ImpactRule, ...]:

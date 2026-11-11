@@ -18,10 +18,13 @@ def graph() -> kg.KnowledgeGraph:
 
 def test_graph_shape(graph: kg.KnowledgeGraph) -> None:
     assert set(graph.frameworks) == {"soc2", "iso27001"}
-    assert len(graph.frameworks["soc2"].requirements) == 6
-    assert len(graph.frameworks["iso27001"].requirements) == 8
-    assert len(graph.controls) == 9
+    assert len(graph.frameworks["soc2"].requirements) == 8
+    assert len(graph.frameworks["iso27001"].requirements) == 10
+    assert len(graph.controls) == 11
     assert sorted(graph.tests) == [
+        "AWS-1",
+        "AWS-2",
+        "AWS-3",
         "GH-1",
         "GH-2",
         "GH-3",
@@ -155,7 +158,7 @@ def test_rollup_with_nothing_evaluated_is_explicit(graph: kg.KnowledgeGraph) -> 
     result = rollup(graph, [], "soc2")
     assert result.no_evaluations_yet
     assert all(r.state == "pending" for r in result.requirements)
-    assert result.summary["pending"] == 6
+    assert result.summary["pending"] == 8
 
 
 @pytest.mark.parametrize(

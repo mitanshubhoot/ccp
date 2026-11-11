@@ -74,3 +74,21 @@ requirements:
       - Production code changes are peer-reviewed before merge.
       - Administrators are not exempt from the review requirement.
       - The default branch is protected so changes cannot bypass the procedure.
+  - requirement_id: A.8.12
+    title: Data leakage prevention
+    intent: >-
+      Data leakage prevention measures are applied to systems, networks and any other
+      devices that process, store or transmit sensitive information.
+    clauses:
+      - Storage holding sensitive information is not exposed to the public.
+      - Public access is blocked by default where the platform allows it.
+      - Exceptions are deliberate, documented and reviewed.
+  - requirement_id: A.8.15
+    title: Logging
+    intent: >-
+      Logs that record activities, exceptions, faults and other relevant events are
+      produced, stored, protected and analysed.
+    clauses:
+      - Cloud control-plane activity is logged in every region.
+      - Logs are protected against tampering and unauthorized access.
+      - Logs are retained for the period the organization's policy sets.

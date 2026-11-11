@@ -78,10 +78,10 @@ class ConnectionSpec(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    connector: Literal["github", "hris", "manual"]
+    connector: Literal["github", "hris", "manual", "aws", "idp"]
     source: Literal["fixture", "live"] = "fixture"
     account: str | None = Field(default=None, min_length=1)
-    credential: Literal["github:read"] | None = None
+    credential: Literal["github:read", "idp:read"] | None = None
 
 
 DEFAULT_CONNECTIONS: tuple[ConnectionSpec, ...] = (
@@ -164,6 +164,10 @@ class Settings(BaseSettings):
     ccp_raw_bucket: str | None = None
     ccp_raw_retain_days: int = Field(default=400, gt=0)
     aws_region: str = "us-east-1"
+    # AWS onboarding (A-139): the principal CCP assumes customer roles from, and where the
+    # read-only role template is published for quick-create.
+    ccp_aws_principal_arn: str = "arn:aws:iam::000000000000:role/ccp-task"
+    ccp_aws_template_url: str = "https://ccp-public.s3.amazonaws.com/ccp-read-role.yaml"
     # Checkpoints of the audit chain (A-137): signed with this KMS key (else a local
     # Ed25519 key in the data directory) and exported to this bucket, in a separate
     # account reached through this profile (else a local directory).

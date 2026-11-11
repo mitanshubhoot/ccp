@@ -19,6 +19,7 @@ class EvidenceType(StrEnum):
     hr_roster = "hr_roster"
     identity_mfa_status = "identity_mfa_status"
     account_registry = "account_registry"
+    cloud_configuration = "cloud_configuration"
 
 
 class AccountKind(StrEnum):

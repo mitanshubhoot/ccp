@@ -56,6 +56,12 @@ step; work through it when the credentials are available.
       `rollback_to` finishes in under 10; a deliberately unhealthy image is rolled back by the
       circuit breaker (A-138).
 
+- [ ] `ccp aws onboard` then the quick-create stack in a sandbox account; `ccp aws verify`
+      passes, and fails when the stack is changed to drop the external ID condition or to
+      attach ReadOnlyAccess (A-139).
+- [ ] A live pull of that account with a Config recorder on and off: AWS-1, AWS-2 and AWS-3
+      match what the console shows (A-140).
+
 ## Langfuse keys
 
 - [ ] Traces arrive with metadata only, and cost per run.

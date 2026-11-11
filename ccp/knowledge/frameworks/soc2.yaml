@@ -57,3 +57,21 @@ requirements:
       - Changes to production code require review by someone other than the author before merge.
       - The review requirement applies to administrators as well as ordinary contributors.
       - Changes land through a controlled path (protected default branch, required checks).
+  - requirement_id: CC6.6
+    title: Logical access security measures against threats from outside system boundaries
+    intent: >-
+      The organization restricts access from outside its boundaries, so data and systems
+      are not reachable by the public unless intended.
+    clauses:
+      - Storage and services holding customer or internal data are not publicly accessible.
+      - Public exposure is blocked by default at the account level, not left to each resource.
+      - Any intended public exposure is deliberate, documented and reviewed.
+  - requirement_id: CC7.2
+    title: Monitoring of system components for anomalies
+    intent: >-
+      The organization monitors its systems for anomalies that indicate malicious acts,
+      natural disasters, and errors, and keeps the records that monitoring needs.
+    clauses:
+      - Activity in every cloud account and region is logged continuously.
+      - Logs are retained and protected from alteration.
+      - Anomalies the logs reveal are investigated and their outcome recorded.

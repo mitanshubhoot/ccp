@@ -21,6 +21,7 @@ from ccp.ingest.consumers import OrderedConsumer
 from ccp.ingest.event_log import LogRecord
 from ccp.ingest.worker import register
 from ccp.normalize import repository, revocations
+from ccp.normalize.aws_mapper import map_aws_event
 from ccp.normalize.entities import MappingResult
 from ccp.normalize.github_mapper import map_github_event
 from ccp.normalize.hris_mapper import map_hris_event
@@ -33,7 +34,9 @@ MAPPERS: dict[str, Mapper] = {
     "github": map_github_event,
     "hris": map_hris_event,
     "manual": map_manual_event,
+    "aws": map_aws_event,
 }
+RAW_CONNECTORS = tuple(MAPPERS)  # one raw topic, and one normalize consumer, each
 
 
 def map_event(event: SourceEvent) -> MappingResult:
@@ -89,16 +92,16 @@ class NormalizeConsumer(OrderedConsumer):
             s.set_output({"entities": len(entities), "inserted": inserted})
 
 
-for _connector in ("github", "hris", "manual"):
+for _connector in RAW_CONNECTORS:
     register(f"normalize:{_connector}")(
         lambda db, settings, c=_connector: NormalizeConsumer(db, c)  # type: ignore[misc]
     )
 
 
 def normalize_all(db: ScopedDB, settings: Settings) -> int:
-    """Drain all three raw topics for one tenant. Returns records processed."""
+    """Drain every raw topic for one tenant. Returns records processed."""
     total = 0
-    for connector in ("github", "hris", "manual"):
+    for connector in RAW_CONNECTORS:
         consumer = NormalizeConsumer(db, connector)
         while True:
             n = consumer.run_once()

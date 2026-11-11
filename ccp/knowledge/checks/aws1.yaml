@@ -1,0 +1,15 @@
+# AWS-1 as a declarative check (spec.md A-140): no S3 bucket is open to the public. The
+# mapper writes the effective setting: a block holds when the account or the bucket sets it.
+test_id: AWS-1
+subject: tenant
+read:
+  from: assets
+  where:
+    - {field: asset_type, equals: s3_bucket}
+abstain:
+  reason: no S3 buckets observed
+require:
+  - {field: settings.public_access_blocked, truthy: true}
+fail: "{failing} of {population} S3 buckets are not blocked from public access: {failing_list}"
+failing_list: name
+pass: "all {population} S3 buckets block public access, at the account or the bucket"

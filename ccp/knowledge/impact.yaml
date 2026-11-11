@@ -61,3 +61,15 @@ rules:
     when: {evidence_type: [account_registry]}
     tests: [HR-5]
     subject: tenant
+  - table: assets
+    when: {asset_type: [s3_bucket]}
+    tests: [AWS-1]
+    subject: tenant
+  - table: assets
+    when: {asset_type: [aws_account]}
+    tests: [AWS-1, AWS-3]
+    subject: tenant
+  - table: access_grants
+    when: {asset_prefix: ["aws:asset:account:"]}
+    tests: [AWS-2]
+    subject: tenant

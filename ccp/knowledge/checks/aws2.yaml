@@ -1,0 +1,19 @@
+# AWS-2 as a declarative check (spec.md A-140): every IAM user who can sign in to the
+# console has an MFA device.
+test_id: AWS-2
+subject: tenant
+read:
+  from: grants
+  where:
+    - {field: attributes.source, equals: aws_iam}
+    - {field: state, equals: active}
+abstain:
+  reason: no IAM users observed
+population:
+  where:
+    - {field: attributes.console_access, truthy: true}
+require:
+  - {field: attributes.mfa_enabled, truthy: true}
+fail: "{failing} of {population} IAM users with console access lack MFA: {failing_list}"
+failing_list: attributes.user_name
+pass: "all {population} IAM users with console access have MFA"
