@@ -63,8 +63,8 @@ from ccp.retrieval.hybrid import retrieve
 from ccp.storage import bitemporal, db
 from ccp.storage import exceptions as stored_exceptions
 from ccp.storage.scoped import ScopedDB
-from ccp.tenancy import TenantContext
 from ccp.tasks import cli as tasks_cli  # registers the tasks job too
+from ccp.tenancy import TenantContext
 from ccp.tenants import onboarding
 from ccp.tenants import scope as tenant_scope
 from ccp.tenants import versions as tenant_versions
