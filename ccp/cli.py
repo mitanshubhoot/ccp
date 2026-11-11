@@ -27,6 +27,7 @@ from ccp.connectors.registry import CONNECTOR_NAMES, SOURCE_KINDS, build_connect
 from ccp.copilot import cli as copilot_cli
 from ccp.evals import calibration as judge_calibration
 from ccp.evals import capture, regress, shadow, sizing
+from ccp.evals import drafting as check_drafting
 from ccp.evals import labels as eval_labels
 from ccp.evals import mapping as mapping_cli
 from ccp.evals import production as _production  # noqa: F401 - registers the quality jobs
@@ -108,6 +109,7 @@ rules_app = typer.Typer(
 )
 app.add_typer(knowledge_app, name="knowledge")
 knowledge_app.add_typer(mapping_cli.map_app, name="map")
+knowledge_app.add_typer(check_drafting.app, name="checks")
 app.add_typer(tenants_app, name="tenants")
 app.add_typer(evaluate_app, name="evaluate")
 app.add_typer(index_app, name="index")

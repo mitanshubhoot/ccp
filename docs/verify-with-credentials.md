@@ -25,6 +25,11 @@ step; work through it when the credentials are available.
       Sonnet 5.5 chooser: a compliance reviewer accepts or rejects each proposal with
       `ccp knowledge map review`, and the days from the file to a reviewed mapping are
       recorded (A-164). The review is a named person's work.
+- [ ] `ccp knowledge checks draft --test <a test with a code rule> --from <collection>
+      --tenant acme --tenant globex` with Sonnet 5.5: the gates file shows compile, paths,
+      fixtures and shadow, and a reviewer promotes only a draft with no shadow
+      difference (`ccp knowledge checks review`) (A-165). Count compile and fixture pass
+      rates over 20 drafts.
 - [ ] The Investigator on a failing GH-1 or HR-1 verdict chooses
       `github_remove_collaborator` with the right repository and login from the
       context's fix list (prompt `investigator_diagnose_v2`); a choice outside the list

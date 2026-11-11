@@ -302,6 +302,8 @@ class Settings(BaseSettings):
     ccp_questionnaire_model: str = "claude-haiku-5-5"
     # Framework mapping proposals (A-164): choosing among code's candidates, offline
     ccp_mapping_model: str = "claude-sonnet-5-5"
+    # Declarative checks drafted offline (A-165)
+    ccp_drafting_model: str = "claude-sonnet-5-5"
 
     # Tracing
     langfuse_public_key: SecretStr | None = None
