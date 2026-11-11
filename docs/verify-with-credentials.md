@@ -7,6 +7,10 @@ step; work through it when the credentials are available.
 
 ## Anthropic API key (`ANTHROPIC_API_KEY`)
 
+- [ ] Upload a real console screenshot and a scanned access review with the worker
+      running: `GET /v1/tenants/{t}/evidence/{id}/feedback` answers within seconds of
+      landing (`seconds_after_landing`), Claude's transcription of a screenshot dated a
+      year back blocks it with `date_mismatch`, and it is absent from the index (A-161).
 - [ ] The Investigator on a failing GH-1 or HR-1 verdict chooses
       `github_remove_collaborator` with the right repository and login from the
       context's fix list (prompt `investigator_diagnose_v2`); a choice outside the list

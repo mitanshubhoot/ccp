@@ -33,6 +33,7 @@ from ccp.evals import relabel as eval_relabel
 from ccp.evals import runner as eval_runner
 from ccp.evals.schema import GoldenCase
 from ccp.evaluators import clock as clock_producer
+from ccp.evaluators import feedback as _feedback  # noqa: F401 - registers upload feedback
 from ccp.evaluators import impact as impact_step
 from ccp.evaluators import inventory, rederive, rule_changes, thresholds, tier2
 from ccp.evaluators import jobs as _jobs  # noqa: F401 - registers jobs and the scheduler

@@ -1,0 +1,37 @@
+# Admissibility of uploaded evidence (LT2, spec.md A-161): checks code runs on every
+# upload, seconds after it lands, before any model reads it. A blocking reason keeps a
+# scan or screenshot out of the evidence the evaluators read until a new upload fixes it;
+# a warning is shown to the uploader and decides nothing.
+#
+#   max_age_days    issued longer ago than this: too old to show the control works now
+#   needs_period    the document covers a period (manifest period_start and period_end);
+#                   a screenshot shows one moment, so it never covers a period alone
+#   needs_subject   the document is about one person, who must resolve to a known person
+#   needs_issuer    who issued or approved it (manifest `issuer`, or `approved_by` in a
+#                   document's front matter)
+#   visible_date    for a scan or screenshot: a date read from the image must fall within
+#                   this many days of the stated issue date, when any date is visible
+
+defaults:
+  max_age_days: 400
+  needs_period: false
+  needs_subject: false
+  needs_issuer: false
+  visible_date_days: 31
+
+types:
+  policy_document:
+    max_age_days: 400
+    needs_issuer: true
+  access_review_report:
+    max_age_days: 120
+    needs_period: true
+  training_record:
+    max_age_days: 400
+    needs_subject: true
+  critical_systems_list:
+    max_age_days: 400
+  account_registry:
+    max_age_days: 180
+  cloud_configuration:
+    max_age_days: 31

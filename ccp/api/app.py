@@ -55,6 +55,7 @@ from ccp.auth import members
 from ccp.compliance_state import exceptions as exception_requests
 from ccp.compliance_state import reader
 from ccp.config import Settings
+from ccp.evaluators import feedback as upload_feedback
 from ccp.evaluators.tier2 import Providers
 from ccp.knowledge import graph as knowledge
 from ccp.remediation import confirm as fix_confirm
@@ -449,6 +450,18 @@ def fix_metrics(s: Member) -> dict[str, Any]:
         "reopened": m.reopened,
         "reopen_rate_30d": m.reopen_rate,
     }
+
+
+# -- feedback on uploads (A-161) ------------------------------------------------------------
+
+
+@router.get("/tenants/{tenant_id}/evidence/{entity_id:path}/feedback")
+def evidence_feedback(entity_id: str, s: Member) -> dict[str, Any]:
+    """What code (and, once calibrated, the adequacy verifier) said about an upload."""
+    shown = upload_feedback.latest(s.db, entity_id)
+    if not shown:
+        raise HTTPException(404, f"no feedback for {entity_id!r}")
+    return {"evidence_entity_id": entity_id, "feedback": jsonable_encoder(shown)}
 
 
 # -- exceptions ----------------------------------------------------------------------------

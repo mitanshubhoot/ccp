@@ -16,6 +16,7 @@ that is not the active generation's writes a candidate generation and leaves `ch
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from ccp.config import Settings
 from ccp.llm.budget import BudgetTracker, RunBudget
@@ -24,7 +25,7 @@ from ccp.llm.errors import RetryableModelError, TerminalModelError
 from ccp.normalize import repository
 from ccp.normalize.entities import Evidence
 from ccp.observability import steps
-from ccp.retrieval import cache, contextual, generations
+from ccp.retrieval import admission, cache, contextual, generations
 from ccp.retrieval.chunker import CHUNKER_VERSION, ChunkDraft, chunk_evidence
 from ccp.retrieval.embeddings import EmbeddingClient, vector_literal
 from ccp.storage.scoped import ScopedDB
@@ -107,6 +108,11 @@ def refresh(
                 (embedder.model_id,),
             )
         evidence = repository.current_evidence(db)
+        moment = datetime.now(UTC)
+        held = [e for e in evidence if not admission.counted(e, settings, moment)]
+        for e in held:  # a scan or screenshot that failed code's checks (A-161)
+            summary.events.append(f"inadmissible:{e.entity_id}")
+        evidence = [e for e in evidence if e not in held]
         summary.evidence_rows = len(evidence)
         by_entity: dict[str, list[ChunkDraft]] = {}
         observations: dict[str, Evidence] = {}

@@ -95,6 +95,8 @@ INSERT_ONLY: frozenset[str] = frozenset(
         "lookups",
         "fix_suggestions",
         "fix_suggestion_events",
+        "segment_sets",
+        "evidence_feedback",
     }
 )
 # Operational state that is updated in place by design.
