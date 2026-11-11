@@ -37,7 +37,7 @@ from ccp.ingest import event_log, ops
 from ccp.ingest.consumers import OrderedConsumer, ParallelConsumer, ParkedError, TerminalError
 from ccp.ingest.event_log import LogRecord
 from ccp.ingest.worker import register
-from ccp.investigation import schema
+from ccp.investigation import schema, written
 from ccp.investigation.schema import Investigation, MissingEvidence, RemediationProposal
 from ccp.knowledge import lookups as lookup_plans
 from ccp.llm.budget import BudgetTracker, RunBudget
@@ -59,6 +59,7 @@ class RunSummary:
     consumed: int = 0  # verdict records read off the topic
     enqueued: int = 0  # investigation jobs queued
     investigated: int = 0
+    written_by_code: int = 0  # explained by the rule, no model (A-159)
     skipped: int = 0
     parked: int = 0  # jobs held for a model key or the budget
     proposals: int = 0
@@ -339,6 +340,11 @@ class InvestigationJobs(ParallelConsumer):
             raise TerminalError(f"verdict {record.ref!r} is not stored")
         if schema.for_verdict(self._db, verdict.verdict_id) is not None:
             self.summary.skipped += 1
+            return
+        if written.explains(verdict):  # the rule explains it: code writes it (A-159)
+            written.write(self._db, verdict)
+            self.summary.investigated += 1
+            self.summary.written_by_code += 1
             return
         if self.providers.llm is None:
             self.summary.parked += 1

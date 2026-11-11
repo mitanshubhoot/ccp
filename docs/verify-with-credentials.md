@@ -124,6 +124,10 @@ step; work through it when the credentials are available.
       `raw_responses` before its `lookups` row, and the investigation job is queued after
       (A-158). With `GITHUB_TOKEN`, code search finds the bucket's Terraform within the
       10-a-minute search limit.
+- [ ] On that sandbox account, the code-written investigation offers
+      `s3_block_public_access`; applying its Terraform diff with `terraform plan` shows
+      exactly one new `aws_s3_bucket_public_access_block`, and the commands run as
+      rendered (A-159). No model key is needed for this path.
 
 ## Okta and the HR aggregator (MT6)
 

@@ -10,53 +10,32 @@ tools would put the connector's credentials in the process that reads untrusted 
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-import boto3
 import psycopg
 import pytest
-from moto import mock_aws
 
 from ccp.agent import tools
 from ccp.config import Settings
 from ccp.connectors.aws.connector import AwsConnector, windows
-from ccp.connectors.base import Received
 from ccp.connectors.rate import RateBucket
-from ccp.evaluators import runner as evaluations
 from ccp.evaluators.verdict import latest_per_subject
-from ccp.ingest.landing import sync_connector
-from ccp.ingest.raw_zone import RawZone
 from ccp.investigation import runner as investigations
 from ccp.lookups import runner as lookups
 from ccp.lookups import store, terraform
-from ccp.normalize.consumer import normalize_all
 from ccp.retrieval.config import RetrievalConfig
 from ccp.retrieval.embeddings import HashingEmbeddingClient
-from ccp.storage.db import app_pool, scratch_database
 from ccp.storage.scoped import ScopedDB
-from ccp.tenancy import TenantContext
-
-ACCOUNT = "123456789012"
-NOW = datetime(2026, 9, 11, 12, tzinfo=UTC)
-TF = """\
-# storage
-resource "aws_s3_bucket" "open" {
-  bucket = "ccp-open"
-  tags = {
-    team = "data" # owner
-  }
-}
-
-resource "aws_s3_bucket" "blocked" {
-  bucket = "ccp-blocked"
-  policy = <<EOF
-{ "Version": "2012-10-17" }
-EOF
-}
-"""
-
+from tests.support.aws_lookups import (
+    ACCOUNT,
+    NOW,
+    TF,
+    RecordedAws,
+    RecordedGitHub,
+    failing_account,
+)
 
 # -- the reads, without a database --------------------------------------------------------
 
@@ -136,113 +115,11 @@ def test_the_terraform_scanner_finds_the_block_that_names_a_resource() -> None:
 # -- end to end ------------------------------------------------------------------------------
 
 
-class _RecordedAws:
-    """The AWS connector's lookup surface, answering from recorded responses."""
-
-    name = "aws"
-    account_id = ACCOUNT
-
-    def __init__(self) -> None:
-        self.responses: list[Received] = []
-        self.calls: list[tuple[str, str]] = []
-
-    def _keep(self, what: str) -> None:
-        self.responses.append(Received("POST", what, 200, f"req-{len(self.calls)}", b"{}", NOW))
-
-    def config_history(
-        self, resource_type: str, resource_id: str, start: datetime, end: datetime
-    ) -> list[dict[str, Any]]:
-        self.responses = []
-        self.calls.append(("config", resource_id))
-        self._keep("config:GetResourceConfigHistory")
-        return [
-            {
-                "configurationItemCaptureTime": NOW - timedelta(days=3),
-                "configurationItemStatus": "OK",
-                "configurationStateId": "1",
-                "supplementaryConfiguration": {"PublicAccessBlockConfiguration": {"a": True}},
-            },
-            {
-                "configurationItemCaptureTime": NOW - timedelta(days=1),
-                "configurationItemStatus": "OK",
-                "configurationStateId": "2",
-                "supplementaryConfiguration": {"PublicAccessBlockConfiguration": {"a": False}},
-            },
-        ]
-
-    def trail_events(
-        self, key: str, value: str, start: datetime, end: datetime, bucket: Any = None
-    ) -> list[dict[str, Any]]:
-        self.responses = []
-        self.calls.append(("trail", value))
-        self._keep("cloudtrail:LookupEvents")
-        return [
-            {"EventName": "DeleteBucketPublicAccessBlock", "EventId": "e1", "Username": "ops-bot"},
-            {"EventName": "GetBucketAcl", "EventId": "e2", "Username": "auditor"},
-        ]
-
-
-class _RecordedGitHub:
-    name = "github"
-
-    def __init__(self) -> None:
-        self.responses: list[Received] = []
-
-    def search_code(self, tenant: TenantContext, term: str) -> list[dict[str, Any]]:
-        self.responses = [Received("GET", "/search/code", 200, "gh-1", b"{}", NOW)]
-        if term != "ccp-open":
-            return []
-        return [{"repo": "acme/infra", "path": "s3.tf", "sha": "abc", "text": TF}]
-
-
-def _aws_world() -> None:
-    s3 = boto3.client("s3", region_name="us-east-1")
-    for name in ("ccp-blocked", "ccp-open"):
-        s3.create_bucket(Bucket=name)
-    s3.put_public_access_block(
-        Bucket="ccp-blocked",
-        PublicAccessBlockConfiguration=dict.fromkeys(
-            ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets"),
-            True,
-        ),
-    )
-    iam = boto3.client("iam", region_name="us-east-1")
-    iam.create_user(UserName="alice")
-    iam.create_login_profile(UserName="alice", Password="Pa55word!long-enough")
-
-
 @pytest.fixture
 def world(base_settings: Settings, tmp_path: Path) -> Iterator[tuple[Settings, ScopedDB]]:
     try:
-        with scratch_database(base_settings, prefix="ccp_lookups") as settings:
-            local = settings.model_copy(update={"ccp_data_dir": tmp_path / "data"})
-            pool = app_pool(local, max_size=2)
-            try:
-                acme = ScopedDB(pool, TenantContext.for_id(local, "acme"))
-                with mock_aws():
-                    _aws_world()
-
-                    def client(credentials: Any, service: str) -> Any:
-                        make: Any = boto3.client
-                        return make(service, region_name="us-east-1")
-
-                    pulled = AwsConnector(
-                        ACCOUNT,
-                        f"arn:aws:iam::{ACCOUNT}:role/CCPReadOnly",
-                        "ccp-x" * 8,
-                        client,
-                        clock=lambda: NOW,
-                    )
-                    run = sync_connector(
-                        local, acme, acme.tenant, pulled, zone=RawZone(local.raw_dir)
-                    )
-                    assert run.status == "complete", run.error
-                normalize_all(acme, local)
-                evaluations.enqueue_all(acme, local, now=NOW, tests=("AWS-1", "AWS-2"))
-                evaluations.drain(acme, local, now=NOW)
-                yield local, acme
-            finally:
-                pool.close()
+        with failing_account(base_settings, tmp_path, "ccp_lookups", ("AWS-1", "AWS-2")) as w:
+            yield w
     except psycopg.OperationalError as exc:  # pragma: no cover - environment dependent
         pytest.skip(f"Postgres not reachable: {exc}")
 
@@ -254,7 +131,7 @@ def test_failing_resources_are_looked_up_landed_and_then_investigated(
     settings, acme = world
     failed = {v.test_id: v for v in latest_per_subject(acme) if v.status.value == "fail"}
     assert set(failed) == {"AWS-1", "AWS-2"}
-    assert lookups.failing_of(failed["AWS-1"]) == [
+    assert store.failing_of(failed["AWS-1"]) == [
         {"entity_id": f"aws:asset:s3:{ACCOUNT}:ccp-open", "name": "ccp-open"}
     ]
     queued = investigations.InvestigationsConsumer(acme, settings)
@@ -262,7 +139,7 @@ def test_failing_resources_are_looked_up_landed_and_then_investigated(
         pass
     assert queued.summary.enqueued == 0  # their lookups come first
 
-    aws, github = _RecordedAws(), _RecordedGitHub()
+    aws, github = RecordedAws(), RecordedGitHub()
     connected = {"aws": aws, "github": github}
     summary = lookups.drain(acme, settings, connected.get, NOW)
     assert summary.enqueued == 2 and summary.investigations == 2
@@ -286,7 +163,7 @@ def test_failing_resources_are_looked_up_landed_and_then_investigated(
 
     iam = {r.kind: r for r in store.for_verdict(acme, failed["AWS-2"].verdict_id)}
     assert iam["config_history"].params["resource_id"] != "alice"  # the immutable user id
-    assert iam["infra_code"].status == "empty"
+    assert iam["infra_code"].result["files"][0]["resources"][0]["address"] == "aws_iam_user.alice"
 
     jobs = acme.fetch_all("SELECT ref FROM event_log WHERE topic = 'investigations' ORDER BY ref")
     assert sorted(r[0] for r in jobs) == sorted(v.verdict_id for v in failed.values())

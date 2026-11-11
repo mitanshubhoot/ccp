@@ -9,6 +9,10 @@
 #                    resource's name, or by event source when the resource has no name in
 #                    CloudTrail (an account-level setting)
 #   infra_code       Terraform resource types to look for in the organization's code
+#   infra_search     name (the default): search for the resource's quoted name and keep the
+#                    blocks that name it; type: search for the first resource type and keep
+#                    every block of the types (an account setting, such as a trail, has no
+#                    name of its own in the failing verdict)
 
 AWS-1:
   connector: aws
@@ -46,3 +50,4 @@ AWS-3:
       - StartLogging
       - DeleteTrail
   infra_code: [aws_cloudtrail]
+  infra_search: type

@@ -93,6 +93,8 @@ INSERT_ONLY: frozenset[str] = frozenset(
         "relabel_batches",
         "expert_labels",
         "lookups",
+        "fix_suggestions",
+        "fix_suggestion_events",
     }
 )
 # Operational state that is updated in place by design.

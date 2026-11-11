@@ -36,6 +36,7 @@ class Plan:
     config_history: str | None  # an AWS Config resource type
     cloudtrail: TrailLookup | None
     infra_code: tuple[str, ...]  # Terraform resource types
+    infra_search: Literal["name", "type"] = "name"
 
     @property
     def kinds(self) -> tuple[LookupKind, ...]:
@@ -50,7 +51,7 @@ class Plan:
 
 
 def _plan(test_id: str, raw: dict[str, object]) -> Plan:
-    unknown = set(raw) - {"connector", "config_history", "cloudtrail", "infra_code"}
+    unknown = set(raw) - {"connector", "config_history", "cloudtrail", "infra_code", "infra_search"}
     if unknown:
         raise ValueError(f"lookups.yaml {test_id}: unknown keys {sorted(unknown)}")
     trail = raw.get("cloudtrail")
@@ -68,12 +69,16 @@ def _plan(test_id: str, raw: dict[str, object]) -> Plan:
     if not isinstance(codes, list):
         raise ValueError(f"lookups.yaml {test_id}: infra_code is a list of resource types")
     history = raw.get("config_history")
+    search = raw.get("infra_search") or "name"
+    if search not in ("name", "type"):
+        raise ValueError(f"lookups.yaml {test_id}: infra_search is name or type")
     return Plan(
         test_id,
         str(raw.get("connector") or ""),
         str(history) if history else None,
         lookup,
         tuple(str(c) for c in codes),
+        "type" if search == "type" else "name",
     )
 
 

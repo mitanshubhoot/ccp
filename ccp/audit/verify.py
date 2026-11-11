@@ -52,6 +52,8 @@ CHAINED = (
     "task_events",
     "task_answers",
     "lookups",
+    "fix_suggestions",
+    "fix_suggestion_events",
 )
 
 

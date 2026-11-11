@@ -1,0 +1,98 @@
+# Fix suggestions (LT1, spec.md A-159). CCP suggests a fix; a person applies it in their own
+# systems. CCP opens no pull request, holds no write credential and runs nothing here. A
+# finding turns PASS only when a later read sees the fix.
+#
+# Each fix is versioned data: a change to its text is a new version, and every suggestion
+# records the version and the hash of the templates it was rendered from.
+#
+#   tests       the tests whose failing resources it fixes
+#   params      every parameter, with the pattern its value must match whole; nothing else
+#               reaches a template. Values come from the failing verdict (code) or a model's
+#               choice (A-160), and both are checked here before anything is rendered
+#   terraform   the change to the customer's Terraform, when a lookup found the resource in
+#               code (A-158):
+#                 kind      add_block (a new block after the resource's), set_attribute (one
+#                           attribute inside it) or remove_block (a block that refers to it)
+#                 resource  the resource type the found block must have
+#                 template  add_block: the new block; {address} is the found block's address
+#                           and {name} its local name
+#                 attribute, value       set_attribute
+#                 types     remove_block: the types that may be removed
+#   cli         commands; the words before the first placeholder are the only program and
+#               subcommand a rendered command may start with
+#   console     steps in the provider's console
+#   verify      how CCP will know the fix is in
+
+s3_block_public_access:
+  version: 1
+  title: Block all public access on one S3 bucket
+  tests: [AWS-1]
+  params:
+    bucket: '[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]'
+  terraform:
+    kind: add_block
+    resource: aws_s3_bucket
+    template: |-
+      resource "aws_s3_bucket_public_access_block" "{name}" {
+        bucket = {address}.id
+
+        block_public_acls       = true
+        ignore_public_acls      = true
+        block_public_policy     = true
+        restrict_public_buckets = true
+      }
+  cli:
+    - aws s3api put-public-access-block --bucket {bucket} --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+  console:
+    - Open the S3 console and choose the bucket {bucket}, then the Permissions tab.
+    - Under "Block public access (bucket settings)", choose Edit, turn on all four settings and save.
+  verify: CCP reads the bucket on its next pull; AWS-1 passes only when that read sees all four settings on.
+
+iam_user_remove_console_access:
+  version: 1
+  title: Remove console sign-in from an IAM user that does not need it
+  tests: [AWS-2]
+  params:
+    user_name: '[A-Za-z0-9+=,.@_-]{1,64}'
+  terraform:
+    kind: remove_block
+    resource: aws_iam_user
+    types: [aws_iam_user_login_profile]
+  cli:
+    - aws iam delete-login-profile --user-name {user_name}
+  console:
+    - Open the IAM console, choose Users, then {user_name}.
+    - On the Security credentials tab, under Console sign-in, choose Disable console access.
+  verify: CCP reads the user on its next pull; AWS-2 passes once the user has no console sign-in or has MFA.
+
+iam_user_enable_mfa:
+  version: 1
+  title: Ask an IAM user with console sign-in to enrol an MFA device
+  tests: [AWS-2]
+  params:
+    user_name: '[A-Za-z0-9+=,.@_-]{1,64}'
+  cli:
+    - aws iam list-mfa-devices --user-name {user_name}
+  console:
+    - Ask {user_name} to sign in to the console and open Security credentials from the account menu.
+    - Under Multi-factor authentication, choose Assign MFA device and follow the steps; a passkey or security key resists phishing best.
+  verify: CCP reads the user's MFA devices on its next pull; AWS-2 passes once one is assigned.
+
+cloudtrail_multi_region:
+  version: 1
+  title: Make a CloudTrail trail cover every region, and keep it logging
+  tests: [AWS-3]
+  params:
+    trail_name: '[A-Za-z0-9][A-Za-z0-9._-]{2,127}'
+  terraform:
+    kind: set_attribute
+    resource: aws_cloudtrail
+    attribute: is_multi_region_trail
+    value: 'true'
+  cli:
+    - aws cloudtrail update-trail --name {trail_name} --is-multi-region-trail
+    - aws cloudtrail start-logging --name {trail_name}
+  console:
+    - Open the CloudTrail console, choose Trails, then {trail_name}.
+    - Under General details, choose Edit, set "Apply trail to all regions" (or enable it for the organization), and save; check that Logging is on.
+  verify: CCP reads the account's trails on its next pull; AWS-3 passes once a multi-region trail is logging.

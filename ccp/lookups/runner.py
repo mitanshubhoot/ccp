@@ -40,6 +40,7 @@ from ccp.ingest.worker import register
 from ccp.knowledge import lookups as plans
 from ccp.knowledge.lookups import LookupKind, Plan
 from ccp.lookups import store, terraform
+from ccp.lookups.store import failing_of
 from ccp.storage.scoped import ScopedDB
 from ccp.types import VerdictStatus
 
@@ -65,16 +66,6 @@ class Summary:
 
 def job_key(verdict: Verdict) -> str:
     return f"{verdict.tenant_id}:{verdict.verdict_id}"
-
-
-def failing_of(verdict: Verdict) -> list[dict[str, str]]:
-    """The failing resources the verdict named (A-158); none for an abstention."""
-    named = (verdict.extracted_fields or {}).get("failing") or []
-    return [
-        {"entity_id": str(f.get("entity_id") or ""), "name": str(f.get("name") or "")}
-        for f in named
-        if isinstance(f, dict) and f.get("name")
-    ]
 
 
 def resource_id(resource_type: str, failing: dict[str, str]) -> str:
@@ -157,11 +148,18 @@ def trail_result(events: list[dict[str, Any]], names: tuple[str, ...]) -> dict[s
     }
 
 
-def code_result(hits: list[dict[str, Any]], term: str, types: tuple[str, ...]) -> dict[str, Any]:
-    """The files that name the resource, with the Terraform blocks that do."""
+def code_result(
+    hits: list[dict[str, Any]], term: str, types: tuple[str, ...], by_type: bool = False
+) -> dict[str, Any]:
+    """The files that name the resource, with the Terraform blocks that do; searched by
+    type, every block of the types."""
     files: list[dict[str, Any]] = []
     for hit in hits:
-        named = terraform.mentioning(hit["text"], term, types)
+        named = (
+            [b for b in terraform.blocks(hit["text"]) if b.type in types]
+            if by_type
+            else terraform.mentioning(hit["text"], term, types)
+        )
         if not named:
             continue
         files.append(
@@ -294,18 +292,21 @@ class _Run:
             )
         if plan.infra_code:
             types = plan.infra_code
+            by_type = plan.infra_search == "type"
+            term = types[0] if by_type else failing["name"]
             github = self.connectors("github")
             self._attempt(
                 failing,
                 "infra_code",
-                {"term": failing["name"], "resource_types": list(types)},
+                {"term": term, "resource_types": list(types), "by": plan.infra_search},
                 github,
                 lambda c: code_result(
-                    search_code(c, self.db.tenant, failing["name"])
+                    search_code(c, self.db.tenant, term)
                     if isinstance(c, GitHubLiveConnector)
-                    else c.search_code(self.db.tenant, failing["name"]),
-                    failing["name"],
+                    else c.search_code(self.db.tenant, term),
+                    term,
                     types,
+                    by_type,
                 ),
                 lambda r: len(r["files"]),
             )

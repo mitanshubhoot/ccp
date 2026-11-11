@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from ulid import ULID
 
+from ccp.evaluators.verdict import Verdict
 from ccp.knowledge.lookups import LookupKind
 from ccp.storage.scoped import ScopedDB
 
@@ -128,3 +129,23 @@ def summary(lookup: Lookup) -> dict[str, Any]:
         "result": result,
         "error": lookup.error,
     }
+
+
+def failing_of(verdict: Verdict) -> list[dict[str, str]]:
+    """The failing resources the verdict named (A-158); none for an abstention."""
+    named = (verdict.extracted_fields or {}).get("failing") or []
+    return [
+        {"entity_id": str(f.get("entity_id") or ""), "name": str(f.get("name") or "")}
+        for f in named
+        if isinstance(f, dict) and f.get("name")
+    ]
+
+
+def code_files(lookups: list[Lookup], resource: str) -> list[dict[str, Any]]:
+    """The Terraform files a resource's infra_code lookup found, with their text."""
+    return [
+        f
+        for lk in lookups
+        if lk.kind == "infra_code" and lk.resource == resource and lk.status == "ok"
+        for f in lk.result.get("files", [])
+    ]
