@@ -118,6 +118,12 @@ step; work through it when the credentials are available.
       attach ReadOnlyAccess (A-139).
 - [ ] A live pull of that account with a Config recorder on and off: AWS-1, AWS-2 and AWS-3
       match what the console shows (A-140).
+- [ ] With a failing AWS-1 bucket in a sandbox account, `ccp lookups run`: AWS Config
+      history comes back in 7-day windows, CloudTrail events by the bucket's name stay
+      under 2 requests a second without a ThrottlingException, every response lands in
+      `raw_responses` before its `lookups` row, and the investigation job is queued after
+      (A-158). With `GITHUB_TOKEN`, code search finds the bucket's Terraform within the
+      10-a-minute search limit.
 
 ## Okta and the HR aggregator (MT6)
 

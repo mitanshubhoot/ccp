@@ -36,7 +36,8 @@ PROTECTION = "/repos/{repo}/branches/{branch}/protection"
 CONTENTS = "/repos/{repo}/contents"
 FILE = "/repos/{repo}/contents/{path}"
 GRAPHQL = "/graphql"
-ENDPOINTS = (ORG, MEMBERS, REPOS, COLLABORATORS, PROTECTION, CONTENTS, FILE, GRAPHQL)
+CODE_SEARCH = "/search/code"  # a lookup about a failing resource (A-158)
+ENDPOINTS = (ORG, MEMBERS, REPOS, COLLABORATORS, PROTECTION, CONTENTS, FILE, GRAPHQL, CODE_SEARCH)
 ANY = "*"
 
 
@@ -75,6 +76,8 @@ TABLE: tuple[Rule, ...] = (
     Rule(FILE, 404, "absent", "no such file"),
     Rule(FILE, 403, "not_visible", "the file is hidden from this credential"),
     Rule(FILE, 451, "not_visible", "the file is unavailable for legal reasons"),
+    Rule(CODE_SEARCH, 422, "absent", "the search cannot run over this organization's code"),
+    Rule(CODE_SEARCH, 403, "not_visible", "code search is hidden from this credential"),
 )
 
 RETRY_STATUSES = frozenset({500, 502, 503, 504})

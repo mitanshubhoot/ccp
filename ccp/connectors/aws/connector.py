@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ccp.connectors.aws import onboarding
@@ -273,3 +273,90 @@ class AwsConnector:
             payload = {**user, "account_id": self.account_id}
             yield self._event(tenant, "iam.user", user["user_id"], payload)
         report.complete("iam_users", len(users))
+
+    # -- lookups about one failing resource (A-158) --------------------------------------
+    # Code chooses each read from a failing verdict; every response is kept as bytes, like
+    # a pull's, and the caller lands them as raw evidence before it stores the result.
+
+    def config_history(
+        self, resource_type: str, resource_id: str, start: datetime, end: datetime
+    ) -> list[dict[str, Any]]:
+        """AWS Config's recorded states of one resource, oldest first, read in 7-day
+        windows (Config answers a window at a time and pages within it)."""
+        self.responses = []
+        config = self._watch(self._client(self._assumed(), "config"))
+        items: list[dict[str, Any]] = []
+        for earlier, later in windows(start, end):
+            token: str | None = None
+            while True:
+                kwargs: dict[str, Any] = {
+                    "resourceType": resource_type,
+                    "resourceId": resource_id,
+                    "earlierTime": earlier,
+                    "laterTime": later,
+                    "chronologicalOrder": "Forward",
+                    "limit": 100,
+                }
+                if token:
+                    kwargs["nextToken"] = token
+                try:
+                    page = config.get_resource_config_history(**kwargs)
+                except Exception as exc:
+                    if _code(exc) in (
+                        "ResourceNotDiscoveredException",
+                        "NoAvailableConfigurationRecorderException",
+                    ):
+                        return items
+                    raise
+                items.extend(page.get("configurationItems", []))
+                token = page.get("nextToken")
+                if not token:
+                    break
+        return items
+
+    def trail_events(
+        self,
+        key: str,
+        value: str,
+        start: datetime,
+        end: datetime,
+        bucket: Any | None = None,
+        max_pages: int = 10,
+    ) -> list[dict[str, Any]]:
+        """CloudTrail's management events for one lookup attribute (ResourceName or
+        EventSource), newest first. LookupEvents allows 2 requests a second per account and
+        region, so every page first spends from a bucket that refills at that rate."""
+        self.responses = []
+        trail = self._watch(self._client(self._assumed(), "cloudtrail"))
+        events: list[dict[str, Any]] = []
+        token: str | None = None
+        for _ in range(max_pages):
+            if bucket is not None:
+                bucket.take()
+            kwargs: dict[str, Any] = {
+                "LookupAttributes": [{"AttributeKey": key, "AttributeValue": value}],
+                "StartTime": start,
+                "EndTime": end,
+                "MaxResults": 50,
+            }
+            if token:
+                kwargs["NextToken"] = token
+            page = trail.lookup_events(**kwargs)
+            events.extend(page.get("Events", []))
+            token = page.get("NextToken")
+            if not token:
+                break
+        return events
+
+
+WINDOW = timedelta(days=7)
+
+
+def windows(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+    """[start, end) cut into 7-day windows, the last one ending at end."""
+    out: list[tuple[datetime, datetime]] = []
+    at = start
+    while at < end:
+        out.append((at, min(at + WINDOW, end)))
+        at += WINDOW
+    return out

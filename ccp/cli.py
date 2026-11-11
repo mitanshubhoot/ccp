@@ -49,6 +49,8 @@ from ccp.knowledge import rollup as knowledge_rollup
 from ccp.llm import release
 from ccp.llm.budget import BudgetTracker, RunBudget
 from ccp.llm.client import try_build_client
+from ccp.lookups import cli as lookups_cli
+from ccp.lookups import runner as _lookups  # noqa: F401 - registers the lookup consumers
 from ccp.normalize import consumer as normalize_consumer
 from ccp.normalize import repository
 from ccp.observability import steps
@@ -105,6 +107,7 @@ app.add_typer(policy_cli.app, name="policy")
 app.command("copilot")(copilot_cli.copilot)
 app.add_typer(remediate_cli.app, name="remediate")
 app.add_typer(tasks_cli.app, name="tasks")
+app.add_typer(lookups_cli.app, name="lookups")
 state_app = typer.Typer(no_args_is_help=True, help="The bitemporal compliance state")
 app.add_typer(state_app, name="state")
 

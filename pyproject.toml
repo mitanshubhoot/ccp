@@ -93,6 +93,7 @@ layers = [
     "ccp.investigation",
     "ccp.policy",
     "ccp.remediation",
+    "ccp.lookups",
     "ccp.approvals.cli",
     "ccp.approvals.actions",
     "ccp.tenants",

@@ -514,3 +514,53 @@ class GitHubLiveConnector:
         yield event(
             "org.pull.completed", f"{org}:pull@{uuid.uuid4().hex[:16]}", snapshot_ts, completed
         )
+
+
+# -- lookups about one failing resource (A-158) --------------------------------------------
+
+SEARCH_RATE_PER_SECOND = 10 / 60  # GitHub allows 10 code searches a minute
+MAX_CODE_HITS = 5
+
+
+def search_code(
+    connector: GitHubLiveConnector,
+    tenant: TenantContext,
+    term: str,
+    extension: str = "tf",
+    max_hits: int = MAX_CODE_HITS,
+) -> list[dict[str, Any]]:
+    """Files in the organization's repositories that mention a resource's name, with each
+    file's text: the code a fix suggestion would change. Every response is kept as bytes."""
+    org = connector._start(tenant)
+    searches = rate.bucket_for(
+        tenant.tenant_id,
+        f"github-search:{org}",
+        lambda: rate.RateBucket(SEARCH_RATE_PER_SECOND, 1),
+    )
+    searches.take(connector._sleep)
+    found = connector._get(
+        "/search/code",
+        errors.CODE_SEARCH,
+        q=f'"{term}" org:{org} extension:{extension}',
+        per_page=max_hits,
+    )
+    if not isinstance(found, dict):
+        return []
+    hits: list[dict[str, Any]] = []
+    for item in (found.get("items") or [])[:max_hits]:
+        repo = (item.get("repository") or {}).get("full_name")
+        path = item.get("path")
+        if not repo or not path:
+            continue
+        blob = connector._get(f"/repos/{repo}/contents/{path}", errors.FILE)
+        if not isinstance(blob, dict) or not blob.get("content"):
+            continue
+        hits.append(
+            {
+                "repo": repo,
+                "path": path,
+                "sha": blob.get("sha"),
+                "text": base64.b64decode(blob["content"]).decode("utf-8", errors="replace"),
+            }
+        )
+    return hits

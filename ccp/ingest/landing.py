@@ -183,16 +183,26 @@ def land_responses(db: ScopedDB, zone: RawStore, connector: Connector, run_id: s
     """Keep every response the pull received, as the provider sent it (A-136): its bytes in
     the raw zone, content-addressed, and a row naming the request id and the bytes' digest."""
     received: list[Received] = list(getattr(connector, "responses", ()))
+    return len(land_received(db, zone, connector.name, received, run_id))
+
+
+def land_received(
+    db: ScopedDB, zone: RawStore, connector: str, received: list[Received], run_id: str
+) -> list[str]:
+    """Land responses as raw evidence and return their raw_responses ids, in order: a pull's
+    (A-136), or a lookup's about one failing resource (A-158)."""
+    ids: list[str] = []
     for item in received:
-        landed = zone.put_response(db.tenant.tenant_id, connector.name, item)
+        landed = zone.put_response(db.tenant.tenant_id, connector, item)
+        response_id = str(ULID())
         db.execute(
             "INSERT INTO raw_responses (tenant_id, response_id, connector, sync_run_id, method,"
             " path, status, request_id, body_sha256, ref, version_id, store, received_at)"
             " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 db.tenant.tenant_id,
-                str(ULID()),
-                connector.name,
+                response_id,
+                connector,
                 run_id,
                 item.method,
                 item.path,
@@ -205,7 +215,8 @@ def land_responses(db: ScopedDB, zone: RawStore, connector: Connector, run_id: s
                 item.received_at,
             ),
         )
-    return len(received)
+        ids.append(response_id)
+    return ids
 
 
 def _kind(exc: Exception) -> PullErrorKind:

@@ -284,6 +284,11 @@ class Settings(BaseSettings):
     ccp_task_stall_passes: int = Field(default=3, ge=1)
     ccp_task_alert_factor: float = Field(default=1.5, gt=1)
 
+    # Lookups about failing resources (A-158): how far back Config history and CloudTrail
+    # are read, and how many failing resources of one verdict are looked up
+    ccp_lookup_days: int = Field(default=30, ge=1, le=90)
+    ccp_lookup_max_resources: int = Field(default=10, ge=1)
+
     # Tracing
     langfuse_public_key: SecretStr | None = None
     langfuse_secret_key: SecretStr | None = None

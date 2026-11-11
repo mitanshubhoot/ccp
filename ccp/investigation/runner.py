@@ -39,6 +39,7 @@ from ccp.ingest.event_log import LogRecord
 from ccp.ingest.worker import register
 from ccp.investigation import schema
 from ccp.investigation.schema import Investigation, MissingEvidence, RemediationProposal
+from ccp.knowledge import lookups as lookup_plans
 from ccp.llm.budget import BudgetTracker, RunBudget
 from ccp.llm.errors import RunStopped
 from ccp.observability import steps
@@ -275,6 +276,10 @@ class InvestigationsConsumer(OrderedConsumer):
             self.summary.skipped += 1
             return
         if schema.for_verdict(self._db, verdict.verdict_id) is not None:
+            self.summary.skipped += 1
+            return
+        if lookup_plans.plan_for(verdict.test_id) is not None:
+            # its lookups run first and queue this job when they are stored (A-158)
             self.summary.skipped += 1
             return
         key = f"{verdict.tenant_id}:{verdict.verdict_id}"

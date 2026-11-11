@@ -240,6 +240,7 @@ EXAMPLES: dict[str, dict[str, Any]] = {
     "get_control": {"control_id": "CC6.1"},
     "get_framework_rollup": {"framework_id": "soc2"},
     "get_investigation": {"verdict_id": "no-such-verdict"},
+    "get_lookups": {"verdict_id": "no-such-verdict"},  # A-158
     # the exact-reading tools (A-146)
     "find_exact": {"text": "multi-factor", "evidence_type": "policy_document"},
     "outline": {"evidence_type": "policy_document", "evidence_entity_id": "no-such-evidence"},

@@ -51,6 +51,7 @@ CHAINED = (
     "index_activations",
     "task_events",
     "task_answers",
+    "lookups",
 )
 
 

@@ -153,6 +153,10 @@ class GetInvestigationArgs(_Args):
     verdict_id: str
 
 
+class GetLookupsArgs(_Args):
+    verdict_id: str
+
+
 # -- output schemas: what each tool returns; the gateway checks every result (A-112) -------
 
 
@@ -396,6 +400,20 @@ class RollupOut(_Out):
     requirements: list[RollupRowOut]
 
 
+class LookupOut(_Out):
+    lookup_id: str
+    resource: str
+    kind: str
+    status: str
+    result: dict[str, Any]
+    error: str | None
+
+
+class LookupsOut(_Out):
+    verdict_id: str
+    lookups: list[LookupOut]
+
+
 class InvestigationOut(_Out):
     verdict_id: str
     investigation_id: str
@@ -585,6 +603,16 @@ _SPECS: tuple[ToolSpec, ...] = (
         InvestigationOut,
         scopes=("verdicts",),
         untrusted=True,
+    ),
+    ToolSpec(
+        "get_lookups",
+        "What code read about each failing resource of one verdict: AWS Config history,"
+        " CloudTrail events (who changed it, when) and the Terraform that names it.",
+        GetLookupsArgs,
+        LookupsOut,
+        scopes=("lookups",),
+        untrusted=True,  # CloudTrail usernames and file paths come from the customer's systems
+        max_calls=2,
     ),
     ToolSpec(
         "read_result",
@@ -1130,6 +1158,35 @@ def get_investigation(ctx: ToolContext, args: BaseModel) -> Any:
     }
 
 
+def get_lookups(ctx: ToolContext, args: BaseModel) -> Any:
+    """The stored lookups about a verdict's failing resources (A-158), without file text:
+    the fix suggestions render from that, and a model has no need to read it."""
+    a = GetLookupsArgs.model_validate(args.model_dump())
+    rows = ctx.db.fetch_all(
+        "SELECT lookup_id, resource, kind, status, result, error FROM lookups"
+        " WHERE verdict_id = %s ORDER BY created_at, lookup_id",
+        (a.verdict_id,),
+    )
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        result = json.loads(r[4]) if isinstance(r[4], str) else dict(r[4])
+        if r[2] == "infra_code":
+            result["files"] = [
+                {k: v for k, v in f.items() if k != "text"} for f in result.get("files", [])
+            ]
+        out.append(
+            {
+                "lookup_id": r[0],
+                "resource": r[1],
+                "kind": r[2],
+                "status": r[3],
+                "result": result,
+                "error": r[5],
+            }
+        )
+    return {"verdict_id": a.verdict_id, "lookups": out}
+
+
 def read_result(ctx: ToolContext, args: BaseModel) -> Any:
     """A tool result this run stored whole when it was too large for the context
     (A-153), read a slice at a time; the handle came with the result's preview."""
@@ -1169,6 +1226,7 @@ TOOL_FNS: dict[str, ToolFn] = {
     "get_control": get_control,
     "get_framework_rollup": get_framework_rollup,
     "get_investigation": get_investigation,
+    "get_lookups": get_lookups,
     "read_result": read_result,
 }
 

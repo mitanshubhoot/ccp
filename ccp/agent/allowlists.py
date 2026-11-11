@@ -30,7 +30,8 @@ ALLOWLISTS: dict[str, frozenset[str]] = {
     "tier3": frozenset(TIER3_BASE),
     # root cause is per subject, not per framework
     "investigator": frozenset(
-        TIER3_BASE + ("get_verdict", "list_findings", "get_access_grants", "get_control")
+        TIER3_BASE
+        + ("get_verdict", "list_findings", "get_access_grants", "get_control", "get_lookups")
     ),
     # a task item reads evidence and the verdicts its facts name; it holds no list,
     # grant or write tool, and nothing that starts another run (A-151)
@@ -52,6 +53,7 @@ ALLOWLISTS: dict[str, frozenset[str]] = {
             "get_control",
             "get_framework_rollup",
             "get_investigation",
+            "get_lookups",  # what code read about a failing resource (A-158)
         )
     ),
 }

@@ -223,6 +223,20 @@ def evaluate(ctx: EvaluationContext, check: Check, subject: str) -> Verdict:
         reasoning = check.fail.format(
             failing=len(failing), population=len(population), failing_list=listed
         )
-        return ctx.verdict(key, VerdictStatus.failed, reasoning, refs, valid_from)
+        named = [  # what a lookup or a fix suggestion acts on (A-158)
+            {
+                "entity_id": str(getattr(e, "entity_id", "")),
+                "name": str(_field(e, check.failing_list)),
+            }
+            for e in failing
+        ]
+        return ctx.verdict(
+            key,
+            VerdictStatus.failed,
+            reasoning,
+            refs,
+            valid_from,
+            extracted_fields={"failing": named},
+        )
     reasoning = check.pass_.format(population=len(population))
     return ctx.verdict(key, VerdictStatus.passed, reasoning, refs, valid_from)

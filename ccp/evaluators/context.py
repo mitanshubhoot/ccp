@@ -106,8 +106,10 @@ class EvaluationContext:
         evidence_refs: list[str],
         valid_from: datetime,
         guardrail_events: tuple[str, ...] = (),
+        extracted_fields: dict[str, Any] | None = None,
     ) -> Verdict:
-        """A deterministic-tier verdict: confidence 1.0, no model, no citations."""
+        """A deterministic-tier verdict: confidence 1.0, no model, no citations. A failing
+        declarative check names its failing entities in ``extracted_fields`` (A-158)."""
         return Verdict(
             evaluation_key=evaluation_key(
                 self.tenant.tenant_id,
@@ -135,6 +137,7 @@ class EvaluationContext:
             created_at=self.now,
             rule_version=rule_stamp(self.spec, self.tenant.settings),
             manifest=self.manifest(),
+            extracted_fields=extracted_fields,
         )
 
 

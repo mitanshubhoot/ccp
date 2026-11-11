@@ -1,0 +1,48 @@
+# What code reads about each failing resource before anyone investigates it (LT1, A-158).
+# Keyed by test. A failing deterministic verdict names its failing resources; for each one,
+# the lookups below run in the connector's process, land every response as raw evidence
+# first, and store a typed result the Investigator and the fix suggestions read.
+#
+#   connector        whose read credentials the lookups use
+#   config_history   the AWS Config resource type whose history is read, in 7-day windows
+#   cloudtrail       the CloudTrail events that can change the setting; looked up by the
+#                    resource's name, or by event source when the resource has no name in
+#                    CloudTrail (an account-level setting)
+#   infra_code       Terraform resource types to look for in the organization's code
+
+AWS-1:
+  connector: aws
+  config_history: AWS::S3::Bucket
+  cloudtrail:
+    by: resource_name
+    events:
+      - PutBucketPublicAccessBlock
+      - DeleteBucketPublicAccessBlock
+      - PutBucketPolicy
+      - DeleteBucketPolicy
+      - PutBucketAcl
+  infra_code: [aws_s3_bucket, aws_s3_bucket_public_access_block, aws_s3_bucket_policy]
+AWS-2:
+  connector: aws
+  config_history: AWS::IAM::User
+  cloudtrail:
+    by: resource_name
+    events:
+      - CreateLoginProfile
+      - UpdateLoginProfile
+      - DeactivateMFADevice
+      - DeleteVirtualMFADevice
+      - EnableMFADevice
+  infra_code: [aws_iam_user, aws_iam_user_login_profile]
+AWS-3:
+  connector: aws
+  cloudtrail:
+    by: event_source
+    source: cloudtrail.amazonaws.com
+    events:
+      - CreateTrail
+      - UpdateTrail
+      - StopLogging
+      - StartLogging
+      - DeleteTrail
+  infra_code: [aws_cloudtrail]
