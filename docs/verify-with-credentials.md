@@ -16,6 +16,11 @@ step; work through it when the credentials are available.
       `ccp evidence calibrate` reports agreement of at least 85% and a false-accept upper
       bound under 10% before `CCP_ADEQUACY_MODE=live` shows anything (A-162). The labels
       are auditors' work.
+- [ ] A real questionnaire (20 or more questions) through `ccp questionnaires create`,
+      `answer`, review and `send` on Haiku 5.5: drafts whose controls decide them follow
+      the verdicts, no draft passes its checks with a number missing from its facts, and
+      `metrics` gives the edit rate per kind of question (A-163). Reviewing is people's
+      work.
 - [ ] The Investigator on a failing GH-1 or HR-1 verdict chooses
       `github_remove_collaborator` with the right repository and login from the
       context's fix list (prompt `investigator_diagnose_v2`); a choice outside the list

@@ -1,0 +1,17 @@
+# Which tested control a questionnaire question is about (LT3, spec.md A-163). A question
+# maps to the control whose terms it contains most, and to none on a tie or no match;
+# a question that names its control keeps it. A mapped question's direction comes from
+# the control's current verdicts, never from a model. Reviewed like the rest of the
+# catalogue (A-128); a model may propose terms offline (LT5).
+
+CTL-MFA: [multi-factor, mfa, two-factor, 2fa, second factor]
+CTL-ACCESS-REVOKE: [leaver, leavers, terminated, termination, offboarding, deprovision]
+CTL-ACCESS-REVIEW: [access review, review access, recertification, user access review]
+CTL-PRIV-LIMIT: [privileged, admin access, administrator]
+CTL-CHANGE-REVIEW: [code review, peer review, change management, pull request]
+CTL-VULN-DISCLOSURE: [vulnerability disclosure, responsible disclosure, security.txt, bug bounty]
+CTL-SECRETS: [secret, secrets, credentials in code, plaintext password]
+CTL-AWARENESS: [awareness, security training, phishing training]
+CTL-ACCOUNT-OWNER: [shared account, generic account, service account owner]
+CTL-CLOUD-PUBLIC: [public bucket, publicly accessible storage, s3 public, public access]
+CTL-LOGGING: [audit log, cloudtrail, logging, activity log]

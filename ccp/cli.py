@@ -62,6 +62,8 @@ from ccp.normalize import consumer as normalize_consumer
 from ccp.normalize import repository
 from ccp.observability import steps
 from ccp.policy import cli as policy_cli
+from ccp.questionnaires import cli as questionnaires_cli
+from ccp.questionnaires import send as _answers  # noqa: F401 - registers the staleness job
 from ccp.remediation import cli as remediate_cli
 from ccp.remediation import fix_cli
 from ccp.replay import rebuild as replay
@@ -116,6 +118,7 @@ app.command("copilot")(copilot_cli.copilot)
 app.add_typer(remediate_cli.app, name="remediate")
 app.add_typer(fix_cli.app, name="fixes")
 app.add_typer(evidence_cli.app, name="evidence")
+app.add_typer(questionnaires_cli.app, name="questionnaires")
 app.add_typer(tasks_cli.app, name="tasks")
 app.add_typer(lookups_cli.app, name="lookups")
 state_app = typer.Typer(no_args_is_help=True, help="The bitemporal compliance state")

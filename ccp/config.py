@@ -50,6 +50,7 @@ class ScheduleSpec(BaseModel):
         "transcribe",
         "tasks",
         "relabel",
+        "answer_staleness",
     ]
     every: str = Field(
         pattern=r"^(every [1-9][0-9]* (minutes|hours)|daily ([01][0-9]|2[0-3]):[0-5][0-9])$"
@@ -81,6 +82,8 @@ DEFAULT_SCHEDULES: tuple[ScheduleSpec, ...] = (
     ScheduleSpec(id="tasks", job="tasks", every="every 1 hours"),
     # on the 1st, last month's 20 judged items for an expert to relabel (A-157)
     ScheduleSpec(id="relabel", job="relabel", every="daily 05:00"),
+    # approved questionnaire answers re-checked against the verdicts and documents (A-163)
+    ScheduleSpec(id="answer-staleness", job="answer_staleness", every="daily 05:30"),
 )
 
 
@@ -294,6 +297,9 @@ class Settings(BaseSettings):
     ccp_adequacy_mode: Literal["off", "shadow", "live"] = "shadow"
     ccp_adequacy_min_labels: int = Field(default=30, ge=1)
     ccp_adequacy_false_accept_limit: float = Field(default=0.10, gt=0, lt=1)
+
+    # Questionnaires (A-163): the two tool-less steps of the fixed pipeline
+    ccp_questionnaire_model: str = "claude-haiku-5-5"
 
     # Tracing
     langfuse_public_key: SecretStr | None = None

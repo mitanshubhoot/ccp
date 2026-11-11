@@ -98,6 +98,9 @@ INSERT_ONLY: frozenset[str] = frozenset(
         "segment_sets",
         "evidence_feedback",
         "auditor_decisions",
+        "questionnaire_answers",
+        "answer_events",
+        "answer_library",
     }
 )
 # Operational state that is updated in place by design.
@@ -112,6 +115,7 @@ OPERATIONAL: frozenset[str] = frozenset(
         "schedules",
         "tasks",
         "task_items",
+        "questionnaires",
         "checkpoints.checkpoints",
         "checkpoints.checkpoint_blobs",
         "checkpoints.checkpoint_writes",

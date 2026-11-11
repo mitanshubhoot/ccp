@@ -62,6 +62,7 @@ def roles(settings: Settings) -> dict[str, str]:
         "judge": settings.ccp_judge_model,
         "second_reader": settings.ccp_second_reader_model,
         "adequacy": settings.ccp_adequacy_model,  # A-162
+        "questionnaire": settings.ccp_questionnaire_model,  # A-163
         "embed": settings.ccp_embed_model,
     }
 
