@@ -1208,6 +1208,21 @@ def connectors_pull(
     typer.echo(f"{count} events", err=True)
 
 
+@app.command("serve")
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port"),
+) -> None:
+    """Serve the HTTP API (A-134): every request signed in, per tenant, by role."""
+    import uvicorn
+
+    from ccp.api.app import create_app
+
+    settings = _settings()
+    typer.echo(f"serving on http://{host}:{port} (sign-in: {settings.ccp_auth_mode})")
+    uvicorn.run(create_app(settings), host=host, port=port, log_level="info")
+
+
 @tenants_app.command("list")
 def tenants_list() -> None:
     """List the active tenants: the tenants file's and those onboarded (A-133)."""

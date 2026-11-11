@@ -81,6 +81,7 @@ name = "Layers: higher may import lower, never the reverse"
 type = "layers"
 layers = [
     "ccp.cli",
+    "ccp.api",
     "ccp.evals",
     "ccp.replay",
     "ccp.copilot",

@@ -50,6 +50,9 @@ step; work through it when the credentials are available.
       expired token, another client's token and a token from another issuer are refused
       (A-129).
 - [ ] Federation from a customer's SAML or OIDC provider into the user pool.
+- [ ] `ccp serve` with `CCP_AUTH_MODE=oidc`: a real ID token reaches `/v1/me`, a token for
+      another client or issuer is 401, and a member's decision over HTTP records their
+      issuer and subject (A-134).
 
 ## A git remote (NT1)
 
