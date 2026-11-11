@@ -80,12 +80,14 @@ def show(proposal_id: str, tenant: str | None = typer.Option(None, "--tenant")) 
     ctx = _tenant(settings, tenant)
     pool = db.app_pool(settings)
     try:
-        p = proposals.get(ScopedDB(pool, ctx), proposal_id)
+        scoped = ScopedDB(pool, ctx)
+        p = proposals.get(scoped, proposal_id)
+        if p is None:
+            raise typer.BadParameter(f"no proposal {proposal_id!r}")
+        described = runner.describe(scoped, p, ctx.settings.github_org)
     finally:
         pool.close()
-    if p is None:
-        raise typer.BadParameter(f"no proposal {proposal_id!r}")
-    typer.echo(json.dumps(runner.describe(p, ctx.settings.github_org), indent=2, default=str))
+    typer.echo(json.dumps(described, indent=2, default=str))
 
 
 @app.command("execute")
@@ -94,7 +96,8 @@ def execute(
     live: bool = typer.Option(False, "--live", help="gate 2; dry run without it"),
     tenant: str | None = typer.Option(None, "--tenant"),
 ) -> None:
-    """Dry run by default: records the exact call. Live needs all five gates."""
+    """Dry run by default: records the exact call. Live needs all five gates, the decision's
+    unspent grant, and the precondition the proposal was made under (A-131)."""
     settings = _settings()
     ctx = _tenant(settings, tenant)
     pool = db.app_pool(settings)
@@ -115,8 +118,9 @@ def rollback(
     live: bool = typer.Option(False, "--live", help="gate 2; dry run without it"),
     tenant: str | None = typer.Option(None, "--tenant"),
 ) -> None:
-    """Needs an approved rollback item first (the first call opens one). Live needs all five
-    gates, with `restore <login> to <org>/<repo>` as the typed confirmation."""
+    """A rollback is a proposal of its own: the first call creates it, restoring the recorded
+    pre-state, with its approval item. Live needs all five gates, with `restore <login> to
+    <org>/<repo>` as the typed confirmation, and the rollback's own grant (A-131)."""
     settings = _settings()
     ctx = _tenant(settings, tenant)
     pool = db.app_pool(settings)
@@ -143,4 +147,4 @@ def audit(tenant: str | None = typer.Option(None, "--tenant")) -> None:
         typer.echo(problem)
     if problems:
         raise typer.Exit(1)
-    typer.echo("every remediation action has a matching approval")
+    typer.echo("every remediation action has a matching approval and a spent grant")

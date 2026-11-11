@@ -224,6 +224,16 @@ def latest_per_subject(db: ScopedDB, test_id: str | None = None) -> list[Verdict
     return [_from_row(r) for r in rows]
 
 
+def latest_for_subject(db: ScopedDB, subject_key: str) -> Verdict | None:
+    """The newest verdict for one subject key: what CCP believes now (A-131)."""
+    row = db.fetch_one(
+        f"SELECT {_COLUMNS} FROM verdicts WHERE subject_key = %s"
+        " ORDER BY created_at DESC, verdict_id DESC LIMIT 1",
+        (subject_key,),
+    )
+    return _from_row(row) if row else None
+
+
 def all_for_test(db: ScopedDB, test_id: str) -> list[Verdict]:
     rows = db.fetch_all(
         f"SELECT {_COLUMNS} FROM verdicts WHERE test_id = %s ORDER BY created_at, verdict_id",

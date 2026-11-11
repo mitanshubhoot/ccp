@@ -43,7 +43,7 @@ training in the Voyage organization settings); `LANGFUSE_PUBLIC_KEY` and `LANGFU
 | Evaluate | `ccp evaluate run` and `clock`, `ccp state current`, `history`, `asof`, `ccp report` |
 | Retrieval | `ccp index rebuild`, `refresh`, `stats`, `distractors`, `calibrate`, `search` |
 | Agents | `ccp agent pending` and `resume`, `ccp investigate run`, `ccp policy gap` and `draft`, `ccp copilot --tenant acme [--ask "..."]` |
-| Human decisions | `ccp approvals list`, `show`, `approve`, `reject`, `resume`, `audit`; `ccp remediate propose`, `execute`, `rollback`, `audit` (rollbacks need their own approval) |
+| Human decisions | `ccp approvals list`, `show`, `approve`, `reject`, `resume`, `audit`; `ccp remediate propose`, `show`, `execute`, `rollback`, `audit` (a rollback is a proposal of its own, with its own approval) |
 | Evals | `ccp evals run [--suite all]`, `calibrate`, `regress`, `capture <trace_id>`, `threshold` |
 | Replay | `ccp replay <id> [--execute]` for a verdict, investigation, gap report, or copilot answer |
 
@@ -85,7 +85,10 @@ the request and show an empty diff.
   results alike, and before it reaches the step log or a trace.
 - No graph has a write path. Remediation needs five gates (an environment flag, a `--live`
   flag, an allowlist, a typed confirmation, and an approved item whose payload hash still
-  matches), and the Copilot's "fix this" ends in an open approval, never a change.
+  matches), then the single-use grant that approval minted and the precondition the
+  proposal was made under, checked again just before it acts; every step lands in an
+  append-only journal, and a proposal is never edited (A-131). The Copilot's "fix this"
+  ends in an open approval, never a change.
 
 ## Evaluation
 

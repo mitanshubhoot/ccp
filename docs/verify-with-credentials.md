@@ -33,6 +33,11 @@ step; work through it when the credentials are available.
 - [ ] `ccp connections check` with a live GitHub connection (A-121).
 - [ ] The error table against real responses: a private repository on a free plan, an
       empty repository, a hidden listing (A-120).
+- [ ] One live removal on a sandbox repository in `allowed_repos`: approve with a signed-in
+      approver, `ccp remediate execute --live`; the journal reads started, observed,
+      finished; `credential_issues.grant_id` names the grant; a second execute is refused;
+      then `ccp remediate rollback --live` restores the recorded permission through its own
+      proposal, approval and grant (A-131).
 
 ## Langfuse keys
 

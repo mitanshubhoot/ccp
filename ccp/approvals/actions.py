@@ -3,10 +3,11 @@
 tier3_interrupt       approve -> record the decision (approve, override with a status, or
                                  regather), then resume the graph from the recorded decision
                       reject  -> record an override to needs_review with the note, then resume
-remediation           approve -> gate 5 becomes true; the operator still runs remediate execute
+remediation           approve -> gate 5 becomes true and one execution grant is minted (A-131);
+                                 the operator still runs remediate execute
                       reject  -> the proposal is marked rejected; re-evaluation does not run
-remediation_rollback  approve -> the rollback's gate 5 becomes true; remediate rollback still
-                                 needs gates 1 to 4 for a live proposal
+remediation_rollback  approve -> the rollback proposal's gate 5 becomes true and its grant is
+                                 minted; remediate rollback still needs gates 1 to 4 live
 policy_draft          approve -> the draft is marked approved; nothing else happens
 evidence_request      closed by the human after uploading; the upload triggers re-evaluation
 
@@ -18,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from ulid import ULID
 
 from ccp.agent import decisions
 from ccp.approvals import store
@@ -115,10 +117,16 @@ def approve(
     check_plain_decision(item.kind, decision, status)
     updated = store.record_event(db, approval_id, "approved", who, note)
     if item.kind == "remediation":
-        return Outcome(updated, "gate 5 satisfied; run `ccp remediate execute` with gates 1 to 4")
+        return Outcome(
+            updated,
+            "gate 5 satisfied and one execution grant minted (single use, valid a day); run"
+            " `ccp remediate execute` with gates 1 to 4",
+        )
     if item.kind == "remediation_rollback":
         return Outcome(
-            updated, "rollback approved; run `ccp remediate rollback` (gates 1 to 4 when live)"
+            updated,
+            "rollback approved and its grant minted; run `ccp remediate rollback` (gates 1 to 4"
+            " when live)",
         )
     return Outcome(updated, f"{item.kind} approved")
 
@@ -149,11 +157,13 @@ def reject(
         return _tier3_outcome(result, rejected=True)
 
     def mark_rejected(cur: Any) -> None:  # with the decision, never before it
-        if item.kind == "remediation":
+        if item.kind in ("remediation", "remediation_rollback"):  # a new event (A-131)
             cur.execute(
-                "UPDATE remediation_proposals SET status = 'rejected', updated_at = now()"
-                " WHERE proposal_id = %s",
-                (item.ref_id,),
+                "INSERT INTO proposal_events (event_id, tenant_id, proposal_id, status,"
+                " pre_state, planned_call, executed_call)"
+                " SELECT %s, tenant_id, proposal_id, 'rejected', pre_state, planned_call,"
+                " executed_call FROM proposal_status WHERE proposal_id = %s",
+                (str(ULID()), item.ref_id),
             )
 
     updated = store.record_event(db, approval_id, "rejected", who, note, within=mark_rejected)

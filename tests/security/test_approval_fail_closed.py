@@ -352,7 +352,9 @@ def test_a_rollback_needs_its_own_approval_bound_to_what_it_restores(
     assert runner.simulate(acme, settings, simulated.proposal_id).mode == "simulated"
     refused = runner.rollback(acme, settings, simulated.proposal_id)
     assert refused.mode == "refused" and "gate5:approval" in refused.detail
-    undo = store.for_ref(acme, "remediation_rollback", simulated.proposal_id)
+    reversal = runner.reversal_of(acme, simulated.proposal_id)
+    assert reversal is not None and reversal.reverses == simulated.proposal_id
+    undo = store.for_ref(acme, "remediation_rollback", reversal.proposal_id)
     assert undo is not None and undo.is_open
     with pytest.raises(actions.InvalidDecision):  # not a tier 3 item: no decisions
         actions.approve(acme, settings, undo.approval_id, member(acme, "cto"), decision="override")
@@ -376,13 +378,13 @@ def test_a_rollback_needs_its_own_approval_bound_to_what_it_restores(
     assert done.mode == "executed"
     first = runner.rollback(acme, live_settings, executed.proposal_id, github=github)
     assert first.mode == "refused"
-    undo = store.for_ref(acme, "remediation_rollback", executed.proposal_id)
-    assert undo is not None and undo.payload["restore_permission"] == "write"
+    reversal = runner.reversal_of(acme, executed.proposal_id)
+    assert reversal is not None
+    undo = store.for_ref(acme, "remediation_rollback", reversal.proposal_id)
+    assert undo is not None and undo.payload["target"]["permission"] == "write"
     actions.approve(acme, settings, undo.approval_id, member(acme, "cto"))
-    acme.execute(
-        "UPDATE remediation_proposals SET pre_state = %s WHERE proposal_id = %s",
-        ('{"permission": "admin"}', executed.proposal_id),
-    )
+    # the recorded pre-state changes: the approved rollback no longer restores it
+    proposals.record(acme, executed.proposal_id, "executed", pre_state={"permission": "admin"})
     restore = "restore jsmith to acme-example/platform"
     escalated = runner.rollback(
         acme,
@@ -396,10 +398,7 @@ def test_a_rollback_needs_its_own_approval_bound_to_what_it_restores(
     assert escalated.mode == "refused" and "gate5:approval" in escalated.detail
     assert all(c["method"] != "PUT" for c in github.calls)
     # with the recorded permission back, the same approval holds again
-    acme.execute(
-        "UPDATE remediation_proposals SET pre_state = %s WHERE proposal_id = %s",
-        ('{"permission": "write"}', executed.proposal_id),
-    )
+    proposals.record(acme, executed.proposal_id, "executed", pre_state={"permission": "write"})
     for missing in ("gate1", "gate2", "gate3", "gate4"):
         result = runner.rollback(
             acme,
@@ -423,9 +422,9 @@ def test_a_rollback_needs_its_own_approval_bound_to_what_it_restores(
     )
     assert rolled.mode == "rolled_back" and github.calls[-1]["permission"] == "write"
     # the request opened for the edited payload was never approved, and is closed now
-    requests = store.items_for_ref(acme, "remediation_rollback", executed.proposal_id)
+    requests = runner.rollback_requests(acme, executed.proposal_id)
     assert [i.state for i in requests] == ["approved", "closed"]
-    assert requests[1].payload["restore_permission"] == "admin"
+    assert requests[1].payload["target"]["permission"] == "admin"
     assert runner.audit(acme) == []
 
 
@@ -445,7 +444,7 @@ def test_the_audits_find_actions_without_approvals(
         reversible=True,
         live_capable=True,
     )
-    proposals.update(acme, rogue.proposal_id, status="executed")  # acted, never approved
+    proposals.record(acme, rogue.proposal_id, "executed")  # acted, never approved
     assert any(rogue.proposal_id in p for p in runner.audit(acme))
     thread_id, item = _interrupt(world)
     store.record_event(

@@ -1,14 +1,16 @@
 """S8: remediation cannot act without all five gates. Parametrized over the 31 combinations
 where at least one gate is missing; the GitHub client's delete is never called and the
-proposal row records the refusal. The all-gates case makes exactly one call; an edited
-proposal fails the payload-hash check."""
+proposal records the refusal. The all-gates case makes exactly one call; a proposal cannot
+be edited by the application, and one edited behind its back fails the payload-hash check."""
 
 from __future__ import annotations
 
 import itertools
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
+import psycopg
 import pytest
 
 from ccp.approvals import store as approvals
@@ -144,8 +146,11 @@ def test_all_five_gates_make_exactly_one_call_and_record_the_pre_state(
     )
     assert first.mode == "refused" and "gate5:approval" in first.detail
     assert len(github.calls) == calls_before
-    undo = approvals.for_ref(acme, "remediation_rollback", proposal_id)
-    assert undo is not None and undo.is_open and undo.payload["restore_permission"] == "write"
+    reversal = runner.reversal_of(acme, proposal_id)  # the rollback is a proposal of its own
+    assert reversal is not None and reversal.action == "restore_repo_collaborator"
+    assert reversal.source == "rollback" and reversal.reverses == proposal_id
+    undo = approvals.for_ref(acme, "remediation_rollback", reversal.proposal_id)
+    assert undo is not None and undo.is_open and undo.payload["target"]["permission"] == "write"
     approvals.record_event(
         acme, undo.approval_id, "approved", member(acme, "security-lead"), "undo it"
     )
@@ -187,10 +192,17 @@ def test_an_edited_proposal_fails_the_payload_hash_check(
     item = approvals.for_ref(acme, "remediation", proposal_id)
     assert item is not None
     approvals.record_event(acme, item.approval_id, "approved", member(acme, "reviewer"))
-    acme.execute(
-        "UPDATE remediation_proposals SET target = %s WHERE proposal_id = %s",
-        ('{"repo": "acme-example/platform", "login": "pnatarajan"}', proposal_id),
-    )
+    edited = json.dumps({"repo": "acme-example/platform", "login": "pnatarajan"})
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):  # the application cannot
+        acme.execute(
+            "UPDATE remediation_proposals SET target = %s WHERE proposal_id = %s",
+            (edited, proposal_id),
+        )
+    with psycopg.connect(settings.database_admin_url, autocommit=True) as owner:  # behind its back
+        owner.execute(
+            "UPDATE remediation_proposals SET target = %s WHERE proposal_id = %s",
+            (edited, proposal_id),
+        )
     github = RecordingGitHubAdmin()
     result = runner.execute(
         acme,

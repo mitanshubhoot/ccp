@@ -7,19 +7,22 @@
    (a rollback: `restore <login> to <org>/<repo>`)
 5  the proposal's approval item is approved by a named reviewer and its payload hash
    still matches the proposal (an approval cannot be reused for an edited proposal); a
-   rollback needs its own approved remediation_rollback item, bound the same way (A-95)
+   rollback is a proposal of its own with its own approved item, bound the same way
+   (A-95, A-131)
+
+Past the gates, the executor still needs the decision's grant, unused and unexpired, and
+the precondition the proposal was made under (runner.py, A-131).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from ccp.approvals.store import Approval, payload_hash
+from ccp.approvals.store import Approval
 from ccp.config import Settings
 from ccp.remediation.proposals import Proposal
 
@@ -43,18 +46,6 @@ def confirmation_phrase(org: str, repo: str, login: str) -> str:
 
 def rollback_phrase(org: str, repo: str, login: str) -> str:
     return f"restore {login} to {org}/{repo}"
-
-
-def rollback_payload(proposal: Proposal) -> dict[str, Any]:
-    """What a rollback approval shows and binds to: the proposal as approved, and the
-    permission the rollback would restore."""
-    return {
-        "proposal_id": proposal.proposal_id,
-        "action": proposal.action,
-        "target": proposal.target,
-        "restore_permission": (proposal.pre_state or {}).get("permission"),
-        "proposal_sha256": proposal.current_hash(),
-    }
 
 
 def approval_matches(approval: Approval | None, expected_sha256: str) -> bool:
@@ -88,15 +79,14 @@ def check(
     confirmation: str | None,
     approval: Approval | None,
     config: RemediationConfig | None = None,
-    rollback: bool = False,
 ) -> GateCheck:
     cfg = config or load_config(settings.ccp_remediation_config)
     owner, _, name = proposal.target.get("repo", "").partition("/")
     repo = name or owner  # targets carry "org/repo"; tolerate a bare repo name
     full_name = f"{owner if name else org}/{repo}"
     login = proposal.target.get("login", "")
-    phrase = (rollback_phrase if rollback else confirmation_phrase)(org, repo, login)
-    expected = payload_hash(rollback_payload(proposal)) if rollback else proposal.current_hash()
+    phrase = (rollback_phrase if proposal.reverses else confirmation_phrase)(org, repo, login)
+    expected = proposal.current_hash()
     missing: list[str] = []
     if not settings.ccp_remediation_live:
         missing.append("gate1:CCP_REMEDIATION_LIVE")

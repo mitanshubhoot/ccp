@@ -6,7 +6,8 @@ A decision (approve, reject, ask for changes) is made only by a signed-in member
 tenant holding the role it needs, never by the item's requester, and never after the item
 expires; and an item takes one approve or reject, whatever races, because a unique index
 holds the second one back (A-130). An agent or the system may open and close items; only a
-person decides them."""
+person decides them. Approving a remediation or a rollback also mints its one execution
+grant, in the same transaction (A-131)."""
 
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ import psycopg
 from psycopg import errors as pg_errors
 from ulid import ULID
 
+from ccp.approvals import grants
 from ccp.auth import members
 from ccp.auth.tokens import Principal
 from ccp.storage.scoped import ScopedDB
@@ -273,6 +275,15 @@ def _append_event(
                     reviewer,
                     db.tenant.settings.label_consent,
                 ),
+            )
+        if event == "approved" and current.kind in grants.GRANTED_KINDS:
+            grants.mint(
+                cur,
+                db.tenant.tenant_id,
+                approval_id=approval_id,
+                proposal_id=current.ref_id,
+                payload_sha256=current.payload_sha256,
+                precondition_sha256=current.payload.get("precondition_sha256"),
             )
         if within is not None:
             within(cur)
