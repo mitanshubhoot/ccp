@@ -78,6 +78,8 @@ INSERT_ONLY: frozenset[str] = frozenset(
         "audit_chain",
         "audit_checkpoints",
         "aws_onboardings",
+        "model_refusals",
+        "quality_checks",
     }
 )
 # Operational state that is updated in place by design.

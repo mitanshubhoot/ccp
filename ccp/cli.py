@@ -26,7 +26,7 @@ from ccp.connectors.base import parse_ts
 from ccp.connectors.registry import CONNECTOR_NAMES, SOURCE_KINDS, build_connector
 from ccp.copilot import cli as copilot_cli
 from ccp.evals import calibration as judge_calibration
-from ccp.evals import capture, regress
+from ccp.evals import capture, regress, shadow
 from ccp.evals import labels as eval_labels
 from ccp.evals import runner as eval_runner
 from ccp.evals.schema import GoldenCase
@@ -34,6 +34,7 @@ from ccp.evaluators import clock as clock_producer
 from ccp.evaluators import impact as impact_step
 from ccp.evaluators import inventory, rederive, rule_changes, thresholds, tier2
 from ccp.evaluators import jobs as _jobs  # noqa: F401 - registers jobs and the scheduler
+from ccp.evaluators import quality as eval_quality
 from ccp.evaluators import runner as evaluations
 from ccp.evaluators import verdict as verdicts
 from ccp.identity import resolver
@@ -768,6 +769,60 @@ def _eval_selection(
     if not chosen:
         raise typer.BadParameter("no golden cases matched")
     return chosen, hashes
+
+
+@evals_app.command("shadow")
+def evals_shadow(
+    model: str = typer.Option(..., "--model", help="the candidate tier-2 model"),
+    tests: list[str] = typer.Option([], "--test"),
+    limit: int = typer.Option(50, "--limit"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Re-send stored tier-2 requests to a candidate model and diff what the rule decides
+    (A-143). Writes no verdict; exits 1 when any status would flip to pass."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    llm = try_build_client(settings)
+    if llm is None:
+        raise typer.BadParameter("ANTHROPIC_API_KEY is not set: nothing to run the candidate on")
+    pool = db.app_pool(settings)
+    try:
+        report = shadow.run(
+            ScopedDB(pool, ctx), settings, llm, model, tests=tuple(tests), limit=limit
+        )
+    finally:
+        pool.close()
+    for flip in report.flips:
+        typer.echo(
+            f"{flip.test_id} {flip.subject_key}: {flip.stored} -> {flip.candidate}"
+            f" ({', '.join(flip.fields)})"
+        )
+    typer.echo(
+        f"compared {report.compared}, skipped {report.skipped}, flips {len(report.flips)},"
+        f" towards pass {len(report.towards_pass)}"
+    )
+    if not report.passed:
+        raise typer.Exit(1)
+
+
+@evals_app.command("refusals")
+def evals_refusals(
+    days: int = typer.Option(7, "--days"), tenant: str | None = typer.Option(None, "--tenant")
+) -> None:
+    """Each test's model refusal rate over the window (A-143)."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        rates = eval_quality.refusal_rates(
+            ScopedDB(pool, ctx), datetime.now(UTC) - timedelta(days=days)
+        )
+    finally:
+        pool.close()
+    if not rates:
+        typer.echo("no AI evaluations in the window")
+    for r in rates:
+        typer.echo(f"{r.test_id:<6} {r.refusals}/{r.attempts} refused ({r.rate:.1%})")
 
 
 @evals_app.command("run")

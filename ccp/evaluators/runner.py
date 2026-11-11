@@ -17,7 +17,15 @@ from functools import lru_cache
 
 from ccp import tenancy
 from ccp.config import Settings, TenantSettings
-from ccp.evaluators import completeness, deterministic, inventory, registry, tier2
+from ccp.evaluators import (
+    completeness,
+    deterministic,
+    inventory,
+    quality,
+    registry,
+    second_reader,
+    tier2,
+)
 from ccp.evaluators import verdict as verdicts
 from ccp.evaluators.budget_gate import check_daily_budget
 from ccp.evaluators.context import load_context
@@ -31,6 +39,7 @@ from ccp.ingest.worker import register
 from ccp.knowledge import graph as knowledge
 from ccp.knowledge.graph import KnowledgeGraph
 from ccp.llm import release
+from ccp.llm.errors import TerminalModelError
 from ccp.normalize import repository
 from ccp.observability import steps
 from ccp.retrieval.hybrid import EmbeddingModelMismatch
@@ -93,7 +102,12 @@ def evaluate_request(
         verdict = evaluator(
             db, settings, ctx, spec, request.subject, active, reason=_reason(request.reason)
         )
+        verdict = second_reader.review(db, settings, active.llm, spec, verdict)  # A-143
         return completeness.guard(ctx, verdict).model_copy(update=bundle)
+    except TerminalModelError as exc:
+        if "refused" in str(exc):  # counted per test, so a rising rate shows (A-143)
+            quality.record_refusal(db, spec.test_id, settings, str(exc))
+        raise
     except tier2.AITierUnavailable as exc:
         raise ParkedError(str(exc)) from exc
     except EmbeddingModelMismatch as exc:

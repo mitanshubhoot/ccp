@@ -169,6 +169,8 @@ class StubLLMClient:
     handler: StubExtractHandler | None = None
     complete_handler: StubCompleteHandler | None = None
     chat_handler: StubChatHandler | None = None
+    # the second reader (A-143): confirms unless a test gives it something else to say
+    second_reader: StubExtractHandler | None = None
     charge_tokens: tuple[int, int] = (500, 100)
     charge_usd: float = 0.001
     calls: list[dict[str, Any]] = field(default_factory=list)
@@ -195,9 +197,15 @@ class StubLLMClient:
         documents: Sequence[str] = (),
     ) -> Extraction:
         usage = self._charge(tracker)
-        if self.handler is None:
+        if schema.__name__ == "SecondRead":
+            if self.second_reader is not None:
+                parsed = self.second_reader(schema, system, with_documents(user, documents))
+            else:
+                parsed = schema.model_validate({"agrees": True, "reason": "confirmed (stub)"})
+        elif self.handler is None:
             raise RuntimeError("StubLLMClient has no extract handler for this call")
-        parsed = self.handler(schema, system, with_documents(user, documents))
+        else:
+            parsed = self.handler(schema, system, with_documents(user, documents))
         if on_token is not None:  # stream the JSON in a few deltas, as a live model would
             text = json.dumps(parsed.model_dump(mode="json"))
             size = max(1, -(-len(text) // 4))

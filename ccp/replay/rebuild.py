@@ -88,6 +88,11 @@ def _system_texts(request: dict[str, Any]) -> list[tuple[str, bool]]:
     return out
 
 
+def system_texts(request: dict[str, Any]) -> list[tuple[str, bool]]:
+    """The system blocks a stored request sent, each with whether it was cached."""
+    return _system_texts(request)
+
+
 def request_parts(request: dict[str, Any]) -> tuple[str | None, list[str]]:
     """(the instruction, the documents) of a stored request, in either shape: the stub's
     `user` and `documents`, or the API's first message with its document blocks."""
