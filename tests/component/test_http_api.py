@@ -22,6 +22,7 @@ from ccp.auth import dev_issuer
 from ccp.compliance_state import writer as state_writer
 from ccp.config import Settings
 from ccp.evaluators import runner as evaluations
+from ccp.remediation import fixes, suggestions
 from ccp.storage.db import agent_pool, app_pool
 from ccp.storage.scoped import ScopedDB
 from tests.support.members import member
@@ -165,3 +166,40 @@ def test_reports_proposals_and_tools(world: tuple[Settings, ScopedDB, TestClient
         headers=reviewer,
     )
     assert call.status_code == 403 and "not permitted" in call.json()["error"]
+
+
+def test_suggested_fixes_are_read_and_decided_over_http_but_never_applied(
+    world: tuple[Settings, ScopedDB, TestClient],
+) -> None:
+    settings, acme, client = world
+    member(acme, "rui", "reviewer")
+    member(acme, "vic", "viewer")
+    verdict = acme.fetch_one("SELECT verdict_id FROM verdicts WHERE test_id = 'HR-1' LIMIT 1")
+    assert verdict is not None
+    rendered = fixes.render(
+        fixes.get("github_remove_collaborator"),
+        {"login": "jsmith", "repo": "acme-example/platform"},
+    )
+    suggestion_id, _ = suggestions.suggest(
+        acme,
+        verdict_id=verdict[0],
+        test_id="HR-1",
+        resource="jsmith",
+        source="model",
+        rendered=rendered,
+    )
+    listed = client.get("/v1/tenants/acme/fixes", headers=_as(settings, "vic"))
+    assert listed.status_code == 200
+    assert [f["suggestion_id"] for f in listed.json()["fixes"]] == [suggestion_id]
+    one = client.get(f"/v1/tenants/acme/fixes/{suggestion_id}", headers=_as(settings, "vic"))
+    assert one.json()["body"]["cli"][0].startswith("gh api --method DELETE")
+    path = f"/v1/tenants/acme/fixes/{suggestion_id}"
+    assert client.post(f"{path}/accept", headers=_as(settings, "vic")).status_code == 403
+    accepted = client.post(f"{path}/accept", headers=_as(settings, "rui"))
+    assert accepted.status_code == 200 and accepted.json()["status"] == "accepted"
+    again = client.post(f"{path}/dismiss", params={"note": "  "}, headers=_as(settings, "rui"))
+    assert again.status_code == 409  # a dismissal says why
+    gone = client.post("/v1/tenants/acme/fixes/nope/accept", headers=_as(settings, "rui"))
+    assert gone.status_code == 404
+    numbers = client.get("/v1/tenants/acme/fix-metrics", headers=_as(settings, "rui"))
+    assert numbers.json()["by_status"] == {"accepted": 1}

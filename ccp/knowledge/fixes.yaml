@@ -96,3 +96,17 @@ cloudtrail_multi_region:
     - Open the CloudTrail console, choose Trails, then {trail_name}.
     - Under General details, choose Edit, set "Apply trail to all regions" (or enable it for the organization), and save; check that Logging is on.
   verify: CCP reads the account's trails on its next pull; AWS-3 passes once a multi-region trail is logging.
+
+github_remove_collaborator:
+  version: 1
+  title: Remove a direct collaborator from one GitHub repository
+  tests: [GH-1, HR-1]
+  params:
+    login: '[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})'
+    repo: '[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}'
+  cli:
+    - gh api --method DELETE repos/{repo}/collaborators/{login}
+  console:
+    - Open https://github.com/{repo}/settings/access and find {login} under Manage access.
+    - Choose Remove, and confirm; a re-invite restores the permission if it was needed.
+  verify: CCP reads the repository's collaborators on its next pull; the finding passes only when that read no longer lists {login}.

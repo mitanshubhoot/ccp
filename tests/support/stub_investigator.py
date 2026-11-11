@@ -10,6 +10,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from ccp.evaluators.extraction.base import Cited
+from ccp.evaluators.extraction.investigation import FixChoice, FixParam
 from ccp.investigation.schema import (
     InvestigationDraft,
     MissingEvidence,
@@ -100,6 +101,19 @@ def diagnose(schema: type[Any], system: list[SystemBlock], user: str) -> BaseMod
                 rationale="tell the manager",
             )
         )
+        suggested = [  # the suggest-only fix for each repository collaboration (A-160)
+            FixChoice(
+                fix="github_remove_collaborator",
+                resource=str(a.target.login),
+                params=[
+                    FixParam(name="login", value=str(a.target.login)),
+                    FixParam(name="repo", value=str(a.target.repo)),
+                ],
+                rationale="the collaboration outlived the termination",
+            )
+            for a in actions
+            if a.action == "remove_repo_collaborator"
+        ]
         return InvestigationDraft(
             root_cause=(
                 "The termination event was not followed by GitHub deprovisioning; the org"
@@ -109,6 +123,7 @@ def diagnose(schema: type[Any], system: list[SystemBlock], user: str) -> BaseMod
             missing_evidence=[],
             proposed_actions=actions,
             citations=citations,
+            fixes=suggested,
         )
     if test_id == "HR-4":
         return InvestigationDraft(

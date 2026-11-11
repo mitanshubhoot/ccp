@@ -20,7 +20,7 @@ from ccp.evaluators.verdict import Verdict, evaluation_key, latest_per_subject, 
 from ccp.investigation import runner, schema
 from ccp.knowledge import graph as knowledge
 from ccp.llm.client import StubLLMClient
-from ccp.remediation import proposals
+from ccp.remediation import proposals, suggestions
 from ccp.retrieval import index
 from ccp.retrieval.config import RetrievalConfig
 from ccp.retrieval.embeddings import HashingEmbeddingClient
@@ -97,6 +97,12 @@ def test_jane_hr1_is_an_offboarding_gap_with_the_tabled_actions(world) -> None: 
     row = threads.get(acme, inv.thread_id)
     assert row is not None and row.status == "finished" and tuple(row.trajectory) == TRAJECTORY
     assert schema.for_verdict(acme, verdict.verdict_id) is not None
+    (fix,) = suggestions.for_verdict(acme, verdict.verdict_id)  # the model's choice (A-160)
+    assert (fix.fix, fix.source, fix.resource) == ("github_remove_collaborator", "model", "jsmith")
+    assert fix.investigation_id == inv.investigation_id and fix.status == "open"
+    assert fix.body["cli"] == [
+        "gh api --method DELETE repos/acme-example/platform/collaborators/jsmith"
+    ]
     again = runner.investigate(acme, settings, verdict, providers, now=NOW)
     assert again.investigation_id == inv.investigation_id  # idempotent per verdict
 

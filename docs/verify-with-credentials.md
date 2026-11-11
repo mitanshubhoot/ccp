@@ -7,6 +7,10 @@ step; work through it when the credentials are available.
 
 ## Anthropic API key (`ANTHROPIC_API_KEY`)
 
+- [ ] The Investigator on a failing GH-1 or HR-1 verdict chooses
+      `github_remove_collaborator` with the right repository and login from the
+      context's fix list (prompt `investigator_diagnose_v2`); a choice outside the list
+      or with a malformed login is refused in the graph (A-160).
 - [ ] `ccp evals run --suite all --no-unit --runs 5`: the 33 component cases that skip
       without a key, plus the adversarial suite, with pass^k over five runs.
 - [ ] Tier 2 extraction on Haiku 5.5 and tier 3 on Sonnet 5.5: the pinned model ids
@@ -128,6 +132,10 @@ step; work through it when the credentials are available.
       `s3_block_public_access`; applying its Terraform diff with `terraform plan` shows
       exactly one new `aws_s3_bucket_public_access_block`, and the commands run as
       rendered (A-159). No model key is needed for this path.
+- [ ] Apply that fix in the sandbox account and let the next pull run: `ccp fixes
+      confirm` marks it confirmed from the verdict that read it; remove the block again
+      and the next pull reopens it (A-160). `ccp fixes metrics` shows the hours from
+      the failing verdict to the confirming read.
 
 ## Okta and the HR aggregator (MT6)
 

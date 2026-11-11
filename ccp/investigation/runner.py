@@ -42,7 +42,9 @@ from ccp.investigation.schema import Investigation, MissingEvidence, Remediation
 from ccp.knowledge import lookups as lookup_plans
 from ccp.llm.budget import BudgetTracker, RunBudget
 from ccp.llm.errors import RunStopped
+from ccp.lookups import store as lookup_store
 from ccp.observability import steps
+from ccp.remediation import fixes, suggestions
 from ccp.remediation import proposals as proposal_store
 from ccp.storage import checkpoints
 from ccp.storage.db import Pools, agent_pool
@@ -200,6 +202,7 @@ def _finish(
     for proposal in bounded:
         row = _proposal_row(db, verdict, proposal)
         written.append(proposal.model_copy(update={"proposal_id": row.proposal_id}))
+    offers = _render_fixes(db, verdict, final.get("fixes") or [], events, s)
     investigation = Investigation(
         tenant_id=db.tenant.tenant_id,
         verdict_id=verdict.verdict_id,
@@ -218,6 +221,17 @@ def _finish(
         response_json=final.get("response_json"),
     )
     schema.persist(db, investigation)
+    for resource, rendered, lookup_ids in offers:
+        suggestions.suggest(
+            db,
+            verdict_id=verdict.verdict_id,
+            test_id=verdict.test_id,
+            resource=resource,
+            source="model",
+            rendered=rendered,
+            investigation_id=investigation.investigation_id,
+            lookup_ids=lookup_ids,
+        )
     if missing:
         approvals.open_item(
             db,
@@ -231,6 +245,39 @@ def _finish(
             },
         )
     return investigation
+
+
+def _render_fixes(
+    db: ScopedDB,
+    verdict: Verdict,
+    chosen: list[dict[str, Any]],
+    events: list[str],
+    s: steps.StepRecord,
+) -> list[tuple[str, fixes.Rendered, list[str]]]:
+    """The model's fix choices, bounded in the graph, rendered by code and checked offline
+    (A-160): only what passes is offered; the rest is a guardrail event."""
+    found = lookup_store.for_verdict(db, verdict.verdict_id)
+    offers: list[tuple[str, fixes.Rendered, list[str]]] = []
+    for choice in chosen:
+        fix_id, resource = str(choice.get("fix")), str(choice.get("resource"))
+        try:
+            rendered = fixes.render(
+                fixes.get(fix_id),
+                dict(choice.get("params") or {}),
+                lookup_store.code_files(found, resource),
+            )
+        except fixes.Refused as exc:
+            events.append(f"fix_refused:{fix_id}:{exc}")
+            s.event(f"fix_refused:{fix_id}")
+            continue
+        if not rendered.passed:
+            for check in rendered.failed:
+                events.append(f"fix_check_failed:{fix_id}:{check.name}")
+                s.event(f"fix_check_failed:{fix_id}:{check.name}")
+            continue
+        ids = [lk.lookup_id for lk in found if lk.resource == resource]
+        offers.append((resource, rendered, ids))
+    return offers
 
 
 def _proposal_row(db: ScopedDB, verdict: Verdict, proposal: RemediationProposal) -> Any:

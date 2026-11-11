@@ -57,7 +57,8 @@ from ccp.compliance_state import reader
 from ccp.config import Settings
 from ccp.evaluators.tier2 import Providers
 from ccp.knowledge import graph as knowledge
-from ccp.remediation import proposals, runner
+from ccp.remediation import confirm as fix_confirm
+from ccp.remediation import proposals, runner, suggestions
 from ccp.storage import db as storage
 from ccp.storage import exceptions as stored_exceptions
 from ccp.storage.scoped import ScopedDB
@@ -395,6 +396,58 @@ def dry_run(proposal_id: str, s: Member) -> dict[str, Any]:
         "mode": result.mode,
         "detail": result.detail,
         "planned_call": result.proposal.planned_call,
+    }
+
+
+# -- suggested fixes (A-159, A-160): CCP suggests, a person applies ----------------------
+
+
+@router.get("/tenants/{tenant_id}/fixes")
+def fix_list(s: Member, status: str | None = None, test_id: str | None = None) -> dict[str, Any]:
+    found = suggestions.list_all(s.db, status, test_id)
+    return {"fixes": jsonable_encoder([asdict(f) for f in found])}
+
+
+@router.get("/tenants/{tenant_id}/fixes/{suggestion_id}")
+def fix(suggestion_id: str, s: Member) -> dict[str, Any]:
+    found = suggestions.get(s.db, suggestion_id)
+    if found is None:
+        raise HTTPException(404, f"no suggestion {suggestion_id!r}")
+    out: dict[str, Any] = jsonable_encoder(asdict(found))
+    return out
+
+
+def _fix_decision(
+    s: Session, suggestion_id: str, status: suggestions.Status, note: str
+) -> dict[str, Any]:
+    _at_least(s, "reviewer")
+    try:
+        fix_confirm.decide(s.db, suggestion_id, status, s.who.principal_id, note)
+    except ValueError as exc:
+        code = 404 if "no suggestion" in str(exc) else 409
+        raise HTTPException(code, str(exc)) from exc
+    return fix(suggestion_id, s)
+
+
+@router.post("/tenants/{tenant_id}/fixes/{suggestion_id}/accept")
+def fix_accept(suggestion_id: str, s: Member, note: str = "") -> dict[str, Any]:
+    return _fix_decision(s, suggestion_id, "accepted", note)
+
+
+@router.post("/tenants/{tenant_id}/fixes/{suggestion_id}/dismiss")
+def fix_dismiss(suggestion_id: str, s: Member, note: str) -> dict[str, Any]:
+    return _fix_decision(s, suggestion_id, "dismissed", note)
+
+
+@router.get("/tenants/{tenant_id}/fix-metrics")
+def fix_metrics(s: Member) -> dict[str, Any]:
+    m = fix_confirm.metrics(s.db)
+    return {
+        "by_status": m.by_status,
+        "median_hours_fail_to_confirmed": m.median_hours_to_confirmed,
+        "confirmed": m.confirmed,
+        "reopened": m.reopened,
+        "reopen_rate_30d": m.reopen_rate,
     }
 
 

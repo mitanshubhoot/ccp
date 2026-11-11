@@ -11,18 +11,21 @@ said exactly what was wrong.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import boto3
 import psycopg
 import pytest
 
 from ccp.config import Settings
+from ccp.connectors.aws.connector import BLOCKS
 from ccp.evaluators.verdict import latest_per_subject
 from ccp.investigation import runner as investigations
 from ccp.investigation import schema
 from ccp.knowledge import graph as knowledge
 from ccp.lookups import runner as lookups
-from ccp.remediation import fixes, suggestions
+from ccp.remediation import confirm, fixes, suggestions
 from ccp.storage.scoped import ScopedDB
 from tests.support.aws_lookups import (
     IAM_TF,
@@ -32,6 +35,7 @@ from tests.support.aws_lookups import (
     RecordedAws,
     RecordedGitHub,
     failing_account,
+    pull_and_evaluate,
 )
 
 
@@ -50,6 +54,7 @@ def test_every_fix_names_known_tests_and_versions_its_templates() -> None:
         "iam_user_remove_console_access",
         "iam_user_enable_mfa",
         "cloudtrail_multi_region",
+        "github_remove_collaborator",
     }
     for fix in catalogue.values():
         assert fix.tests and fix.cli and fix.console and fix.verify
@@ -229,3 +234,46 @@ def test_code_writes_the_investigation_and_offers_checked_fixes_without_a_model(
     old = suggestions.get(acme, offered.suggestion_id)
     assert old is not None and old.status == "superseded"
     assert [s.suggestion_id for s in suggestions.live_for(acme, "AWS-1", "ccp-open")] == [newer]
+
+
+@pytest.mark.db
+def test_only_a_later_read_confirms_a_fix_and_a_relapse_reopens_it(
+    world: tuple[Settings, ScopedDB],
+) -> None:
+    settings, acme = world
+    tests = ("AWS-1", "AWS-2", "AWS-3")
+    connected = {"aws": RecordedAws(), "github": RecordedGitHub()}
+    lookups.drain(acme, settings, connected.get, NOW)
+    investigations.drain(acme, settings)
+    (bucket,) = suggestions.live_for(acme, "AWS-1", "ccp-open")
+    confirm.decide(acme, bucket.suggestion_id, "accepted", "alex")
+    with pytest.raises(ValueError, match="says why"):
+        confirm.decide(acme, bucket.suggestion_id, "dismissed", "alex")
+    with pytest.raises(ValueError, match="a person records"):
+        confirm.decide(acme, bucket.suggestion_id, "confirmed", "alex")  # type: ignore[arg-type]
+    assert confirm.drain(acme).confirmed == 0  # accepting is not fixing
+    found = suggestions.get(acme, bucket.suggestion_id)
+    assert found is not None and found.status == "accepted"
+
+    # the person applies the fix in AWS; CCP's next pull sees it
+    s3 = boto3.client("s3", region_name="us-east-1")
+    s3.put_public_access_block(
+        Bucket="ccp-open", PublicAccessBlockConfiguration=dict.fromkeys(BLOCKS, True)
+    )
+    later = datetime.now(UTC) + timedelta(minutes=1)
+    pull_and_evaluate(settings, acme, later, tests)
+    done = confirm.drain(acme)
+    assert done.confirmed == 1
+    fixed = suggestions.get(acme, bucket.suggestion_id)
+    assert fixed is not None and fixed.status == "confirmed" and fixed.status_verdict_id
+    assert all(s.status == "open" for s in suggestions.live_for(acme, "AWS-2", "alice"))
+
+    # someone removes the block again within 30 days: the fix reopens
+    s3.delete_public_access_block(Bucket="ccp-open")
+    pull_and_evaluate(settings, acme, later + timedelta(minutes=1), tests)
+    assert confirm.drain(acme).reopened == 1
+    relapsed = suggestions.get(acme, bucket.suggestion_id)
+    assert relapsed is not None and relapsed.status == "reopened"
+    m = confirm.metrics(acme)
+    assert m.confirmed == 1 and m.reopened == 1 and m.reopen_rate == 1.0
+    assert m.median_hours_to_confirmed is not None and m.median_hours_to_confirmed > 0

@@ -81,41 +81,80 @@ def land_events(
             raise ValueError(
                 f"event for {event.tenant_id!r} offered to {db.tenant.tenant_id!r}'s landing"
             )
-        written = zone.write(event)
-        with db.transaction() as cur:
-            inserted = cur.execute(
-                "INSERT INTO raw_events"
-                " (tenant_id, connector, source_event_id, source_ts, raw_path, payload_sha256,"
-                " stored_sha256, version_id, store)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
-                " ON CONFLICT DO NOTHING RETURNING source_event_id",
-                (
-                    event.tenant_id,
-                    event.connector,
-                    event.source_event_id,
-                    event.source_ts,
-                    written.ref,
-                    written.payload_sha256,
-                    written.stored_sha256,
-                    written.version_id,
-                    written.store,
-                ),
-            ).fetchone()
-            if inserted is None:
-                count.duplicates += 1
-                if step is not None:
-                    step.event(f"dedup_hit:{event.connector}:{event.source_event_id}")
-                continue
-            event_log.append(
-                cur,
-                tenant_id=event.tenant_id,
-                topic=f"raw.{event.connector}",
-                partition_key=partition_key(event),
-                source_ts=event.source_ts,
-                ref=written.ref,
-            )
+        if _land_one(db, zone, event):
             count.landed += 1
+            continue
+        again = _reobservation(db, event)
+        if again is not None and _land_one(db, zone, again):
+            count.landed += 1  # an earlier state came back: it lands as a new observation
+            if step is not None:
+                step.event(f"reobserved:{event.connector}:{event.source_event_id}")
+            continue
+        count.duplicates += 1
+        if step is not None:
+            step.event(f"dedup_hit:{event.connector}:{event.source_event_id}")
     return count.landed, count.duplicates
+
+
+def _land_one(db: ScopedDB, zone: RawStore, event: SourceEvent) -> bool:
+    """Store one event's bytes and its pointer, and queue it; False when already landed."""
+    written = zone.write(event)
+    with db.transaction() as cur:
+        inserted = cur.execute(
+            "INSERT INTO raw_events"
+            " (tenant_id, connector, source_event_id, source_ts, raw_path, payload_sha256,"
+            " stored_sha256, version_id, store)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            " ON CONFLICT DO NOTHING RETURNING source_event_id",
+            (
+                event.tenant_id,
+                event.connector,
+                event.source_event_id,
+                event.source_ts,
+                written.ref,
+                written.payload_sha256,
+                written.stored_sha256,
+                written.version_id,
+                written.store,
+            ),
+        ).fetchone()
+        if inserted is None:
+            return False
+        event_log.append(
+            cur,
+            tenant_id=event.tenant_id,
+            topic=f"raw.{event.connector}",
+            partition_key=partition_key(event),
+            source_ts=event.source_ts,
+            ref=written.ref,
+        )
+    return True
+
+
+def _like_prefix(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+
+
+def _reobservation(db: ScopedDB, event: SourceEvent) -> SourceEvent | None:
+    """A content-addressed event (`<stream>@<digest>`, A-102) that repeats an earlier
+    state is a duplicate only while that state is still the latest for its stream. When the
+    stream moved on (open, then blocked, then open again), the return is a change: without
+    it the stream would keep showing the state in between (A-160). The re-observation's id
+    carries the pull's time, so pulling the same thing twice still lands it once."""
+    if "@" not in event.source_event_id:
+        return None
+    stream = event.source_event_id.split("@", 1)[0]
+    latest = db.fetch_one(
+        "SELECT source_event_id, source_ts FROM raw_events WHERE connector = %s"
+        " AND source_event_id LIKE %s ORDER BY source_ts DESC, source_event_id DESC LIMIT 1",
+        (event.connector, _like_prefix(stream) + "@%"),
+    )
+    if latest is None or event.source_ts <= latest[1]:
+        return None
+    if str(latest[0]).split("~", 1)[0] == event.source_event_id:
+        return None  # still the latest state: a true duplicate
+    stamp = event.source_ts.strftime("%Y%m%dT%H%M%S%f")
+    return event.model_copy(update={"source_event_id": f"{event.source_event_id}~{stamp}"})
 
 
 def sync_connector(

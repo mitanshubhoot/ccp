@@ -56,6 +56,7 @@ from ccp.normalize import repository
 from ccp.observability import steps
 from ccp.policy import cli as policy_cli
 from ccp.remediation import cli as remediate_cli
+from ccp.remediation import fix_cli
 from ccp.replay import rebuild as replay
 from ccp.retrieval import calibration, distractors, generations, reembed
 from ccp.retrieval import config as retrieval_cfg
@@ -106,6 +107,7 @@ app.add_typer(investigate_cli.app, name="investigate")
 app.add_typer(policy_cli.app, name="policy")
 app.command("copilot")(copilot_cli.copilot)
 app.add_typer(remediate_cli.app, name="remediate")
+app.add_typer(fix_cli.app, name="fixes")
 app.add_typer(tasks_cli.app, name="tasks")
 app.add_typer(lookups_cli.app, name="lookups")
 state_app = typer.Typer(no_args_is_help=True, help="The bitemporal compliance state")

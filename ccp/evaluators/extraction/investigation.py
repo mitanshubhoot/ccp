@@ -22,9 +22,9 @@ Category = Literal[
     "identity_unresolved",
     "unknown",
 ]
-PROMPT_VERSION = "investigator_diagnose_v1"
+PROMPT_VERSION = "investigator_diagnose_v2"  # adds fix choices (A-160)
 GATHER_PROMPT_VERSION = "investigator_gather_v1"
-SCHEMA_VERSION = "investigation_v1"
+SCHEMA_VERSION = "investigation_v2"
 
 
 class MissingEvidence(BaseModel):
@@ -56,6 +56,25 @@ class ProposedAction(BaseModel):
     rationale: str
 
 
+class FixParam(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    value: str
+
+
+class FixChoice(BaseModel):
+    """A fix from the catalogue and its parameters (A-160): the graph checks the choice and
+    code renders it; the model never writes a command or a diff."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fix: str
+    resource: str
+    params: list[FixParam]
+    rationale: str
+
+
 class InvestigationDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -64,3 +83,4 @@ class InvestigationDraft(BaseModel):
     missing_evidence: list[MissingEvidence]
     proposed_actions: list[ProposedAction]
     citations: list[Cited]
+    fixes: list[FixChoice] = []

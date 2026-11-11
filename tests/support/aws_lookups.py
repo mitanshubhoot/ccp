@@ -148,11 +148,31 @@ def aws_world() -> None:
     iam.create_login_profile(UserName="alice", Password="Pa55word!long-enough")
 
 
+def pull_and_evaluate(
+    settings: Settings, acme: ScopedDB, at: datetime, tests: tuple[str, ...]
+) -> None:
+    """One pull of the moto account as of `at`, normalized and evaluated (inside mock_aws)."""
+
+    def client(credentials: Any, service: str) -> Any:
+        make: Any = boto3.client
+        return make(service, region_name="us-east-1")
+
+    pulled = AwsConnector(
+        ACCOUNT, f"arn:aws:iam::{ACCOUNT}:role/CCPReadOnly", "ccp-x" * 8, client, clock=lambda: at
+    )
+    run = sync_connector(settings, acme, acme.tenant, pulled, zone=RawZone(settings.raw_dir))
+    assert run.status == "complete", run.error
+    normalize_all(acme, settings)
+    evaluations.enqueue_all(acme, settings, now=at, tests=tests)
+    evaluations.drain(acme, settings, now=at)
+
+
 @contextmanager
 def failing_account(
     base_settings: Settings, tmp_path: Path, prefix: str, tests: tuple[str, ...]
 ) -> Iterator[tuple[Settings, ScopedDB]]:
-    """A scratch database holding one pull of the moto account above, evaluated."""
+    """A scratch database holding one pull of the moto account above, evaluated; the moto
+    account stays up while the caller runs, so it can change it and pull again."""
     with scratch_database(base_settings, prefix=prefix) as settings:
         local = settings.model_copy(update={"ccp_data_dir": tmp_path / "data"})
         pool = app_pool(local, max_size=2)
@@ -160,23 +180,7 @@ def failing_account(
             acme = ScopedDB(pool, TenantContext.for_id(local, "acme"))
             with mock_aws():
                 aws_world()
-
-                def client(credentials: Any, service: str) -> Any:
-                    make: Any = boto3.client
-                    return make(service, region_name="us-east-1")
-
-                pulled = AwsConnector(
-                    ACCOUNT,
-                    f"arn:aws:iam::{ACCOUNT}:role/CCPReadOnly",
-                    "ccp-x" * 8,
-                    client,
-                    clock=lambda: NOW,
-                )
-                run = sync_connector(local, acme, acme.tenant, pulled, zone=RawZone(local.raw_dir))
-                assert run.status == "complete", run.error
-            normalize_all(acme, local)
-            evaluations.enqueue_all(acme, local, now=NOW, tests=tests)
-            evaluations.drain(acme, local, now=NOW)
-            yield local, acme
+                pull_and_evaluate(local, acme, NOW, tests)
+                yield local, acme
         finally:
             pool.close()

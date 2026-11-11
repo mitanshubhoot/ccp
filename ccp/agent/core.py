@@ -897,6 +897,7 @@ CORRECTABLE = (
     "empty_item:",
     "schema_validation_failed:",
     "action_rejected:",
+    "fix_rejected:",  # a fix outside the catalogue, or its parameters (A-160)
     "merge_rejected:",
     "no_reading:",
 )

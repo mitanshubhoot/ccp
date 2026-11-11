@@ -36,6 +36,7 @@ from ccp.evaluators.extraction.investigation import (
     SCHEMA_VERSION,
     InvestigationDraft,
 )
+from ccp.knowledge import fixes as fix_catalogue
 from ccp.knowledge import graph as knowledge
 from ccp.knowledge.actions import CATALOGUE
 from ccp.tenancy import TenantContext
@@ -147,6 +148,24 @@ def build_spec(
                 if not control.get("is_error"):
                     controls.append(control.get("result"))
             context["controls"] = controls
+            # the fixes a person could apply, to choose from by id (A-160)
+            context["fixes"] = [
+                {"fix": f.fix_id, "title": f.title, "params": dict(f.params)}
+                for f in fix_catalogue.for_test(test_id)
+            ]
+        if "get_lookups" in tools and verdict_id:  # what code read about it (A-158)
+            found = tools["get_lookups"].call({"verdict_id": verdict_id})
+            looked = (found.get("result") or {}).get("lookups") or []
+            if looked:
+                context["lookups"] = looked
+            log.append(
+                {
+                    "node": "load_context",
+                    "tool": "get_lookups",
+                    "arguments": {"verdict_id": verdict_id},
+                    "is_error": bool(found.get("is_error")),
+                }
+            )
         subject = subject_key.split("|", 1)[1] if "|" in subject_key else subject_key
         if subject.startswith("person:"):
             canonical = subject.split(":", 1)[1]
@@ -260,7 +279,34 @@ def build_spec(
                     "live_capable": spec.live_capable,
                 }
             )
+        test_id = str(((state.get("context") or {}).get("verdict") or {}).get("test_id") or "")
+        chosen: list[dict[str, Any]] = []
+        for item in fields.get("fixes") or []:
+            fix_id = str(item.get("fix", ""))
+            try:
+                fix = fix_catalogue.get(fix_id)
+            except fix_catalogue.Refused:
+                events.append(f"fix_rejected:unknown_fix:{fix_id}")
+                continue
+            if test_id not in fix.tests:
+                events.append(f"fix_rejected:wrong_test:{fix_id}:{test_id}")
+                continue
+            params = {str(p.get("name")): str(p.get("value")) for p in item.get("params") or []}
+            try:
+                checked = fix_catalogue.check_params(fix, params)
+            except fix_catalogue.Refused:
+                events.append(f"fix_rejected:params:{fix_id}")
+                continue
+            chosen.append(
+                {
+                    "fix": fix_id,
+                    "resource": str(item.get("resource") or checked[fix.key_param]),
+                    "params": checked,
+                    "rationale": str(item.get("rationale", "")),
+                }
+            )
         draft = {
+            "fixes": chosen,
             "root_cause": str(
                 fields.get("root_cause") or "the investigator could not determine a root cause"
             ),
