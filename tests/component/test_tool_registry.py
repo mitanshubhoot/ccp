@@ -102,7 +102,14 @@ def test_every_result_matches_its_output_schema(world: tuple[ScopedDB, ScopedDB]
         "get_control": {"control_id": "CTL-ACCESS-REVOKE"},
         "get_framework_rollup": {"framework_id": "soc2"},
         "get_investigation": {"verdict_id": verdict[0]},
+        "read_result": {"handle": "acme:registry:stored", "max_chars": 200},  # A-153
     }
+    acme.execute(
+        "INSERT INTO tool_results (tenant_id, handle, thread_id, tool, content, chars, tokens)"
+        " VALUES ('acme', 'acme:registry:stored', 'acme:registry', 'search_evidence', %s, 600,"
+        " 150) ON CONFLICT DO NOTHING",
+        ("x" * 600,),
+    )
     assert set(calls) == set(TOOL_SPECS)
     for name, args in calls.items():
         result = bound[name].call(args)

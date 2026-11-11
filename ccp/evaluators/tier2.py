@@ -22,6 +22,7 @@ from ccp.evaluators.extraction import schema_block, schema_for
 from ccp.evaluators.rule_versions import rule_stamp
 from ccp.evaluators.verdict import TriggerReason, Verdict, evaluation_key
 from ccp.knowledge.graph import TestSpec
+from ccp.llm import context
 from ccp.llm.budget import BudgetTracker, RunBudget
 from ccp.llm.client import LLMClient, SystemBlock, try_build_client
 from ccp.llm.prompts import load_prompt
@@ -237,14 +238,32 @@ def evaluate(
             created_at=ctx.now,
         )
 
-    # 2. frame
+    # 2. fit: the call keeps to its ceiling; the lowest-ranked chunks leave first (A-153)
+    budget = context.load().of("tier2_extract") - context.estimate_tokens(
+        prompt.text + _schema_block(meta.model) + description + " " * 1200
+    )
+    try:
+        kept, dropped = context.fit(
+            [
+                context.Item(c.chunk_id, context.estimate_tokens(c.text) + 40, n)
+                for n, c in enumerate(result.chunks)
+            ],
+            budget,
+        )
+    except context.ContextCeilingExceeded:  # the instructions alone are over it
+        kept, dropped = [], [c.chunk_id for c in result.chunks]
+    if dropped:
+        events.append(f"context_dropped:tier2:{len(dropped)}")
+    in_view = [c for c in result.chunks if c.chunk_id in set(kept)]
+
+    # 3. frame
     nonce = prompt_guard.new_nonce()
     framed = prompt_guard.frame_evidence(
         [
             FramedChunk(
                 c.chunk_id, c.text, c.evidence_type, c.subject_entity_id, c.page, c.source_ref
             )
-            for c in result.chunks
+            for c in in_view
         ],
         nonce,
     )
@@ -280,7 +299,7 @@ def evaluate(
     system = [SystemBlock(prompt.text), SystemBlock(_schema_block(meta.model), cache=True)]
     user = extraction_instruction(nonce, description)  # the evidence goes beside it
 
-    # 3. extract (no transaction is open here)
+    # 4. extract (no transaction is open here)
     tracker = BudgetTracker(RunBudget.from_settings(settings))
     with steps.step(
         "tier2.extract",

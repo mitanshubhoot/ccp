@@ -252,6 +252,7 @@ def build_spec(
         select_chunks=lambda s: [],
         describe=describe_question,
         require_chunks=False,
+        ceiling="copilot_turn",
     )
 
     def classify(state: AgentState) -> dict[str, Any]:
@@ -293,6 +294,7 @@ def build_spec(
         goal=goal,
         on_result=_on_tool_result,
         max_calls=config.max_tool_calls,
+        ceilings=("copilot_turn", "copilot_turn"),  # A-153
     )
 
     def describe_answer(state: AgentState) -> str:
@@ -319,6 +321,7 @@ def build_spec(
             describe=describe_answer,
             require_chunks=False,
             stream=stream,
+            ceiling="copilot_turn",
             documents=lambda s: [str(s.get("tool_document") or "")],
         )
 

@@ -250,6 +250,7 @@ EXAMPLES: dict[str, dict[str, Any]] = {
         "end": 100,
     },
     "find_access": {"employment_status": "terminated"},
+    "read_result": {"handle": "no-such-handle"},  # A-153
 }
 
 

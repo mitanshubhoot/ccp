@@ -38,12 +38,14 @@ from ccp.agent.tools import BoundTool
 from ccp.evaluators import citations
 from ccp.evaluators.extraction import SchemaMeta, schema_block
 from ccp.ingest.consumers import RetryableError
+from ccp.llm import context
 from ccp.llm.budget import BudgetTracker
 from ccp.llm.client import ChatTurn, Extraction, LLMClient, SystemBlock, tool_result_message
 from ccp.llm.prompts import load_prompt
 from ccp.observability import steps
 from ccp.security import prompt_guard
 from ccp.security.prompt_guard import FramedChunk
+from ccp.security.secrets_patterns import redact
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
 
@@ -200,6 +202,26 @@ class ModelDeps:
         )
 
 
+# What the ceiling adds for text the view writes around the evidence (A-153): the fence
+# declaration and instruction, and each chunk's opening and closing markers.
+FENCE_ALLOWANCE = " " * 1200
+PER_CHUNK_ALLOWANCE = 40
+
+
+def _cited_chunk_ids(fields: Any) -> set[str]:
+    """Every chunk id a previous answer cites, at any depth: those chunks stay in view."""
+    found: set[str] = set()
+    if isinstance(fields, dict):
+        if isinstance(fields.get("chunk_id"), str):
+            found.add(fields["chunk_id"])
+        for value in fields.values():
+            found |= _cited_chunk_ids(value)
+    elif isinstance(fields, list):
+        for value in fields:
+            found |= _cited_chunk_ids(value)
+    return found
+
+
 def frame_state_chunks(
     chunks: list[dict[str, Any]], nonce: str
 ) -> tuple[prompt_guard.Framed, list[str]]:
@@ -231,17 +253,44 @@ def make_structured_node(
     require_chunks: bool = True,
     stream: bool = False,
     documents: Callable[[AgentState], list[str]] | None = None,
+    ceiling: str = "agent_later_call",
 ) -> NodeFn:
     """Fenced evidence -> one structured call -> raw fields plus replay material. The model's
     output is re-validated against the schema; a mismatch (a stub, a provider quirk) is a
     guardrail event and the bounding step downstream rejects what it cannot use. The evidence,
     and any further ``documents`` (tool output), go as document blocks; ``describe`` holds the
-    instruction only (A-98)."""
+    instruction only (A-98). The call keeps to its ceiling (A-153): the lowest-ranked chunks
+    leave first, never one the node's previous answer cites."""
 
     def node(state: AgentState) -> dict[str, Any]:
         chunks = select_chunks(state)
         if not chunks and require_chunks:
             return {"extracted_raw": {name: None}, "guardrail_events": [f"no_evidence:{name}"]}
+        prompt = load_prompt(prompt_version)
+        fixed = context.estimate_tokens(
+            prompt.text + schema_block(meta.model) + describe(state) + FENCE_ALLOWANCE
+        ) + sum(context.estimate_tokens(d) for d in (documents(state) if documents else []))
+        cited = _cited_chunk_ids(((state.get("extracted_raw") or {}).get(name) or {}).get("fields"))
+        try:
+            kept, dropped = context.fit(
+                [
+                    context.Item(
+                        str(c["chunk_id"]),
+                        context.estimate_tokens(str(c.get("text", ""))) + PER_CHUNK_ALLOWANCE,
+                        n,
+                        pinned=str(c["chunk_id"]) in cited,
+                    )
+                    for n, c in enumerate(chunks)
+                ],
+                context.load().of(ceiling) - fixed,
+            )
+        except context.ContextCeilingExceeded:
+            return {
+                "extracted_raw": {name: None},
+                "guardrail_events": [f"context_ceiling:{name}"],
+            }
+        dropped_events = [f"context_dropped:{name}:{len(dropped)}"] if dropped else []
+        chunks = [c for c in chunks if str(c["chunk_id"]) in set(kept)]
         log = deps.runlog(state)
         nonce = state.get("fence_nonce") or (
             log.nonce(name) if log is not None else prompt_guard.new_nonce()
@@ -250,10 +299,9 @@ def make_structured_node(
         if not shown and require_chunks:
             return {
                 "extracted_raw": {name: None},
-                "guardrail_events": list(framed.events) + [f"no_evidence:{name}"],
+                "guardrail_events": dropped_events + list(framed.events) + [f"no_evidence:{name}"],
                 "fence_nonce": nonce,
             }
-        prompt = load_prompt(prompt_version)
         system = [
             SystemBlock(prompt.text),
             SystemBlock(schema_block(meta.model), cache=True),
@@ -293,7 +341,7 @@ def make_structured_node(
                 prompt_version=prompt_version,
             )
         fields = extraction.parsed.model_dump(mode="json")
-        events = list(framed.events)
+        events = dropped_events + list(framed.events)
         schema_errors = 0
         try:
             meta.model.model_validate(fields)
@@ -333,6 +381,7 @@ class StopReason(StrEnum):
     loop_call = "loop_repeat_call"
     loop_result = "loop_repeat_result"
     policy_denials = "policy_denials"  # three calls in a row refused by policy.check (A-113)
+    context_ceiling = "context_ceiling"  # the next call would pass its ceiling (A-153)
 
 
 LOOP_REPEATS = 3  # the same call, or the same result running, this many times is a loop
@@ -369,6 +418,63 @@ def stop_reason(
     if calls_made >= max_calls:
         return StopReason.call_cap
     return None
+
+
+def _tokens_of_call(
+    system: list[SystemBlock], messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+) -> int:
+    """What the next call would send, counted the way the ceiling counts (A-153)."""
+    return (
+        context.estimate_tokens("".join(b.text for b in system))
+        + context.estimate_tokens(messages)
+        + context.estimate_tokens(tools)
+    )
+
+
+def _store_result(
+    deps: ModelDeps,
+    state: AgentState,
+    key: str,
+    tool: str,
+    text: str,
+    limits: context.Ceilings,
+) -> str | None:
+    """Keep a tool result whole in `tool_results` and return the preview the model sees in
+    its place: the handle, the size and the start (A-153). None without a run to keep it in:
+    the caller then sends the result cut at the guard's limit, as before."""
+    thread_id = state.get("thread_id")
+    if deps.log_db is None or not thread_id:
+        return None
+    handle = f"{thread_id}:{key}"
+    kept, _ = redact(text)
+    tokens = context.estimate_tokens(kept)
+    deps.log_db.execute(
+        "INSERT INTO tool_results (tenant_id, handle, thread_id, tool, content, chars, tokens)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+        (deps.log_db.tenant.tenant_id, handle, thread_id, tool, kept, len(kept), tokens),
+    )
+    return json.dumps(
+        {
+            "stored": True,
+            "handle": handle,
+            "tool": tool,
+            "tokens": tokens,
+            "total_chars": len(kept),
+            "preview": context.preview(kept, limits.preview_tokens),
+            "read_more": "call read_result with this handle and an offset to read the rest",
+        },
+        ensure_ascii=False,
+    )
+
+
+def _replace_result(message: dict[str, Any], stub: str, tool: str, nonce: str) -> dict[str, Any]:
+    """The same tool_result block, its content now the stored result's preview."""
+    guarded = prompt_guard.guard_tool_result(tool, stub, nonce)
+    blocks = [
+        {**block, "content": guarded.content} if block.get("type") == "tool_result" else block
+        for block in message.get("content") or []
+    ]
+    return {**message, "content": blocks}
 
 
 def _request_digest(
@@ -419,6 +525,7 @@ def make_tool_loop(
     goal: Callable[[AgentState], str],
     on_result: Callable[[AgentState, str, dict[str, Any]], dict[str, Any]],
     max_calls: int = 8,
+    ceilings: tuple[str, str] = ("agent_first_call", "agent_later_call"),
 ) -> NodeFn:
     """The bounded tool loop. Off-list tool calls are answered with an error result and a
     guardrail event, never dispatched; every dispatched call counts against the budget. The
@@ -473,9 +580,27 @@ def make_tool_loop(
         gate = next(
             (g for g in (getattr(t, "gate", None) for t in tools.values()) if g is not None), None
         )
+        limits = context.load()
+        # results still in the context: (message index, tool, full text, key)
+        swappable: list[tuple[int, str, str, str]] = []
         while reason is None:
             turn_no += 1
             offered = offered_now(gate)
+            ceiling = limits.of(ceilings[0] if turn_no == 1 else ceilings[1])
+            size = _tokens_of_call(system, messages, offered)
+            while size > ceiling and swappable:  # the oldest results leave first (A-153)
+                index, tool_name, text, swap_key = swappable.pop(0)
+                stub = _store_result(deps, state, f"{name}:{swap_key}", tool_name, text, limits)
+                if stub is None:  # nowhere to keep it: nothing can be swapped
+                    swappable.clear()
+                    break
+                messages[index] = _replace_result(messages[index], stub, tool_name, nonce)
+                updates["guardrail_events"].append(f"context_swapped:{name}:{tool_name}")
+                size = _tokens_of_call(system, messages, offered)
+            if size > ceiling:
+                updates["guardrail_events"].append(f"context_ceiling:{name}:{size}>{ceiling}")
+                reason = StopReason.context_ceiling
+                break
             digest = _request_digest(system, messages, offered, deps.model)
 
             def sample(this_turn: list[dict[str, Any]] = offered) -> ChatTurn:
@@ -589,13 +714,24 @@ def make_tool_loop(
                         "is_error": result.get("is_error", False),
                     }
                 )
-                guarded = prompt_guard.guard_tool_result(
-                    call.name, json.dumps(result, default=str, ensure_ascii=False), nonce
-                )
+                text = json.dumps(result, default=str, ensure_ascii=False)
+                handle_key = f"{digest[:16]}:{call.id}"
+                stored = None
+                if context.estimate_tokens(text) > limits.swap_tokens:  # too big to carry
+                    stored = _store_result(
+                        deps, state, f"{name}:{handle_key}", call.name, text, limits
+                    )
+                    if stored is not None:
+                        updates["guardrail_events"].append(
+                            f"tool_result_stored:{call.name}:{context.estimate_tokens(text)}"
+                        )
+                guarded = prompt_guard.guard_tool_result(call.name, stored or text, nonce)
                 updates["guardrail_events"].extend(
                     e for e in guarded.events if not e.startswith("secret_redacted_in_tool_result")
                 )  # the tool seam already reported its own redactions above
                 messages.append(tool_result_message(call.id, result, guarded.content))
+                if stored is None:
+                    swappable.append((len(messages) - 1, call.name, text, handle_key))
                 history.append(
                     (
                         call.name,

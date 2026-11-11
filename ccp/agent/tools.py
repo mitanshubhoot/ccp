@@ -89,6 +89,12 @@ class ReadSpanArgs(_Args):
     version: str | None = None
 
 
+class ReadResultArgs(_Args):
+    handle: str = Field(min_length=1, max_length=300, description="from a stored result")
+    offset: int = Field(default=0, ge=0, description="characters to skip")
+    max_chars: int = Field(default=8000, ge=200, le=16000)
+
+
 class FindAccessArgs(_Args):
     employment_status: EmploymentStatus | None = None
     asset_prefix: str | None = Field(default=None, description="e.g. github: or aws:")
@@ -236,6 +242,16 @@ class OutlineOut(_Out):
     length: int
     entries: list[OutlineEntryOut]
     chunks: list[SpanRefOut]
+
+
+class ReadResultOut(_Out):
+    handle: str
+    tool: str
+    offset: int
+    next_offset: int | None
+    total_chars: int
+    text: str
+    redactions: list[str]
 
 
 class ReadSpanOut(_Out):
@@ -569,6 +585,16 @@ _SPECS: tuple[ToolSpec, ...] = (
         InvestigationOut,
         scopes=("verdicts",),
         untrusted=True,
+    ),
+    ToolSpec(
+        "read_result",
+        "Read more of a tool result this run stored whole because it was too large; the"
+        " preview gave its handle. Returns a slice and the offset of the next one.",
+        ReadResultArgs,
+        ReadResultOut,
+        scopes=("run",),
+        untrusted=True,
+        max_calls=6,
     ),
 )
 TOOL_SPECS: dict[str, ToolSpec] = {s.name: s for s in _SPECS}
@@ -1104,6 +1130,27 @@ def get_investigation(ctx: ToolContext, args: BaseModel) -> Any:
     }
 
 
+def read_result(ctx: ToolContext, args: BaseModel) -> Any:
+    """A tool result this run stored whole when it was too large for the context
+    (A-153), read a slice at a time; the handle came with the result's preview."""
+    a = ReadResultArgs.model_validate(args.model_dump())
+    row = ctx.db.fetch_one("SELECT tool, content FROM tool_results WHERE handle = %s", (a.handle,))
+    if row is None:
+        return {"error": "not found"}
+    content = str(row[1])
+    end = min(len(content), a.offset + a.max_chars)
+    text, hits = redact(content[a.offset : end])
+    return {
+        "handle": a.handle,
+        "tool": str(row[0]),
+        "offset": a.offset,
+        "next_offset": end if end < len(content) else None,
+        "total_chars": len(content),
+        "text": text,
+        "redactions": hits,
+    }
+
+
 TOOL_FNS: dict[str, ToolFn] = {
     "search_evidence": search_evidence,
     "get_chunk": get_chunk,
@@ -1122,6 +1169,7 @@ TOOL_FNS: dict[str, ToolFn] = {
     "get_control": get_control,
     "get_framework_rollup": get_framework_rollup,
     "get_investigation": get_investigation,
+    "read_result": read_result,
 }
 
 

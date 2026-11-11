@@ -18,6 +18,7 @@ TIER3_BASE: tuple[str, ...] = (
     "list_assets",
     "get_person",
     "get_current_state",
+    "read_result",  # a stored result of this run, by its handle (A-153)
 )
 
 # The Policy Agent reads policy documents only: each of these tools takes an evidence type,
@@ -35,10 +36,12 @@ ALLOWLISTS: dict[str, frozenset[str]] = {
     # grant or write tool, and nothing that starts another run (A-151)
     "task_item": frozenset(
         ("search_evidence", "get_chunk", "list_evidence", "get_evidence_chunks")
-        + ("find_exact", "outline", "read_span", "get_verdict", "get_control")
+        + ("find_exact", "outline", "read_span", "get_verdict", "get_control", "read_result")
     ),
     # a policy draft must never contain named individuals' access details
-    "policy": frozenset(POLICY_PINNED + ("get_chunk", "get_control", "get_framework_rollup")),
+    "policy": frozenset(
+        POLICY_PINNED + ("get_chunk", "get_control", "get_framework_rollup", "read_result")
+    ),
     # the copilot's restriction is that it has no write path, not fewer reads
     "copilot": frozenset(
         TIER3_BASE

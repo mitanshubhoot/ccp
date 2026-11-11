@@ -35,6 +35,11 @@ step; work through it when the credentials are available.
       task runs, count `correction_round` events and how many end
       `correction_succeeded`; a success rate that climbs while first-pass checks fall
       means a prompt is leaning on the round and needs fixing (A-152).
+- [ ] Context ceilings against real token counts: for a sample of tier 2, tier 3,
+      investigator, Copilot and task calls, compare the four-characters-a-token estimate
+      with `messages.count_tokens` and the usage the API reports; if the estimate runs
+      low by more than 10%, lower the ceilings in config/context_ceilings.yaml or move
+      the view to the count endpoint (A-153).
 - [ ] Prompt caching: cache reads appear on repeated stable prefixes.
 - [ ] `ccp replay <id> --execute` on a model-backed verdict.
 

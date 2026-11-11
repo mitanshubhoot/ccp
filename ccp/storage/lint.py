@@ -86,6 +86,7 @@ INSERT_ONLY: frozenset[str] = frozenset(
         "chunk_versions",
         "transcriptions",
         "task_events",
+        "tool_results",
     }
 )
 # Operational state that is updated in place by design.

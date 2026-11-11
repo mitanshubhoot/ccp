@@ -31,7 +31,13 @@ from ccp.config import REPO_ROOT, Settings
 from ccp.knowledge import catalogue
 from ccp.llm.models import MODELS
 
-CONFIG_FILES = ("retrieval.yaml", "evaluation.yaml", "eval_gates.yaml", "task_kinds.yaml")
+CONFIG_FILES = (
+    "retrieval.yaml",
+    "evaluation.yaml",
+    "eval_gates.yaml",
+    "task_kinds.yaml",  # A-151
+    "context_ceilings.yaml",  # A-153
+)
 _MANIFESTS: dict[str, dict[str, Any]] = {}
 
 

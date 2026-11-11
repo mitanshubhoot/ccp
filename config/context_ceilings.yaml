@@ -1,0 +1,17 @@
+# Input ceilings per call type, in tokens (spec.md A-153, report 6.7). Before each call the
+# view counts the tokens it would send and drops the lowest-priority items first (the
+# lowest-ranked chunks, the oldest tool results), never the instructions or a span a draft
+# cites; what must be sent and is still over the ceiling is not sent, and the run stops for
+# review. Starting values, to be tuned on evals; this file is part of the release bundle.
+ceilings:
+  tier2_extract: 20000      # tier 2's one extraction over retrieved chunks
+  agent_first_call: 15000   # an agent run's first model call
+  agent_later_call: 50000   # every later call of an agent run
+  copilot_turn: 30000       # a Copilot turn
+  document_haiku: 90000     # a whole-document read on Haiku 5.5 (6.5; no caller yet)
+  document: 200000          # a whole-document read on Sonnet 5.5 (6.5; no caller yet)
+# A tool result over this many tokens is stored whole and replaced by a preview and a
+# handle; the model reads the rest with read_result. Without a run log to store it in, the
+# result is cut visibly instead, as before.
+tool_result_swap_tokens: 5000
+preview_tokens: 500

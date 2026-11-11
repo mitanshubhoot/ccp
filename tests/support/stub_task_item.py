@@ -8,11 +8,13 @@ once per item question, and a reader that answers from the fenced chunks it was 
     "repairable" in the question                    a made-up quote first, the policy's real
                                                     sentence on the correction turn (A-152)
     "repeat" in the question                        the gatherer makes the same search twice
+    a stored result in the newest message           the gatherer reads it by handle (A-153)
     anything else                                   insufficient_evidence, naming what is missing
 """
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -21,6 +23,7 @@ from pydantic import BaseModel
 from ccp.evaluators.extraction.base import Cited
 from ccp.evaluators.extraction.task_item import ItemFinding, ItemReadings, KeyedReading
 from ccp.llm.client import StubLLMClient, SystemBlock, ToolCall
+from ccp.security import prompt_guard
 from tests.support.stub_extractors import blocks
 
 _ITEM = re.compile(r"^Item (?P<id>\S+): (?P<question>.+)$", re.MULTILINE)
@@ -31,11 +34,28 @@ def items_in(text: str) -> dict[str, str]:
     return {m["id"]: m["question"].strip() for m in _ITEM.finditer(text)}
 
 
+def stored_handle(message: dict[str, Any]) -> str | None:
+    """The handle of a stored result's preview in a tool_result message (A-153)."""
+    for block in message.get("content") or []:
+        if not isinstance(block, dict) or block.get("type") != "tool_result":
+            continue
+        try:
+            payload = json.loads(prompt_guard.unfence_tool_result(str(block.get("content"))))
+        except ValueError:
+            continue
+        if isinstance(payload, dict) and payload.get("stored"):
+            return str(payload["handle"])
+    return None
+
+
 def gather(
     system: list[SystemBlock], messages: list[dict[str, Any]], tools: list[dict[str, Any]]
 ) -> tuple[str, list[ToolCall]]:
     goal = str(messages[0].get("content", ""))
     questions = items_in(goal)
+    handle = stored_handle(messages[-1]) if len(messages) == 3 else None
+    if handle is not None:  # a stored result: read more of it by its handle
+        return "", [ToolCall("call-more", "read_result", {"handle": handle, "offset": 0})]
     again = len(messages) == 3 and any("repeat" in q.lower() for q in questions.values())
     if len(messages) > 1 and not again:
         return "Found what the items need.", []
