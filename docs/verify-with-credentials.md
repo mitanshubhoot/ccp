@@ -49,6 +49,13 @@ step; work through it when the credentials are available.
       compliance mode; `ccp audit verify` is clean; a restore drill on an RDS snapshot with
       one altered row gives exactly one finding (A-137).
 
+- [ ] `terraform init -backend-config=...` and `terraform apply` of `infra/terraform` into a
+      cell and an audit account; `ccp db migrate` against the RDS instance creates pgvector
+      (A-138).
+- [ ] `deploy.yml` from main finishes in under 30 minutes; a rollback run with
+      `rollback_to` finishes in under 10; a deliberately unhealthy image is rolled back by the
+      circuit breaker (A-138).
+
 ## Langfuse keys
 
 - [ ] Traces arrive with metadata only, and cost per run.

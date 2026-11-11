@@ -133,6 +133,15 @@ below 0.5, and `--apply` refuses to lower the gate unless `--allow-lower` is pas
   `ccp/observability/cost.py` and mis-state spend if those change; they never change a
   verdict.
 
+## Running in AWS
+
+`infra/terraform` describes one cell (RDS PostgreSQL 17, ECS Fargate `api` and `worker`, the
+Object Lock raw bucket with per-tenant KMS keys) and an audit account (checkpoints in
+compliance mode, the signing key); the `Dockerfile` builds the one image both services run;
+`.github/workflows/deploy.yml` deploys from main behind the tests and the eval regression,
+and rolls back to a named image by hand (A-138). None of it has been applied yet: see
+`docs/verify-with-credentials.md`.
+
 ## Data processing
 
 When keys are set, evidence text (including the HR fixture data), prompts, and model

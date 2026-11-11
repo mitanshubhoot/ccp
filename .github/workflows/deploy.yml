@@ -1,0 +1,125 @@
+name: deploy
+
+# From main to the cell (spec.md A-138), behind the same gates as ci.yml plus the eval
+# regression gate: a run that flips a case from pass to fail, raises an attack success rate
+# or breaches a p95 does not ship. Then the image is built and pushed, the database is
+# migrated by a one-off task, and both services roll with ECS's circuit breaker, which
+# rolls back a deployment that does not become healthy. A rollback is this workflow run by
+# hand with the image tag to return to; it skips the gates and the migration.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      rollback_to:
+        description: "an image tag already in ECR to return to"
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ vars.CELL }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  CELL: ${{ vars.CELL }}
+  ECR_REPOSITORY: ccp
+
+jobs:
+  gate:
+    if: ${{ !inputs.rollback_to }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ccp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ccp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://ccp_app:ccp@localhost:5432/ccp
+      DATABASE_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/ccp
+      CCP_DATA_DIR: ${{ github.workspace }}/data
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --group dev
+      - run: uv run ruff check .
+      - run: uv run mypy ccp
+      - run: uv run lint-imports
+      - run: uv run ccp db migrate
+      - run: uv run pytest -q -m "not live_github"
+      - name: eval gate
+        run: |
+          uv run ccp evals run --no-unit
+          uv run ccp evals regress --strict
+
+  deploy:
+    needs: [gate]
+    if: ${{ always() && (needs.gate.result == 'success' || inputs.rollback_to) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ vars.CELL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: the image
+        id: image
+        run: |
+          if [ -n "${{ inputs.rollback_to }}" ]; then
+            echo "uri=${{ steps.ecr.outputs.registry }}/$ECR_REPOSITORY:${{ inputs.rollback_to }}" >> "$GITHUB_OUTPUT"
+          else
+            uri="${{ steps.ecr.outputs.registry }}/$ECR_REPOSITORY:${{ github.sha }}"
+            docker build -t "$uri" .
+            docker push "$uri"
+            echo "uri=$uri" >> "$GITHUB_OUTPUT"
+          fi
+      - name: migrate (not on a rollback)
+        if: ${{ !inputs.rollback_to }}
+        run: |
+          family="ccp-worker-$CELL"
+          task=$(aws ecs run-task --cluster "ccp-$CELL" --launch-type FARGATE \
+            --task-definition "$family" \
+            --network-configuration "${{ vars.TASK_NETWORK }}" \
+            --overrides "{\"containerOverrides\":[{\"name\":\"worker\",\"command\":[\"ccp\",\"db\",\"migrate\"]}]}" \
+            --query 'tasks[0].taskArn' --output text)
+          aws ecs wait tasks-stopped --cluster "ccp-$CELL" --tasks "$task"
+          code=$(aws ecs describe-tasks --cluster "ccp-$CELL" --tasks "$task" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          test "$code" = "0"
+      - name: roll both services
+        run: |
+          for service in api worker; do
+            family="ccp-$service-$CELL"
+            aws ecs describe-task-definition --task-definition "$family" \
+              --query taskDefinition > "$service.json"
+            jq --arg image "${{ steps.image.outputs.uri }}" \
+              '.containerDefinitions[0].image = $image
+               | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                     .compatibilities, .registeredAt, .registeredBy)' \
+              "$service.json" > "$service.next.json"
+            arn=$(aws ecs register-task-definition --cli-input-json "file://$service.next.json" \
+              --query 'taskDefinition.taskDefinitionArn' --output text)
+            aws ecs update-service --cluster "ccp-$CELL" --service "ccp-$service" \
+              --task-definition "$arn" > /dev/null
+          done
+          aws ecs wait services-stable --cluster "ccp-$CELL" --services ccp-api ccp-worker
