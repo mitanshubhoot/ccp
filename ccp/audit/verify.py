@@ -48,6 +48,7 @@ CHAINED = (
     "review_resolutions",
     "person_links",
     "run_stops",
+    "index_activations",
 )
 
 

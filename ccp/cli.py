@@ -54,10 +54,11 @@ from ccp.observability import steps
 from ccp.policy import cli as policy_cli
 from ccp.remediation import cli as remediate_cli
 from ccp.replay import rebuild as replay
-from ccp.retrieval import calibration, distractors
+from ccp.retrieval import calibration, distractors, generations, reembed
 from ccp.retrieval import config as retrieval_cfg
 from ccp.retrieval import index as retrieval_index
 from ccp.retrieval import metrics as retrieval_metrics
+from ccp.retrieval.embeddings import EmbeddingModelUnavailable, embedder_for
 from ccp.retrieval.hybrid import retrieve
 from ccp.storage import bitemporal, db
 from ccp.storage import exceptions as stored_exceptions
@@ -361,18 +362,93 @@ def index_calibrate(
         typer.echo(f"wrote {retrieval_cfg.CONFIG_PATH}")
 
 
+@index_app.command("generations")
+def index_generations(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """Every index generation (embedding model x chunker), its sets and versions, which serves."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        rows = generations.history(ScopedDB(pool, ctx))
+    finally:
+        pool.close()
+    if not rows:
+        typer.echo("no generations: run `ccp index refresh`")
+    for r in rows:
+        mark = "*" if r["active"] else " "
+        typer.echo(
+            f"{mark} {r['generation_id']} {r['embed_model']} chunker={r['chunker_version']}"
+            f" sets={r['sets']} chunk_versions={r['chunk_versions']}"
+            f" last_activated={r['last_activated_at']}"
+        )
+
+
+@index_app.command("reembed")
+def index_reembed(
+    model: str = typer.Option(..., "--model", help="the candidate embedding model id"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+    switch: bool = typer.Option(True, "--switch/--no-switch", help="switch when the gate passes"),
+    force: bool = typer.Option(False, "--force", help="switch even when the gate fails"),
+) -> None:
+    """Embed into a new generation beside the serving one; switch only after the gate."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    providers = tier2.Providers.from_settings(settings)
+    pool = db.app_pool(settings)
+    try:
+        scoped = ScopedDB(pool, ctx)
+        serving = generations.active(scoped)
+        try:
+            candidate = embedder_for(settings, model)
+            serving_embedder = embedder_for(settings, serving.embed_model) if serving else None
+        except EmbeddingModelUnavailable as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(2) from exc
+        result = reembed.reembed(
+            scoped,
+            settings,
+            candidate,
+            serving_embedder,
+            llm=providers.llm,
+            switch=switch,
+            force=force,
+        )
+    finally:
+        pool.close()
+    typer.echo(
+        f"candidate={result.candidate_generation} serving_before={result.serving_generation}"
+        f" sets_written={result.refresh.sets_written} embedded={result.refresh.embedded}"
+        f" usd={result.refresh.usd:.4f}"
+    )
+    if result.gate is not None:
+        typer.echo(f"gate passed={result.gate.passed} candidate={result.gate.candidate}")
+        typer.echo(f"serving={result.gate.serving}")
+        for reason in result.gate.reasons:
+            typer.echo(f"  {reason}")
+    for event in result.events:
+        typer.echo(f"event {event}", err=True)
+    typer.echo(f"switched={result.switched} projected={result.projected}")
+    if result.gate is not None and not result.gate.passed and not force:
+        raise typer.Exit(1)
+
+
 @index_app.command("search")
 def index_search(
     query: str = typer.Argument(..., help="the retrieval query"),
     evidence_type: str = typer.Option(..., "--type"),
     tenant: str | None = typer.Option(None, "--tenant"),
     subject: str | None = typer.Option(None, "--subject"),
+    as_of: datetime | None = typer.Option(
+        None, "--as-of", help="search what the index held then (versioned chunks)"
+    ),
+    generation: str | None = typer.Option(None, "--generation", help="a named generation"),
 ) -> None:
     """Run the hybrid query and print the candidates with both ranks and the fused score."""
     settings = _settings()
     ctx = _tenant(settings, tenant)
     providers = tier2.Providers.from_settings(settings)
     pool = db.app_pool(settings)
+    when = as_of.replace(tzinfo=UTC) if as_of is not None and as_of.tzinfo is None else as_of
     try:
         result = retrieve(
             ScopedDB(pool, ctx),
@@ -382,9 +458,13 @@ def index_search(
             subject_entity_id=subject,
             reranker=providers.reranker,
             config=providers.retrieval,
+            as_of=when,
+            generation_id=generation,
         )
     finally:
         pool.close()
+    if result.generation_id is not None:
+        typer.echo(f"generation {result.generation_id} as of {result.as_of or 'now'}", err=True)
     for event in result.events:
         typer.echo(f"event {event}", err=True)
     for c in result.chunks:

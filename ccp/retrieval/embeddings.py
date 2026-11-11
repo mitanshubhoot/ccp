@@ -202,6 +202,23 @@ def build_embedding_client(settings: Settings) -> EmbeddingClient:
     return HashingEmbeddingClient()
 
 
+class EmbeddingModelUnavailable(RuntimeError):
+    """No client can be built for the named model (its provider's key is not set)."""
+
+
+def embedder_for(settings: Settings, model_id: str) -> EmbeddingClient:
+    """A client for a named model, e.g. a generation's (A-145); never a silent substitute."""
+    if model_id == HashingEmbeddingClient.model_id:
+        return HashingEmbeddingClient()
+    provider = "openai" if model_id.startswith("text-embedding") else "voyage"
+    client = build_embedding_client(
+        settings.model_copy(update={"ccp_embed_provider": provider, "ccp_embed_model": model_id})
+    )
+    if client.model_id != model_id:
+        raise EmbeddingModelUnavailable(f"no {provider} key is set, so {model_id!r} cannot embed")
+    return client
+
+
 def vector_literal(vector: Sequence[float]) -> str:
     """pgvector input syntax."""
     return "[" + ",".join(f"{x:.7f}" for x in vector) + "]"

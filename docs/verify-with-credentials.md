@@ -25,6 +25,11 @@ step; work through it when the credentials are available.
 ## Voyage API key (`VOYAGE_API_KEY`)
 
 - [ ] Embeddings and reranking: `ccp index refresh`, then the retrieval golden set.
+- [ ] A real re-embedding: `ccp index reembed --model voyage-4-large --no-switch` writes a
+      candidate generation beside the serving one and prints both measurements; without
+      `--no-switch` it serves only if the gate passes, and `ccp index generations` shows
+      the old generation kept. `ccp index search --as-of <before>` still answers with the
+      old model's key (A-145).
 
 ## GitHub token (`GITHUB_TOKEN`)
 

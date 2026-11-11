@@ -28,6 +28,7 @@ from ccp.llm.budget import BudgetTracker, RunBudget
 from ccp.llm.client import LLMClient, SystemBlock, with_documents
 from ccp.llm.prompts import load_prompt
 from ccp.policy import schema as policy_schema
+from ccp.retrieval import generations
 from ccp.security import prompt_guard
 from ccp.security.prompt_guard import FramedChunk
 from ccp.storage.scoped import ScopedDB
@@ -151,7 +152,7 @@ def _chunk_texts(db: ScopedDB, chunk_ids: list[str]) -> dict[str, dict[str, Any]
         " WHERE chunk_id = ANY(%s)",
         (chunk_ids,),
     )
-    return {
+    found = {
         str(r[0]): {
             "text": r[1],
             "evidence_type": r[2],
@@ -161,6 +162,14 @@ def _chunk_texts(db: ScopedDB, chunk_ids: list[str]) -> dict[str, dict[str, Any]
         }
         for r in rows
     }
+    # a chunk no longer served (re-indexed, or another generation serves) is read back from
+    # the versions: its id is a content hash, so the text is the text the call saw (A-145)
+    retired = [c for c in chunk_ids if c not in found]
+    for cid, row in generations.chunk_from_versions(db, retired).items():
+        found[cid] = {
+            k: row[k] for k in ("text", "evidence_type", "subject_entity_id", "page", "source_ref")
+        }
+    return found
 
 
 def check_call(

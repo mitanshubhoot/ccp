@@ -10,6 +10,13 @@ RLS scopes both arms; the query has no tenant predicate of its own. Distractor c
 excluded unless asked for (evaluation and calibration). A provider outage degrades:
 no embedding -> lexical arm only; no reranker -> fused order; both recorded as events so the
 confidence cap can see them. Retrieval refuses to mix embedding models.
+
+As of a time, or against a named generation (A-145), the same query runs over the versioned
+chunks instead of the serving copy: each document's newest chunk set recorded by then, in
+the generation active then (or the one named). That is what the index held when a verdict
+was made, and how a candidate generation is measured before it serves. The versioned arm
+scans exactly (no HNSW), which is right for replay and gating volumes; distractors are never
+versioned.
 """
 
 from __future__ import annotations
@@ -17,9 +24,11 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from ccp.llm.errors import RetryableModelError, TerminalModelError
+from ccp.retrieval import generations
 from ccp.retrieval.config import RetrievalConfig
 from ccp.retrieval.embeddings import DIMENSION, EmbeddingClient, vector_literal
 from ccp.retrieval.rerank import Reranker
@@ -29,7 +38,8 @@ _TOKEN = re.compile(r"[a-z0-9]+")
 
 
 class EmbeddingModelMismatch(RuntimeError):
-    """Chunks were embedded with another model; run `ccp index rebuild`."""
+    """Chunks were embedded with another model: `ccp index reembed` gates a switch, and
+    `ccp index rebuild` forces one."""
 
 
 @dataclass(frozen=True)
@@ -82,6 +92,8 @@ class RetrievalResult:
     candidates: list[RetrievedChunk] = field(default_factory=list)  # fused order, top N
     chunks: list[RetrievedChunk] = field(default_factory=list)  # final order, top k
     events: list[str] = field(default_factory=list)
+    generation_id: str | None = None  # set when the versioned chunks were searched
+    as_of: datetime | None = None
 
     @property
     def degraded(self) -> bool:
@@ -105,14 +117,14 @@ def _check_model(db: ScopedDB, embed_model: str, include_distractors: bool) -> N
     if others:
         raise EmbeddingModelMismatch(
             f"chunks embedded with {others} but the configured model is {embed_model!r};"
-            " run `ccp index rebuild`"
+            " run `ccp index reembed` (gated switch) or `ccp index rebuild` (forced)"
         )
 
 
-_SQL = """
-WITH fts AS (
+_BODY = """
+fts AS (
   SELECT chunk_id, ts_rank_cd(tsv, to_tsquery('english', %(tsq)s)) AS score
-  FROM chunks
+  FROM {src}
   WHERE %(use_fts)s
     AND evidence_type = %(etype)s
     AND (%(subject)s::text IS NULL OR subject_entity_id = %(subject)s)
@@ -124,7 +136,7 @@ WITH fts AS (
   SELECT chunk_id, score, row_number() OVER (ORDER BY score DESC, chunk_id) AS rank FROM fts
 ), dense AS (
   SELECT chunk_id, embedding <=> %(vec)s::vector AS dist
-  FROM chunks
+  FROM {src}
   WHERE %(use_dense)s
     AND evidence_type = %(etype)s
     AND (%(subject)s::text IS NULL OR subject_entity_id = %(subject)s)
@@ -145,10 +157,14 @@ WITH fts AS (
 SELECT c.chunk_id, c.evidence_entity_id, c.evidence_type, c.subject_entity_id, c.source_ref,
        c.page, c.text, c.context, fu.fts_score, fu.fts_rank, fu.cos_score, fu.cos_rank,
        fu.fused_score, c.is_distractor
-FROM fused fu JOIN chunks c ON c.chunk_id = fu.chunk_id
+FROM fused fu JOIN {src} c ON c.chunk_id = fu.chunk_id
 ORDER BY fu.fused_score DESC, c.chunk_id
 LIMIT %(n)s
 """
+_SQL = "WITH" + _BODY.format(src="chunks")
+_SQL_VERSIONED = f"WITH versioned AS MATERIALIZED {generations.AS_OF_SOURCE}," + _BODY.format(
+    src="versioned"
+)
 
 
 def retrieve(
@@ -163,6 +179,8 @@ def retrieve(
     include_distractors: bool = False,
     iterative_scan: bool = True,
     top_k: int | None = None,
+    as_of: datetime | None = None,
+    generation_id: str | None = None,
 ) -> RetrievalResult:
     cfg = config or RetrievalConfig()
     k = top_k or cfg.top_k
@@ -170,8 +188,26 @@ def retrieve(
         query=query,
         embed_model=embedder.model_id,
         rerank_model=reranker.model_id if reranker else None,
+        as_of=as_of,
     )
-    _check_model(db, embedder.model_id, include_distractors)
+    versioned = as_of is not None or generation_id is not None
+    if versioned:
+        found = (
+            generations.describe(db, generation_id)
+            if generation_id is not None
+            else generations.active(db, as_of)
+        )
+        if found is None:
+            result.events.append("no_generation_as_of")
+            return result
+        if found.embed_model != embedder.model_id:
+            raise EmbeddingModelMismatch(
+                f"generation {found.generation_id} was embedded with {found.embed_model!r},"
+                f" not {embedder.model_id!r}"
+            )
+        result.generation_id = found.generation_id
+    else:
+        _check_model(db, embedder.model_id, include_distractors)
 
     vector: Sequence[float] | None = None
     try:
@@ -192,6 +228,8 @@ def retrieve(
         "vec": vector_literal(vector if vector is not None else [0.0] * DIMENSION),
         "use_dense": vector is not None,
         "rrf_k": cfg.rrf_k,
+        "gen": result.generation_id,
+        "as_of": as_of,
     }
     with db.transaction() as cur:
         cur.execute(
@@ -199,7 +237,7 @@ def retrieve(
             ("relaxed_order" if iterative_scan else "off",),
         )
         cur.execute("SELECT set_config('hnsw.ef_search', %s, true)", (str(cfg.ef_search),))
-        rows = cur.execute(_SQL, params).fetchall()
+        rows = cur.execute(_SQL_VERSIONED if versioned else _SQL, params).fetchall()
     candidates = [
         RetrievedChunk(
             chunk_id=str(r[0]),

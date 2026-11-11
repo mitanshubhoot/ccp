@@ -155,6 +155,7 @@ def evaluate_queries(
     config: RetrievalConfig | None = None,
     include_distractors: bool = True,
     iterative_scan: bool = True,
+    generation_id: str | None = None,
 ) -> MetricsReport:
     report = MetricsReport(
         embed_model=embedder.model_id,
@@ -180,6 +181,7 @@ def evaluate_queries(
             include_distractors=include_distractors,
             iterative_scan=iterative_scan,
             top_k=10,
+            generation_id=generation_id,
         )
         ranked = [c.chunk_id for c in result.chunks] or [c.chunk_id for c in result.candidates]
         report.queries.append(

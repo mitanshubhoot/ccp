@@ -30,7 +30,7 @@ from ccp.identity import resolver
 from ccp.knowledge import graph as knowledge
 from ccp.knowledge import rollup as knowledge_rollup
 from ccp.normalize import repository
-from ccp.retrieval import hybrid
+from ccp.retrieval import generations, hybrid
 from ccp.retrieval.config import RetrievalConfig
 from ccp.retrieval.embeddings import EmbeddingClient
 from ccp.retrieval.rerank import Reranker
@@ -497,18 +497,23 @@ def get_chunk(ctx: ToolContext, args: BaseModel) -> Any:
         " text FROM chunks WHERE chunk_id = %s AND NOT is_distractor",
         (a.chunk_id,),
     )
-    if row is None:
-        return {"error": "not found"}
-    keys = (
-        "chunk_id",
-        "evidence_entity_id",
-        "evidence_type",
-        "subject_entity_id",
-        "page",
-        "source_ref",
-        "text",
-    )
-    return _redacted_row(dict(zip(keys, row, strict=True)))
+    if row is None:  # cited before a re-index or a generation switch: read the version
+        old = generations.chunk_from_versions(ctx.db, [a.chunk_id]).get(a.chunk_id)
+        if old is None:
+            return {"error": "not found"}
+        row = tuple(old[k] for k in _CHUNK_KEYS)
+    return _redacted_row(dict(zip(_CHUNK_KEYS, row, strict=True)))
+
+
+_CHUNK_KEYS = (
+    "chunk_id",
+    "evidence_entity_id",
+    "evidence_type",
+    "subject_entity_id",
+    "page",
+    "source_ref",
+    "text",
+)
 
 
 def list_evidence(ctx: ToolContext, args: BaseModel) -> Any:

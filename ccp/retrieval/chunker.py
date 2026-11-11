@@ -6,6 +6,11 @@
 
 PDF evidence carries one text per page, so a chunk always knows its page and a citation can
 name it; the split-table access review is the golden case for that.
+
+Each chunk also carries [start_offset, end_offset) into its page text (or the evidence text):
+the chunker only strips and rejoins whitespace, so a chunk's non-whitespace characters are a
+contiguous run of the source's, and the offsets are found by walking that run (A-145). The
+source text between the offsets is the chunk's text with its original line breaks.
 """
 
 from __future__ import annotations
@@ -34,6 +39,8 @@ class ChunkDraft:
     ordinal: int
     text: str
     text_sha256: str
+    start_offset: int | None = None
+    end_offset: int | None = None
 
 
 def chunk_id_for(
@@ -102,6 +109,26 @@ def chunk_text(text: str, target: int = TARGET_CHARS, max_chars: int = MAX_CHARS
     return windows
 
 
+def offsets(source: str, windows: list[str]) -> list[tuple[int, int] | None]:
+    """[start, end) of each window in `source`, by aligning non-whitespace characters."""
+    positions = [i for i, ch in enumerate(source) if not ch.isspace()]
+    cursor = 0
+    out: list[tuple[int, int] | None] = []
+    for window in windows:
+        solid = [ch for ch in window if not ch.isspace()]
+        span = positions[cursor : cursor + len(solid)]
+        cursor += len(solid)
+        if (
+            not solid
+            or len(span) < len(solid)
+            or any(source[i] != ch for i, ch in zip(span, solid, strict=True))
+        ):
+            out.append(None)  # not a run of the source: never guess an offset
+            continue
+        out.append((span[0], span[-1] + 1))
+    return out
+
+
 def chunk_evidence(evidence: Evidence) -> list[ChunkDraft]:
     pages: list[tuple[int | None, str]]
     if evidence.page_texts is not None:
@@ -111,7 +138,8 @@ def chunk_evidence(evidence: Evidence) -> list[ChunkDraft]:
     drafts: list[ChunkDraft] = []
     ordinal = 0
     for page, page_text in pages:
-        for window in chunk_text(page_text):
+        windows = chunk_text(page_text)
+        for window, span in zip(windows, offsets(page_text, windows), strict=True):
             drafts.append(
                 ChunkDraft(
                     chunk_id=chunk_id_for(
@@ -125,6 +153,8 @@ def chunk_evidence(evidence: Evidence) -> list[ChunkDraft]:
                     ordinal=ordinal,
                     text=window,
                     text_sha256=hashlib.sha256(window.encode("utf-8")).hexdigest(),
+                    start_offset=span[0] if span else None,
+                    end_offset=span[1] if span else None,
                 )
             )
             ordinal += 1
