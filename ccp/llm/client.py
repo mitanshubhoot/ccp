@@ -13,6 +13,7 @@ the vendor SDK; the layering test enforces it. The stub client is the keyless st
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -24,6 +25,23 @@ from ccp.config import Settings
 from ccp.llm.budget import BudgetTracker
 
 T = TypeVar("T", bound=BaseModel)
+
+
+@dataclass(frozen=True)
+class Attachment:
+    """Bytes the model reads as an image or a PDF (A-147): a scanned page or a screenshot.
+    Logged by digest, never by content."""
+
+    media_type: str  # image/png, image/jpeg, image/webp, image/gif or application/pdf
+    data: bytes
+    name: str
+
+    @property
+    def sha256(self) -> str:
+        return hashlib.sha256(self.data).hexdigest()
+
+    def describe(self) -> str:
+        return f"[attachment {self.name} {self.media_type} sha256:{self.sha256}]"
 
 
 @dataclass(frozen=True)
@@ -95,9 +113,11 @@ class LLMClient(Protocol):
         reasoning: bool = False,
         on_token: Callable[[str], None] | None = None,
         documents: Sequence[str] = (),
+        attachments: Sequence[Attachment] = (),
     ) -> Extraction:
         """``documents`` carry the evidence and tool output: they reach the model as document
-        blocks ahead of the instruction, never pasted into ``user`` (A-98)."""
+        blocks ahead of the instruction, never pasted into ``user`` (A-98). ``attachments``
+        are images or PDFs the model reads (transcription, A-147)."""
         ...
 
     def complete(
@@ -195,8 +215,10 @@ class StubLLMClient:
         reasoning: bool = False,
         on_token: Callable[[str], None] | None = None,
         documents: Sequence[str] = (),
+        attachments: Sequence[Attachment] = (),
     ) -> Extraction:
         usage = self._charge(tracker)
+        documents = [*(a.describe() for a in attachments), *documents]
         if schema.__name__ == "SecondRead":
             if self.second_reader is not None:
                 parsed = self.second_reader(schema, system, with_documents(user, documents))

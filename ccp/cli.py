@@ -733,6 +733,27 @@ def connections_check(tenant: str | None = typer.Option(None, "--tenant")) -> No
         raise typer.Exit(1)
 
 
+@ingest_app.command("transcribe")
+def ingest_transcribe(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """Transcribe scanned pages and screenshots with Claude, then land the text (A-147)."""
+    from ccp.retrieval import transcribe
+
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        summary = transcribe.transcribe(ScopedDB(pool, ctx), settings)
+    finally:
+        pool.close()
+    typer.echo(
+        f"documents={summary.documents} pages={summary.pages} illegible={summary.illegible}"
+        f" landed={summary.landed} usd={summary.usd:.4f}"
+    )
+    for event in summary.events:
+        typer.echo(f"event {event}", err=True)
+    typer.echo("then `ccp normalize run` maps the transcribed text into evidence", err=True)
+
+
 @ingest_app.command("runs")
 def ingest_runs(
     tenant: str | None = typer.Option(None, "--tenant"),

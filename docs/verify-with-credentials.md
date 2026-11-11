@@ -18,6 +18,10 @@ step; work through it when the credentials are available.
       calls `find_exact`, `outline` or `read_span` as well as `search_evidence`, and the
       run log shows each result's version and offsets; count searches per verified
       citation before and after (A-146).
+- [ ] Transcription (`ccp ingest transcribe`, then `ccp normalize run`) of a real scanned
+      PDF, a mixed PDF and a screenshot on Sonnet 5.5: the text is word for word, an
+      unreadable page comes back `legible: false`, the transcriptions rows carry the cost,
+      and the evidence's page_methods name the model and prompt (A-147).
 - [ ] Prompt caching: cache reads appear on repeated stable prefixes.
 - [ ] `ccp replay <id> --execute` on a model-backed verdict.
 

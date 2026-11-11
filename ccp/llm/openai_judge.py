@@ -23,7 +23,15 @@ import httpx
 from pydantic import BaseModel
 
 from ccp.llm.budget import BudgetTracker
-from ccp.llm.client import ChatTurn, Completion, Extraction, SystemBlock, Usage, with_documents
+from ccp.llm.client import (
+    Attachment,
+    ChatTurn,
+    Completion,
+    Extraction,
+    SystemBlock,
+    Usage,
+    with_documents,
+)
 from ccp.llm.errors import (
     RetryableModelError,
     TerminalModelError,
@@ -97,7 +105,10 @@ class CrossFamilyJudgeClient:
         reasoning: bool = False,
         on_token: Callable[[str], None] | None = None,
         documents: Sequence[str] = (),
+        attachments: Sequence[Attachment] = (),
     ) -> Extraction:
+        if attachments:  # the judge reads text; a scan is transcribed first (A-147)
+            raise TerminalModelError("the OpenAI judge takes no attachments")
         if family(model) == "anthropic":
             raise TerminalModelError(f"{model!r} is a Claude model; use the Anthropic client")
         if not cost.is_priced(model):

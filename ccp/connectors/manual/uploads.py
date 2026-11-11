@@ -7,13 +7,18 @@ manifest entry says about a tenant is carried in the payload for the normalizati
 to reject with a guardrail event (S13), never acted on here. A manifest entry is read only
 from inside the tenant's folder: a parent reference, an absolute or drive path, or a link
 that resolves elsewhere yields a `manual.refused` event and nothing is read (A-96).
+
+A scan is kept for transcription (A-147): an image (PNG, JPEG, GIF or WebP, known by its
+first bytes) or a PDF with pages that have no text layer is landed as bytes in the raw zone
+(`responses`, content-addressed), and its event names the digest and the blank pages, so
+the transcription job reads exactly what was landed. Nothing here calls a model.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterator
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +28,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from ccp.connectors.base import (
     ConnectorName,
     PullError,
+    Received,
     SourceEvent,
     SourceKind,
     SyncReport,
@@ -30,7 +36,7 @@ from ccp.connectors.base import (
     sha256_bytes,
 )
 from ccp.connectors.frontmatter import split_front_matter
-from ccp.connectors.manual.pdf_text import PdfLimits, extract_pages
+from ccp.connectors.manual.pdf_text import PdfLimits, blank_pages, extract_pages, image_type
 from ccp.tenancy import TenantContext, TenantId
 from ccp.types import EvidenceType
 
@@ -98,6 +104,7 @@ class ManualUploadConnector:
         self._root_for_tenant = root_for_tenant
         self._limits = limits
         self.source: SourceKind = source
+        self.responses: list[Received] = []  # scans kept for transcription (A-147)
 
     def pull(
         self,
@@ -105,11 +112,21 @@ class ManualUploadConnector:
         since: datetime | None = None,
         report: SyncReport | None = None,
     ) -> Iterator[SourceEvent]:
-        return after(self._events(tenant, report), since)
+        return after(self._events(tenant, report, since), since)
+
+    def _keep(self, entry: ManifestEntry, data: bytes, since: datetime | None) -> None:
+        if since is None or entry.uploaded_at > since:
+            self.responses.append(
+                Received("UPLOAD", f"uploads/{entry.file}", 200, None, data, datetime.now(UTC))
+            )
 
     def _events(
-        self, tenant: TenantContext, report: SyncReport | None = None
+        self,
+        tenant: TenantContext,
+        report: SyncReport | None = None,
+        since: datetime | None = None,
     ) -> Iterator[SourceEvent]:
+        self.responses = []
         read, left_out = 0, []  # entries not read: refused, missing, unsupported (A-118)
         root = self._root_for_tenant(tenant.tenant_id)
         manifest_path = root / "manifest.yaml"
@@ -176,6 +193,23 @@ class ManualUploadConnector:
                     "detail": extraction.detail,
                 }
                 payload["text"] = extraction.text
+                blanks = (
+                    blank_pages(extraction.pages)
+                    if extraction.status in ("ok", "no_text_layer")
+                    else []
+                )
+                if blanks:
+                    payload["pdf"]["blank_pages"] = blanks
+                    payload["attachment"] = {"sha256": digest, "media_type": "application/pdf"}
+                    self._keep(entry, data, since)
+            elif (media_type := image_type(data)) is not None:
+                if len(data) > self._limits.max_bytes:
+                    left_out.append(f"too large {entry.file}")
+                    continue
+                payload["image"] = {"media_type": media_type}
+                payload["attachment"] = {"sha256": digest, "media_type": media_type}
+                payload["text"] = ""
+                self._keep(entry, data, since)
             elif suffix in _TEXT_SUFFIXES:
                 front_matter, body = split_front_matter(data.decode("utf-8"))
                 payload["front_matter"] = {

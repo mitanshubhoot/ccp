@@ -84,6 +84,7 @@ INSERT_ONLY: frozenset[str] = frozenset(
         "index_activations",
         "chunk_sets",
         "chunk_versions",
+        "transcriptions",
     }
 )
 # Operational state that is updated in place by design.

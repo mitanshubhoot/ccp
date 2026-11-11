@@ -106,8 +106,8 @@ def insert(cur: psycopg.Cursor[Any], entity: Entity) -> bool:
         row = cur.execute(
             "INSERT INTO evidence (tenant_id, entity_id, observed_at, source_connector,"
             " source_event_id, recorded_seq, evidence_type, title, text, subject_entity_id,"
-            " issued_at, raw_ref, page_texts, guardrail_events)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+            " issued_at, raw_ref, page_texts, guardrail_events, page_methods)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
             " ON CONFLICT DO NOTHING RETURNING 1",
             (
                 *base,
@@ -119,6 +119,7 @@ def insert(cur: psycopg.Cursor[Any], entity: Entity) -> bool:
                 entity.raw_ref,
                 _j(list(entity.page_texts)) if entity.page_texts is not None else None,
                 _j(list(entity.guardrail_events)),
+                _j(list(entity.page_methods)) if entity.page_methods is not None else None,
             ),
         ).fetchone()
     elif isinstance(entity, Vendor):
@@ -255,7 +256,7 @@ def current_evidence(
     query = (
         "SELECT * FROM (SELECT DISTINCT ON (entity_id) tenant_id, entity_id, observed_at,"
         " source_connector, source_event_id, evidence_type, title, text, subject_entity_id,"
-        f" issued_at, raw_ref, page_texts, guardrail_events FROM evidence{where}"
+        f" issued_at, raw_ref, page_texts, guardrail_events, page_methods FROM evidence{where}"
         " ORDER BY entity_id, observed_at DESC, source_event_id DESC) latest"
     )
     if evidence_type is not None:
@@ -267,7 +268,7 @@ def current_evidence(
 
 _EVIDENCE_COLUMNS = (
     "tenant_id, entity_id, observed_at, source_connector, source_event_id, evidence_type, title,"
-    " text, subject_entity_id, issued_at, raw_ref, page_texts, guardrail_events"
+    " text, subject_entity_id, issued_at, raw_ref, page_texts, guardrail_events, page_methods"
 )
 
 
@@ -286,6 +287,7 @@ def _evidence(r: tuple[Any, ...]) -> Evidence:
         raw_ref=r[10],
         page_texts=tuple(_load(r[11])) if r[11] is not None else None,
         guardrail_events=tuple(_load(r[12])),
+        page_methods=tuple(_load(r[13])) if len(r) > 13 and r[13] is not None else None,
     )
 
 

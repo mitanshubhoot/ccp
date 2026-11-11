@@ -25,6 +25,7 @@ user turn. Note the model-specific minimum cacheable prefix (4096 tokens on Haik
 
 from __future__ import annotations
 
+import base64
 import json
 import random
 import time
@@ -37,7 +38,15 @@ from pydantic import BaseModel
 from ccp import credentials
 from ccp.config import Settings
 from ccp.llm.budget import BudgetTracker
-from ccp.llm.client import ChatTurn, Completion, Extraction, SystemBlock, ToolCall, Usage
+from ccp.llm.client import (
+    Attachment,
+    ChatTurn,
+    Completion,
+    Extraction,
+    SystemBlock,
+    ToolCall,
+    Usage,
+)
 from ccp.llm.errors import (
     RetryableModelError,
     TerminalModelError,
@@ -106,12 +115,27 @@ def _context(usage: Usage) -> int:
     )
 
 
-def _user_content(user: str, documents: Sequence[str]) -> str | list[dict[str, Any]]:
+def _attachment_block(a: Attachment) -> dict[str, Any]:
+    data = base64.standard_b64encode(a.data).decode("ascii")
+    if a.media_type == "application/pdf":
+        return {
+            "type": "document",
+            "source": {"type": "base64", "media_type": a.media_type, "data": data},
+            "title": a.name,
+        }
+    return {"type": "image", "source": {"type": "base64", "media_type": a.media_type, "data": data}}
+
+
+def _user_content(
+    user: str, documents: Sequence[str], attachments: Sequence[Attachment] = ()
+) -> str | list[dict[str, Any]]:
     """Evidence and tool output as text document blocks ahead of the instruction, never
-    pasted into it (A-98); a call with no documents keeps the plain string."""
-    if not documents:
+    pasted into it (A-98), after any image or PDF the model reads (A-147); a call with
+    neither keeps the plain string."""
+    if not documents and not attachments:
         return user
-    blocks: list[dict[str, Any]] = [
+    blocks: list[dict[str, Any]] = [_attachment_block(a) for a in attachments]
+    blocks += [
         {
             "type": "document",
             "source": {"type": "text", "media_type": "text/plain", "data": document},
@@ -120,6 +144,13 @@ def _user_content(user: str, documents: Sequence[str]) -> str | list[dict[str, A
         for n, document in enumerate(documents, start=1)
     ]
     return [*blocks, {"type": "text", "text": user}]
+
+
+def _loggable(params: dict[str, Any], attachments: Sequence[Attachment]) -> dict[str, Any]:
+    """The request as recorded: an attachment by name, type and digest, never its bytes."""
+    if not attachments:
+        return params
+    return {**params, "messages": "redacted", "attachments": [a.describe() for a in attachments]}
 
 
 def _require_price(model: str) -> None:
@@ -241,17 +272,18 @@ class AnthropicClient:
         reasoning: bool = False,
         on_token: Callable[[str], None] | None = None,
         documents: Sequence[str] = (),
+        attachments: Sequence[Attachment] = (),
     ) -> Extraction:
         _require_price(model)
         params: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
             "system": system_param(system),
-            "messages": [{"role": "user", "content": _user_content(user, documents)}],
+            "messages": [{"role": "user", "content": _user_content(user, documents, attachments)}],
             **sampling_params(model, reasoning=reasoning),
         }
         _room_for_thinking(model, params)
-        request = {**params, "output_format": schema.__name__}
+        request = {**_loggable(params, attachments), "output_format": schema.__name__}
         if on_token is not None:
             response = self._with_retry(lambda: self._stream_parse(params, schema, on_token))
         else:
@@ -259,7 +291,10 @@ class AnthropicClient:
         usage, parsed = self._settle(model, tracker, response)
         if parsed is None:  # one re-ask, then terminal (spec.md D9)
             params["messages"] = [
-                {"role": "user", "content": _user_content(user + REASK_SUFFIX, documents)}
+                {
+                    "role": "user",
+                    "content": _user_content(user + REASK_SUFFIX, documents, attachments),
+                }
             ]
             response = self._with_retry(lambda: self._parse_or_malformed(params, schema))
             second, parsed = self._settle(model, tracker, response)

@@ -98,6 +98,9 @@ class Evidence(CanonicalBase):
     raw_ref: str
     page_texts: tuple[str, ...] | None = None  # PDFs: one entry per page, for page-aware chunking
     guardrail_events: tuple[str, ...] = ()
+    # how each page's text was obtained (A-147): text_layer, markdown, transcribed:<model>:<v>,
+    # blank:awaiting_transcription or illegible:<model>:<v>; one entry per page, or one
+    page_methods: tuple[str, ...] | None = None
 
     @property
     def kind(self) -> EntityKind:

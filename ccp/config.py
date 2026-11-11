@@ -47,6 +47,7 @@ class ScheduleSpec(BaseModel):
         "audit_verify",
         "canary",
         "judged_sample",
+        "transcribe",
     ]
     every: str = Field(
         pattern=r"^(every [1-9][0-9]* (minutes|hours)|daily ([01][0-9]|2[0-3]):[0-5][0-9])$"
@@ -72,6 +73,8 @@ DEFAULT_SCHEDULES: tuple[ScheduleSpec, ...] = (
     # production quality (A-144): the canary daily, a judged sample nightly; both need a key
     ScheduleSpec(id="canary", job="canary", every="daily 04:00"),
     ScheduleSpec(id="judged-sample", job="judged_sample", every="daily 04:30"),
+    # scanned pages and screenshots transcribed after the nightly pull (A-147); needs a key
+    ScheduleSpec(id="transcribe", job="transcribe", every="daily 01:45"),
 )
 
 
@@ -231,6 +234,9 @@ class Settings(BaseSettings):
     ccp_tier3_model: str = "claude-sonnet-5-5"  # tier 3 and the agents (A-142)
     # an independent second read of every AI-derived PASS (A-143)
     ccp_second_reader_model: str = "claude-sonnet-5-5"
+    # scanned pages and screenshots read word for word, the method kept in provenance (A-147)
+    ccp_transcribe_model: str = "claude-sonnet-5-5"
+    ccp_transcribe_max_pages: int = Field(default=40, ge=1)  # per run
     # The judge is a different model from every generating tier, and never grades its own
     # output; it runs ccp_judge_runs times and passes a case only when the runs agree.
     ccp_judge_model: str = "claude-opus-5"

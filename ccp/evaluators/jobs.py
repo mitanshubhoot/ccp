@@ -36,6 +36,7 @@ from ccp.ingest.landing import sync_connections
 from ccp.ingest.schedules import JOBS_TOPIC
 from ccp.ingest.worker import register
 from ccp.observability import steps
+from ccp.retrieval import transcribe
 from ccp.storage.scoped import ScopedDB
 
 Job = Callable[[ScopedDB, Settings, datetime], int]
@@ -51,6 +52,7 @@ JOBS: dict[str, Job] = {
         audit_checkpoints.checkpoint(db, settings) is not None
     ),
     "audit_verify": lambda db, settings, slot: _verified(db, settings),
+    "transcribe": lambda db, settings, slot: transcribe.transcribe(db, settings).pages,
 }
 
 

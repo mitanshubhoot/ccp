@@ -11,13 +11,19 @@ the result. A file that fails any cap is rejected, never parsed further.
       ├── page_count > max_pages      -> status "too_many_pages"
       ├── every page empty            -> status "no_text_layer"
       └── otherwise                   -> status "ok", pages = [text per page]
+
+    split_pages(data, pages, limits)  one-page PDFs of the named pages, in the same capped child,
+                                      for transcription of pages with no text layer (A-147)
+    image_type(data)                  the image's media type from its first bytes, or None
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -88,6 +94,82 @@ def extract_pages(path: Path, limits: PdfLimits = DEFAULT_LIMITS) -> PdfExtracti
     return PdfExtraction("ok", page_count=page_count, pages=pages)
 
 
+def blank_pages(pages: list[str]) -> list[int]:
+    """1-based numbers of the pages with no text layer."""
+    return [n for n, text in enumerate(pages, start=1) if not text.strip()]
+
+
+_MAGIC: tuple[tuple[bytes, int, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", 0, "image/png"),
+    (b"\xff\xd8\xff", 0, "image/jpeg"),
+    (b"GIF87a", 0, "image/gif"),
+    (b"GIF89a", 0, "image/gif"),
+    (b"WEBP", 8, "image/webp"),
+)
+
+
+def image_type(data: bytes) -> str | None:
+    """The media type by the file's first bytes, never by its name."""
+    for magic, at, media_type in _MAGIC:
+        if data[at : at + len(magic)] == magic and (
+            media_type != "image/webp" or data[:4] == b"RIFF"
+        ):
+            return media_type
+    return None
+
+
+def split_pages(
+    data: bytes, pages: list[int], limits: PdfLimits = DEFAULT_LIMITS
+) -> dict[int, bytes]:
+    """One single-page PDF per named page, made in a child process under the same caps."""
+    if not pages:
+        return {}
+    if len(data) > limits.max_bytes:
+        raise ValueError(f"{len(data)} bytes > {limits.max_bytes}")
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "source.pdf"
+        source.write_bytes(data)
+        try:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "ccp.connectors.manual.pdf_text",
+                    "--split",
+                    str(source),
+                    ",".join(str(n) for n in pages),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=limits.timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError(f"splitting took > {limits.timeout_seconds}s") from exc
+    if completed.returncode != 0:
+        raise ValueError(completed.stderr.strip()[-500:] or "child failed")
+    found = json.loads(completed.stdout)
+    return {int(n): base64.b64decode(b) for n, b in found.items()}
+
+
+def _split_child(path: str, pages: str) -> dict[str, str]:
+    from io import BytesIO
+
+    from pypdf import PdfReader, PdfWriter
+
+    reader = PdfReader(path)
+    out: dict[str, str] = {}
+    for n in (int(x) for x in pages.split(",") if x):
+        if not 1 <= n <= len(reader.pages):
+            continue
+        writer = PdfWriter()
+        writer.add_page(reader.pages[n - 1])
+        buffer = BytesIO()
+        writer.write(buffer)
+        out[str(n)] = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return out
+
+
 def _child(path: str, max_pages: int) -> dict[str, object]:
     from pypdf import PdfReader
 
@@ -101,4 +183,7 @@ def _child(path: str, max_pages: int) -> dict[str, object]:
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised through the parent
-    json.dump(_child(sys.argv[1], int(sys.argv[2])), sys.stdout)
+    if sys.argv[1] == "--split":
+        json.dump(_split_child(sys.argv[2], sys.argv[3]), sys.stdout)
+    else:
+        json.dump(_child(sys.argv[1], int(sys.argv[2])), sys.stdout)
