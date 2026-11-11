@@ -23,10 +23,10 @@ def test_loader_upserts_reference_tables(db_settings: Settings, pool: Connection
     first = kg.load_into_db(db, graph)
     second = kg.load_into_db(db, graph)
     assert first == second
-    assert db.fetch_one("SELECT count(*) FROM tests") == (13,)  # AWS-1 to AWS-3 (A-140)
+    assert db.fetch_one("SELECT count(*) FROM tests") == (14,)  # AWS-1 to AWS-3 (A-140)
     assert db.fetch_one("SELECT count(*) FROM requirements") == (18,)
     assert db.fetch_one("SELECT count(*) FROM requirement_controls") == (23,)
-    assert db.fetch_one("SELECT count(*) FROM control_tests") == (13,)
+    assert db.fetch_one("SELECT count(*) FROM control_tests") == (14,)
     assert db.fetch_one("SELECT tier FROM tests WHERE test_id = 'HR-4'") == (3,)
 
 

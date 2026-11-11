@@ -25,6 +25,7 @@ from ccp.normalize.aws_mapper import map_aws_event
 from ccp.normalize.entities import MappingResult
 from ccp.normalize.github_mapper import map_github_event
 from ccp.normalize.hris_mapper import map_hris_event
+from ccp.normalize.idp_mapper import map_idp_event
 from ccp.normalize.manual_mapper import map_manual_event
 from ccp.observability import steps
 from ccp.storage.scoped import ScopedDB
@@ -35,6 +36,7 @@ MAPPERS: dict[str, Mapper] = {
     "hris": map_hris_event,
     "manual": map_manual_event,
     "aws": map_aws_event,
+    "idp": map_idp_event,
 }
 RAW_CONNECTORS = tuple(MAPPERS)  # one raw topic, and one normalize consumer, each
 

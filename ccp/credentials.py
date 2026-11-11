@@ -9,6 +9,9 @@
     trace:langfuse_public / trace:langfuse_secret             tracing
     github:read          GITHUB_TOKEN                         the GitHub connector's pulls
     oidc:client          CCP_OIDC_CLIENT_SECRET               the UI's code exchange (A-135)
+    idp:read             CCP_IDP_TOKEN                        the Okta connector (A-141)
+    hris:aggregator      CCP_HRIS_AGGREGATOR_KEY              the HR aggregator (A-141)
+    hris:account         CCP_HRIS_ACCOUNT_TOKEN               the linked HR account (A-141)
 
 GitHub's write credential has no purpose here: only the remediation broker
 (ccp/remediation/broker.py) reaches it, through `remediation_token`, after it has checked
@@ -35,6 +38,9 @@ Purpose = Literal[
     "trace:langfuse_secret",
     "github:read",
     "oidc:client",
+    "idp:read",
+    "hris:aggregator",
+    "hris:account",
 ]
 
 _SETTING: dict[str, str] = {
@@ -47,6 +53,9 @@ _SETTING: dict[str, str] = {
     "trace:langfuse_secret": "langfuse_secret_key",
     "github:read": "github_token",
     "oidc:client": "ccp_oidc_client_secret",
+    "idp:read": "ccp_idp_token",
+    "hris:aggregator": "ccp_hris_aggregator_key",
+    "hris:account": "ccp_hris_account_token",
 }
 
 

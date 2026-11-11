@@ -22,7 +22,7 @@ BEFORE = {
     "evidence": {"GH-4", "GH-5", "HR-2", "HR-3", "HR-4", "HR-5"},
 }
 # What later steps added to the table, as data from the start (A-140).
-ADDED = {"access_grants": {"AWS-2"}, "assets": {"AWS-1", "AWS-3"}}
+ADDED = {"access_grants": {"AWS-2", "IDP-1"}, "assets": {"AWS-1", "AWS-3"}}
 TESTS = ("HR-1", "GH-1", "GH-2", "GH-3", "GH-4", "GH-5", "HR-2", "HR-3", "HR-4", "HR-5")
 
 

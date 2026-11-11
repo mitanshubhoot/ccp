@@ -81,7 +81,7 @@ class ConnectionSpec(BaseModel):
     connector: Literal["github", "hris", "manual", "aws", "idp"]
     source: Literal["fixture", "live"] = "fixture"
     account: str | None = Field(default=None, min_length=1)
-    credential: Literal["github:read", "idp:read"] | None = None
+    credential: Literal["github:read", "idp:read", "hris:aggregator"] | None = None
 
 
 DEFAULT_CONNECTIONS: tuple[ConnectionSpec, ...] = (
@@ -197,6 +197,11 @@ class Settings(BaseSettings):
     ccp_oidc_authorize_url: str | None = None
     ccp_oidc_token_url: str | None = None
     ccp_oidc_client_secret: SecretStr | None = None
+    # identity provider and HR aggregator secrets (A-141), read only through
+    # ccp/credentials.py
+    ccp_idp_token: SecretStr | None = None
+    ccp_hris_aggregator_key: SecretStr | None = None
+    ccp_hris_account_token: SecretStr | None = None
     ccp_ui_base_url: str = "http://127.0.0.1:8000"
     ccp_golden_dir: Path = REPO_ROOT / "evals" / "golden"
     ccp_eval_runs_dir: Path = REPO_ROOT / "evals" / "runs"

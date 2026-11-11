@@ -73,3 +73,7 @@ rules:
     when: {asset_prefix: ["aws:asset:account:"]}
     tests: [AWS-2]
     subject: tenant
+  - table: access_grants
+    when: {asset_prefix: ["idp:asset:"]}
+    tests: [IDP-1]
+    subject: tenant

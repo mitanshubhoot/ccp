@@ -35,6 +35,7 @@ def test_graph_shape(graph: kg.KnowledgeGraph) -> None:
         "HR-3",
         "HR-4",
         "HR-5",
+        "IDP-1",
     ]
     for control in graph.controls.values():
         assert control.requirements_in("soc2") and control.requirements_in("iso27001")

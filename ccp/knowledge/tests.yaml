@@ -165,3 +165,14 @@ tests:
     requires_complete: [aws:account]
     valid_from_strategy: evidence_observed
     revalidate_every_days: 1
+  - test_id: IDP-1
+    title: Every active identity-provider user has MFA
+    connector_scope: [idp]
+    evaluation: deterministic
+    evidence_types: [identity_mfa_status]
+    subject_kind: tenant
+    controls: [CTL-MFA]
+    rule: idp1_mfa  # a declarative check: knowledge/checks/idp1.yaml (A-141)
+    requires_complete: [idp:users, idp:factors]
+    valid_from_strategy: evidence_observed
+    revalidate_every_days: 1

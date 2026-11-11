@@ -1,0 +1,16 @@
+# IDP-1 as a declarative check (spec.md A-141): every active user of the identity provider
+# has an active MFA factor.
+test_id: IDP-1
+subject: tenant
+read:
+  from: grants
+  where:
+    - {field: attributes.source, equals: idp}
+    - {field: state, equals: active}
+abstain:
+  reason: no identity-provider users observed
+require:
+  - {field: attributes.mfa_enabled, truthy: true}
+fail: "{failing} of {population} active identity-provider users lack MFA: {failing_list}"
+failing_list: attributes.email
+pass: "all {population} active identity-provider users have MFA"

@@ -11,7 +11,9 @@ from ccp.connectors.aws.connector import AwsConnector
 from ccp.connectors.base import Connection, Connector, ConnectorName, SourceKind
 from ccp.connectors.github.client import GitHubLiveConnector
 from ccp.connectors.github.fixture import GitHubFixtureConnector
+from ccp.connectors.hris.aggregator import HrisAggregatorConnector
 from ccp.connectors.hris.fixture import HrisFixtureConnector
+from ccp.connectors.idp.okta import OktaConnector
 from ccp.connectors.manual.pdf_text import PdfLimits
 from ccp.connectors.manual.uploads import ManualUploadConnector
 from ccp.tenancy import TenantId
@@ -31,6 +33,7 @@ def declared_scopes() -> dict[str, frozenset[str]]:
         "hris": frozenset(HrisFixtureConnector.scopes),
         "manual": frozenset(ManualUploadConnector.scopes),
         "aws": frozenset(AwsConnector.scopes),
+        "idp": frozenset(OktaConnector.scopes),
     }
 
 
@@ -62,8 +65,14 @@ def build_connector(
             )
         return GitHubFixtureConnector(settings.ccp_fixtures_dir)
     if name == "hris":
-        if source == "live":
-            raise RuntimeError("the HRIS connector is fixture-only in this build (spec.md A-3)")
+        if source == "live":  # through the aggregator, behind the sync contract (A-141)
+            key = credentials.secret(settings, "hris:aggregator")
+            account = credentials.secret(settings, "hris:account")
+            if key is None or account is None:
+                raise RuntimeError(
+                    "CCP_HRIS_AGGREGATOR_KEY and CCP_HRIS_ACCOUNT_TOKEN are needed for live HR"
+                )
+            return HrisAggregatorConnector(key, account)
         return HrisFixtureConnector(settings.ccp_fixtures_dir)
     if name == "manual":
         if source == "live":
@@ -79,6 +88,11 @@ def build_connector(
         return ManualUploadConnector(fixture_root, pdf_limits(settings))
     if name == "aws":
         return _aws(settings, connection)
+    if name == "idp":
+        token = credentials.secret(settings, "idp:read")
+        if token is None or connection is None:
+            raise RuntimeError("an Okta connection needs its domain and CCP_IDP_TOKEN (A-141)")
+        return OktaConnector(connection.account, token)
     raise ValueError(f"unknown connector {name!r}")
 
 

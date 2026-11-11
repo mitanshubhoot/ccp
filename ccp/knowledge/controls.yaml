@@ -32,7 +32,7 @@ controls:
     title: All active identities use multi-factor authentication
     description: Every active human identity in the identity provider has MFA enabled.
     requirements: [soc2:CC6.1, iso27001:A.8.5]
-    tests: [HR-2, AWS-2]
+    tests: [HR-2, AWS-2, IDP-1]
   - control_id: CTL-AWARENESS
     title: Personnel complete security awareness training
     description: Every active employee has a completed, current, individually attributable training record.

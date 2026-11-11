@@ -62,6 +62,13 @@ step; work through it when the credentials are available.
 - [ ] A live pull of that account with a Config recorder on and off: AWS-1, AWS-2 and AWS-3
       match what the console shows (A-140).
 
+## Okta and the HR aggregator (MT6)
+
+- [ ] `CCP_IDP_TOKEN` and an `idp` live connection naming the Okta domain: a pull pages
+      through every user, factors per user; a leaver active in Okta fails HR-1 (A-141).
+- [ ] `CCP_HRIS_AGGREGATOR_KEY` and `CCP_HRIS_ACCOUNT_TOKEN` against a Merge sandbox: the
+      employees land as HR snapshots and identity resolution links them (A-141).
+
 ## Langfuse keys
 
 - [ ] Traces arrive with metadata only, and cost per run.
