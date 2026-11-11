@@ -45,6 +45,8 @@ class ScheduleSpec(BaseModel):
         "replay_sentinel",
         "audit_checkpoint",
         "audit_verify",
+        "canary",
+        "judged_sample",
     ]
     every: str = Field(
         pattern=r"^(every [1-9][0-9]* (minutes|hours)|daily ([01][0-9]|2[0-3]):[0-5][0-9])$"
@@ -67,6 +69,9 @@ DEFAULT_SCHEDULES: tuple[ScheduleSpec, ...] = (
     # the audit chain checkpointed and verified every hour (A-137)
     ScheduleSpec(id="audit-checkpoint", job="audit_checkpoint", every="every 1 hours"),
     ScheduleSpec(id="audit-verify", job="audit_verify", every="every 1 hours"),
+    # production quality (A-144): the canary daily, a judged sample nightly; both need a key
+    ScheduleSpec(id="canary", job="canary", every="daily 04:00"),
+    ScheduleSpec(id="judged-sample", job="judged_sample", every="daily 04:30"),
 )
 
 

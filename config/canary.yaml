@@ -1,0 +1,10 @@
+# The daily canary (spec.md A-144): golden cases that call the real model, run against the
+# bundle in production each day. A pass rate below the floor fails the job.
+floor: 1.0
+cases:
+  - cmp-tier2-gh4-acme-platform
+  - cmp-tier2-gh4-globex-injection
+  - cmp-tier2-hr3-acme-atorres-pdf
+  - cmp-tier2-hr3-acme-sam-patil-not-theirs
+  - cmp-tier3-hr4-acme-partial-names-payroll
+  - cmp-tier3-hr4-globex-pass

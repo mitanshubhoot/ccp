@@ -13,9 +13,13 @@
 # The margins are the owner's call. These defaults are a starting point, not a measurement:
 # at n = 10 a floor of 0.5 tolerates one failing case (lower bound 0.60 at 9 of 10). With 0
 # of 35 FAIL cases passed, the false-PASS upper bound is just under 0.10.
+# A judge gates a release only when its latest calibration agrees with the expert labels
+# at least this often; below it, judged failures are advisory (A-144).
+judge_min_agreement: 0.85
 default:
   pass_k_floor: 0.5
   false_pass_ceiling: 0.10
   min_cases: 5
   min_fail_cases: 35
+  refusal_rate_max: 0.05  # model refusals over runs (A-144)
 targets: {}

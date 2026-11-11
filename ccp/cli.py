@@ -26,8 +26,9 @@ from ccp.connectors.base import parse_ts
 from ccp.connectors.registry import CONNECTOR_NAMES, SOURCE_KINDS, build_connector
 from ccp.copilot import cli as copilot_cli
 from ccp.evals import calibration as judge_calibration
-from ccp.evals import capture, regress, shadow
+from ccp.evals import capture, regress, shadow, sizing
 from ccp.evals import labels as eval_labels
+from ccp.evals import production as _production  # noqa: F401 - registers the quality jobs
 from ccp.evals import runner as eval_runner
 from ccp.evals.schema import GoldenCase
 from ccp.evaluators import clock as clock_producer
@@ -771,6 +772,27 @@ def _eval_selection(
     return chosen, hashes
 
 
+@evals_app.command("size")
+def evals_size(
+    bound: float = typer.Option(0.02, "--bound", help="the false-PASS rate to bound"),
+    confidence: float = typer.Option(0.95, "--confidence"),
+) -> None:
+    """Whether each AI target's gold set can bound its false-PASS rate (A-144). Exits 1 when
+    one cannot."""
+    settings = _settings()
+    cases, _ = eval_runner.load_cases(settings.ccp_golden_dir)
+    found = sizing.size(cases, bound, confidence)
+    typer.echo(
+        f"{sizing.fail_cases_needed(bound, confidence)} FAIL cases bound false PASS at"
+        f" {bound:.0%} with {confidence:.0%} confidence"
+    )
+    for t in found:
+        status = "; ".join(t.findings) or "ok"
+        typer.echo(f"{t.target:<14} {t.fail_cases:>4}/{t.cases:<4} FAIL ({t.share:.0%})  {status}")
+    if any(t.findings for t in found):
+        raise typer.Exit(1)
+
+
 @evals_app.command("shadow")
 def evals_shadow(
     model: str = typer.Option(..., "--model", help="the candidate tier-2 model"),
@@ -901,7 +923,8 @@ def evals_regress(
     chosen, hashes = _eval_selection(settings, suite, None, None, None)
     report = eval_runner.run(settings, chosen, hashes, unit=unit, runs=runs)
     gates = regress.load_gates(settings.ccp_eval_gates_path)
-    reg = regress.diff(base, report, strict=strict, gates=gates)
+    agreement = regress.latest_judge_agreement(settings.ccp_eval_runs_dir)
+    reg = regress.diff(base, report, strict=strict, gates=gates, judge_agreement=agreement)
     # a regressed run never becomes the baseline: the next run must still see the flip
     path = eval_runner.write_report(report, settings.ccp_eval_runs_dir, promote=reg.exit_code == 0)
     typer.echo(regress.format_regression(reg))
