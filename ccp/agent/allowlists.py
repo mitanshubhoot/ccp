@@ -11,10 +11,18 @@ TIER3_BASE: tuple[str, ...] = (
     "get_chunk",
     "list_evidence",
     "get_evidence_chunks",
+    "find_exact",
+    "outline",
+    "read_span",
+    "find_access",
     "list_assets",
     "get_person",
     "get_current_state",
 )
+
+# The Policy Agent reads policy documents only: each of these tools takes an evidence type,
+# which its graph pins and its base rule requires (A-113, A-146).
+POLICY_PINNED: tuple[str, ...] = ("search_evidence", "find_exact", "outline", "read_span")
 
 ALLOWLISTS: dict[str, frozenset[str]] = {
     # an evaluator must not read prior verdicts, or it anchors on them
@@ -24,7 +32,7 @@ ALLOWLISTS: dict[str, frozenset[str]] = {
         TIER3_BASE + ("get_verdict", "list_findings", "get_access_grants", "get_control")
     ),
     # a policy draft must never contain named individuals' access details
-    "policy": frozenset(("search_evidence", "get_chunk", "get_control", "get_framework_rollup")),
+    "policy": frozenset(POLICY_PINNED + ("get_chunk", "get_control", "get_framework_rollup")),
     # the copilot's restriction is that it has no write path, not fewer reads
     "copilot": frozenset(
         TIER3_BASE

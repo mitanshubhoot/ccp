@@ -61,6 +61,8 @@ class RetrievedChunk:
     rerank_score: float | None = None
     rerank_rank: int | None = None
     is_distractor: bool = False
+    start_offset: int | None = None  # [start, end) in the page or evidence text (A-145)
+    end_offset: int | None = None
 
     @property
     def top_score(self) -> float:
@@ -128,6 +130,7 @@ fts AS (
   WHERE %(use_fts)s
     AND evidence_type = %(etype)s
     AND (%(subject)s::text IS NULL OR subject_entity_id = %(subject)s)
+    AND (%(eids)s::text[] IS NULL OR evidence_entity_id = ANY(%(eids)s::text[]))
     AND (%(distractors)s OR NOT is_distractor)
     AND tsv @@ to_tsquery('english', %(tsq)s)
   ORDER BY score DESC, chunk_id
@@ -140,6 +143,7 @@ fts AS (
   WHERE %(use_dense)s
     AND evidence_type = %(etype)s
     AND (%(subject)s::text IS NULL OR subject_entity_id = %(subject)s)
+    AND (%(eids)s::text[] IS NULL OR evidence_entity_id = ANY(%(eids)s::text[]))
     AND (%(distractors)s OR NOT is_distractor)
     AND embedding IS NOT NULL
   ORDER BY embedding <=> %(vec)s::vector
@@ -156,7 +160,7 @@ fts AS (
 )
 SELECT c.chunk_id, c.evidence_entity_id, c.evidence_type, c.subject_entity_id, c.source_ref,
        c.page, c.text, c.context, fu.fts_score, fu.fts_rank, fu.cos_score, fu.cos_rank,
-       fu.fused_score, c.is_distractor
+       fu.fused_score, c.is_distractor, c.start_offset, c.end_offset
 FROM fused fu JOIN {src} c ON c.chunk_id = fu.chunk_id
 ORDER BY fu.fused_score DESC, c.chunk_id
 LIMIT %(n)s
@@ -181,6 +185,7 @@ def retrieve(
     top_k: int | None = None,
     as_of: datetime | None = None,
     generation_id: str | None = None,
+    evidence_ids: Sequence[str] | None = None,
 ) -> RetrievalResult:
     cfg = config or RetrievalConfig()
     k = top_k or cfg.top_k
@@ -230,6 +235,7 @@ def retrieve(
         "rrf_k": cfg.rrf_k,
         "gen": result.generation_id,
         "as_of": as_of,
+        "eids": list(evidence_ids) if evidence_ids is not None else None,
     }
     with db.transaction() as cur:
         cur.execute(
@@ -255,6 +261,8 @@ def retrieve(
             fused_score=float(r[12]),
             fused_rank=i + 1,
             is_distractor=bool(r[13]),
+            start_offset=r[14],
+            end_offset=r[15],
         )
         for i, r in enumerate(rows)
     ]

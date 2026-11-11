@@ -72,7 +72,9 @@ def test_the_bundle_hash_covers_the_whole_declaration(monkeypatch: pytest.Monkey
 def test_every_result_matches_its_output_schema(world: tuple[ScopedDB, ScopedDB]) -> None:
     acme, _ = world
     bound = bind_tools(_ctx(acme), tuple(sorted(TOOL_SPECS)), gate=Gate("graph:copilot"))
-    chunk = acme.fetch_one("SELECT chunk_id, evidence_entity_id FROM chunks LIMIT 1")
+    chunk = acme.fetch_one(
+        "SELECT chunk_id, evidence_entity_id, evidence_type, page FROM chunks LIMIT 1"
+    )
     verdict = acme.fetch_one("SELECT verdict_id, test_id, subject_key FROM verdicts LIMIT 1")
     person = acme.fetch_one("SELECT entity_id FROM persons LIMIT 1")
     assert chunk is not None and verdict is not None and person is not None
@@ -81,6 +83,16 @@ def test_every_result_matches_its_output_schema(world: tuple[ScopedDB, ScopedDB]
         "get_chunk": {"chunk_id": chunk[0]},
         "list_evidence": {"evidence_type": "access_review_report"},
         "get_evidence_chunks": {"evidence_entity_id": chunk[1]},
+        "find_exact": {"kind": "date"},
+        "outline": {"evidence_type": chunk[2], "evidence_entity_id": chunk[1]},
+        "read_span": {
+            "evidence_type": chunk[2],
+            "evidence_entity_id": chunk[1],
+            "start": 0,
+            "end": 80,
+            "page": chunk[3],
+        },
+        "find_access": {"state": "active"},
         "list_assets": {},
         "get_person": {"canonical_person_id": person[0]},
         "get_current_state": {"test_id": verdict[1], "subject_key": verdict[2]},
@@ -118,6 +130,8 @@ def test_absent_data_is_an_error_that_names_it_never_an_empty_list(
         "get_current_state": ({"test_id": "HR-1", "subject_key": "tenant"}, "evaluation"),
         "get_access_grants": ({"canonical_person_id": "person:hris:person:E1"}, "grants"),
         "get_evidence_chunks": ({"evidence_entity_id": "evidence:none"}, "chunks"),
+        "find_exact": ({"text": "review"}, "evidence"),
+        "find_access": ({}, "grants"),
     }
     for name, (args, what) in expected.items():
         result = bound[name].call(args)

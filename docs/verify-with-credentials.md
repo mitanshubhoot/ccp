@@ -14,6 +14,10 @@ step; work through it when the credentials are available.
       needs_review.
 - [ ] The investigator (`ccp investigate run`), the policy agent (`ccp policy gap`,
       `draft`) and the copilot (`ccp copilot`) end to end.
+- [ ] The agents' reading tools with a real model: an investigation of a policy finding
+      calls `find_exact`, `outline` or `read_span` as well as `search_evidence`, and the
+      run log shows each result's version and offsets; count searches per verified
+      citation before and after (A-146).
 - [ ] Prompt caching: cache reads appear on repeated stable prefixes.
 - [ ] `ccp replay <id> --execute` on a model-backed verdict.
 

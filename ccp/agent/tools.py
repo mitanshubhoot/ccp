@@ -20,9 +20,10 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from ccp.agent.authz import Decision, Gate
 from ccp.evaluators import inventory
@@ -30,7 +31,7 @@ from ccp.identity import resolver
 from ccp.knowledge import graph as knowledge
 from ccp.knowledge import rollup as knowledge_rollup
 from ccp.normalize import repository
-from ccp.retrieval import generations, hybrid
+from ccp.retrieval import documents, generations, hybrid
 from ccp.retrieval.config import RetrievalConfig
 from ccp.retrieval.embeddings import EmbeddingClient
 from ccp.retrieval.rerank import Reranker
@@ -38,7 +39,7 @@ from ccp.security.secrets_patterns import redact
 from ccp.storage import bitemporal
 from ccp.storage import exceptions as stored_exceptions
 from ccp.storage.scoped import ScopedDB
-from ccp.types import EvidenceType
+from ccp.types import EmploymentStatus, EvidenceType, GrantState
 
 MAX_TOP_K = 8
 
@@ -51,6 +52,49 @@ class SearchEvidenceArgs(_Args):
     query: str = Field(min_length=1)
     evidence_type: EvidenceType
     top_k: int = Field(default=6, ge=1, le=MAX_TOP_K)
+    subject_entity_id: str | None = None
+    issued_after: date | None = Field(default=None, description="issued on or after")
+    issued_before: date | None = Field(default=None, description="issued on or before")
+    as_of: datetime | None = Field(default=None, description="search what the index held then")
+
+
+class FindExactArgs(_Args):
+    text: str | None = Field(default=None, min_length=2, max_length=200)
+    kind: documents.Kind | None = Field(
+        default=None, description="a typed pattern instead of text: cve, arn, email, date"
+    )
+    evidence_type: EvidenceType | None = None
+    evidence_entity_id: str | None = None
+    limit: int = Field(default=10, ge=1, le=25)
+
+    @model_validator(mode="after")
+    def _one_of(self) -> FindExactArgs:
+        if (self.text is None) == (self.kind is None):
+            raise ValueError("give exactly one of text and kind")
+        return self
+
+
+class OutlineArgs(_Args):
+    evidence_type: EvidenceType
+    evidence_entity_id: str
+    version: str | None = Field(default=None, description="an observation id; default newest")
+
+
+class ReadSpanArgs(_Args):
+    evidence_type: EvidenceType
+    evidence_entity_id: str
+    start: int = Field(ge=0)
+    end: int = Field(gt=0)
+    page: int | None = Field(default=None, ge=1, description="required for paged documents")
+    version: str | None = None
+
+
+class FindAccessArgs(_Args):
+    employment_status: EmploymentStatus | None = None
+    asset_prefix: str | None = Field(default=None, description="e.g. github: or aws:")
+    role: str | None = None
+    state: GrantState = GrantState.active
+    limit: int = Field(default=25, ge=1, le=50)
 
 
 class GetChunkArgs(_Args):
@@ -120,6 +164,8 @@ class ChunkOut(_Out):
     text: str
     redactions: list[str]
     scores: dict[str, Any] | None = None
+    start_offset: int | None = None
+    end_offset: int | None = None
 
 
 class SearchEvidenceOut(_Out):
@@ -143,6 +189,85 @@ class ListEvidenceOut(_Out):
 
 class ChunksOut(_Out):
     chunks: list[ChunkOut]
+
+
+class SpanRefOut(_Out):
+    chunk_id: str
+    page: int | None
+    start_offset: int | None
+    end_offset: int | None
+
+
+class MatchOut(_Out):
+    evidence_entity_id: str
+    version: str
+    evidence_type: str
+    page: int | None
+    start_offset: int
+    end_offset: int
+    match: str
+    text: str  # the match with SNIPPET characters either side
+    redactions: list[str]
+    chunk_id: str | None
+
+
+class FindExactOut(_Out):
+    matches: list[MatchOut]
+    total: int
+    truncated: bool
+
+
+class OutlineEntryOut(_Out):
+    kind: Literal["heading", "table"]
+    level: int
+    title: str
+    page: int | None
+    start_offset: int
+    end_offset: int
+
+
+class OutlineOut(_Out):
+    evidence_entity_id: str
+    version: str
+    evidence_type: str
+    title: str
+    observed_at: str
+    pages: int | None
+    length: int
+    entries: list[OutlineEntryOut]
+    chunks: list[SpanRefOut]
+
+
+class ReadSpanOut(_Out):
+    evidence_entity_id: str
+    version: str
+    evidence_type: str
+    page: int | None
+    start_offset: int
+    end_offset: int
+    truncated: bool
+    text: str
+    redactions: list[str]
+    chunks: list[SpanRefOut]
+
+
+class AccessRowOut(_Out):
+    canonical_person_id: str
+    display_name: str | None
+    employment_status: str
+    account_entity_id: str
+    asset_entity_id: str
+    role: str
+    state: str
+    state_effective_at: str
+    observed_at: str
+
+
+class FindAccessOut(_Out):
+    rows: list[AccessRowOut]
+    total: int
+    truncated: bool
+    read_at: str
 
 
 class AssetOut(_Out):
@@ -342,6 +467,45 @@ _SPECS: tuple[ToolSpec, ...] = (
         untrusted=True,
     ),
     ToolSpec(
+        "find_exact",
+        "Exact matches in evidence text: a literal string, or every CVE, ARN, email, date or"
+        " control id. Each match has its document version, page, offsets and chunk.",
+        FindExactArgs,
+        FindExactOut,
+        scopes=("evidence",),
+        untrusted=True,
+    ),
+    ToolSpec(
+        "outline",
+        "One document version's structure: headings and tables with page and offsets, and"
+        " its chunks' spans. Read a section next with read_span.",
+        OutlineArgs,
+        OutlineOut,
+        scopes=("evidence",),
+        untrusted=True,
+        max_calls=6,
+    ),
+    ToolSpec(
+        "read_span",
+        "The exact text of one document version between two offsets (at most"
+        f" {documents.MAX_SPAN} characters), with the chunks it falls in.",
+        ReadSpanArgs,
+        ReadSpanOut,
+        scopes=("evidence",),
+        untrusted=True,
+        max_calls=12,
+    ),
+    ToolSpec(
+        "find_access",
+        "Typed facts: who holds which access, joined over people and grants, e.g. leavers"
+        " who still hold admin on github: assets. Truncation is explicit.",
+        FindAccessArgs,
+        FindAccessOut,
+        scopes=("people", "access"),
+        untrusted=True,  # names come from the customer's systems
+        max_calls=4,
+    ),
+    ToolSpec(
         "list_assets",
         "This tenant's assets: id, name, type, tags; optionally filtered by tag.",
         ListAssetsArgs,
@@ -440,7 +604,7 @@ def _redaction_count(result: Any) -> int:
         return 0
     own = result.get("redactions")
     total = len(own) if isinstance(own, list) else 0
-    for chunk in result.get("chunks") or []:
+    for chunk in [*(result.get("chunks") or []), *(result.get("matches") or [])]:
         if isinstance(chunk, dict) and isinstance(chunk.get("redactions"), list):
             total += len(chunk["redactions"])
     return total
@@ -457,6 +621,8 @@ def _chunk_dict(c: hybrid.RetrievedChunk) -> dict[str, Any]:
             "source_ref": c.source_ref,
             "text": c.text,
             "scores": c.scores(),
+            "start_offset": c.start_offset,
+            "end_offset": c.end_offset,
         }
     )
 
@@ -469,16 +635,37 @@ def _holds_chunks(ctx: ToolContext, evidence_type: str) -> bool:
     return row is not None
 
 
+def _issued_between(ctx: ToolContext, a: SearchEvidenceArgs) -> list[str] | None:
+    if a.issued_after is None and a.issued_before is None:
+        return None
+    return [
+        e.entity_id
+        for e in repository.current_evidence(ctx.db, a.evidence_type)
+        if (a.issued_after is None or (e.issued_at or e.observed_at).date() >= a.issued_after)
+        and (a.issued_before is None or (e.issued_at or e.observed_at).date() <= a.issued_before)
+    ]
+
+
 def search_evidence(ctx: ToolContext, args: BaseModel) -> Any:
     a = SearchEvidenceArgs.model_validate(args.model_dump())
+    within = _issued_between(ctx, a)
+    if within is not None and not within:
+        return missing(
+            a.evidence_type.value,
+            f"no {a.evidence_type.value} evidence was issued in that period",
+        )
+    as_of = a.as_of.replace(tzinfo=UTC) if a.as_of and a.as_of.tzinfo is None else a.as_of
     result = hybrid.retrieve(
         ctx.db,
         ctx.embedder,
         a.query,
         evidence_type=a.evidence_type.value,
+        subject_entity_id=a.subject_entity_id,
         reranker=ctx.reranker,
         config=ctx.retrieval,
         top_k=a.top_k,
+        as_of=as_of,
+        evidence_ids=within,
     )
     if not result.chunks and not _holds_chunks(ctx, a.evidence_type.value):
         return missing(a.evidence_type.value, f"no {a.evidence_type.value} evidence is held")
@@ -494,7 +681,7 @@ def get_chunk(ctx: ToolContext, args: BaseModel) -> Any:
     a = GetChunkArgs.model_validate(args.model_dump())
     row = ctx.db.fetch_one(
         "SELECT chunk_id, evidence_entity_id, evidence_type, subject_entity_id, page, source_ref,"
-        " text FROM chunks WHERE chunk_id = %s AND NOT is_distractor",
+        " text, start_offset, end_offset FROM chunks WHERE chunk_id = %s AND NOT is_distractor",
         (a.chunk_id,),
     )
     if row is None:  # cited before a re-index or a generation switch: read the version
@@ -513,6 +700,8 @@ _CHUNK_KEYS = (
     "page",
     "source_ref",
     "text",
+    "start_offset",
+    "end_offset",
 )
 
 
@@ -540,21 +729,169 @@ def get_evidence_chunks(ctx: ToolContext, args: BaseModel) -> Any:
     a = GetEvidenceChunksArgs.model_validate(args.model_dump())
     rows = ctx.db.fetch_all(
         "SELECT chunk_id, evidence_entity_id, evidence_type, subject_entity_id, page, source_ref,"
-        " text FROM chunks WHERE evidence_entity_id = %s AND NOT is_distractor ORDER BY ordinal",
+        " text, start_offset, end_offset FROM chunks WHERE evidence_entity_id = %s"
+        " AND NOT is_distractor ORDER BY ordinal",
         (a.evidence_entity_id,),
     )
     if not rows:
         return missing("chunks", f"no chunks are held for {a.evidence_entity_id}")
-    keys = (
-        "chunk_id",
-        "evidence_entity_id",
-        "evidence_type",
-        "subject_entity_id",
-        "page",
-        "source_ref",
-        "text",
+    return {"chunks": [_redacted_row(dict(zip(_CHUNK_KEYS, r, strict=True))) for r in rows]}
+
+
+def _span_refs(drafts: list[Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "chunk_id": d.chunk_id,
+            "page": d.page,
+            "start_offset": d.start_offset,
+            "end_offset": d.end_offset,
+        }
+        for d in drafts
+    ]
+
+
+def _version(
+    ctx: ToolContext, evidence_type: EvidenceType, entity: str, version: str | None
+) -> Any:
+    found = repository.evidence_version(ctx.db, entity, version)
+    if found is None or found.evidence_type != evidence_type:
+        return None  # another type is not this tool's to read (the Policy Agent's pin)
+    return found
+
+
+def find_exact(ctx: ToolContext, args: BaseModel) -> Any:
+    a = FindExactArgs.model_validate(args.model_dump())
+    held = repository.current_evidence(ctx.db, a.evidence_type)
+    if a.evidence_entity_id is not None:
+        held = [e for e in held if e.entity_id == a.evidence_entity_id]
+    if not held:
+        what = a.evidence_type.value if a.evidence_type else "evidence"
+        return missing(what, f"no {what} is held to search")
+    matches, total = documents.find(held, text=a.text, kind=a.kind, limit=a.limit)
+    by_id = {e.entity_id: e for e in held}
+    out = []
+    for m in matches:
+        inside = documents.covering(by_id[m.evidence_entity_id], m.page, m.start, m.end)
+        out.append(
+            _redacted_row(
+                {
+                    "evidence_entity_id": m.evidence_entity_id,
+                    "version": m.version,
+                    "evidence_type": m.evidence_type,
+                    "page": m.page,
+                    "start_offset": m.start,
+                    "end_offset": m.end,
+                    "match": m.match,
+                    "text": m.snippet,
+                    "chunk_id": inside[0].chunk_id if inside else None,
+                }
+            )
+        )
+    return {"matches": out, "total": total, "truncated": total > len(out)}
+
+
+def outline(ctx: ToolContext, args: BaseModel) -> Any:
+    a = OutlineArgs.model_validate(args.model_dump())
+    found = _version(ctx, a.evidence_type, a.evidence_entity_id, a.version)
+    if found is None:
+        return {"error": "not found"}
+    return {
+        "evidence_entity_id": found.entity_id,
+        "version": found.source_event_id,
+        "evidence_type": found.evidence_type.value,
+        "title": redact(found.title)[0],
+        "observed_at": found.observed_at.isoformat(),
+        "pages": len(found.page_texts) if found.page_texts is not None else None,
+        "length": sum(len(body) for _, body in documents.pages(found)),
+        "entries": [
+            {
+                "kind": e.kind,
+                "level": e.level,
+                "title": redact(e.title)[0],
+                "page": e.page,
+                "start_offset": e.start,
+                "end_offset": e.end,
+            }
+            for e in documents.outline(found)
+        ],
+        "chunks": _span_refs(documents.chunks_of(found)),
+    }
+
+
+def read_span(ctx: ToolContext, args: BaseModel) -> Any:
+    a = ReadSpanArgs.model_validate(args.model_dump())
+    found = _version(ctx, a.evidence_type, a.evidence_entity_id, a.version)
+    if found is None:
+        return {"error": "not found"}
+    span = documents.read(found, a.start, a.end, a.page)
+    if span is None:
+        pages = len(found.page_texts) if found.page_texts is not None else None
+        return {"error": f"no page {a.page}: the document has {pages or 'no'} pages"}
+    return _redacted_row(
+        {
+            "evidence_entity_id": found.entity_id,
+            "version": found.source_event_id,
+            "evidence_type": found.evidence_type.value,
+            "page": span.page,
+            "start_offset": span.start,
+            "end_offset": span.end,
+            "truncated": span.truncated,
+            "text": span.text,
+            "chunks": _span_refs(documents.covering(found, span.page, span.start, span.end)),
+        }
     )
-    return {"chunks": [_redacted_row(dict(zip(keys, r, strict=True))) for r in rows]}
+
+
+def find_access(ctx: ToolContext, args: BaseModel) -> Any:
+    """A join inside a typed tool (who holds what), not a graph built from documents."""
+    a = FindAccessArgs.model_validate(args.model_dump())
+    grants = repository.current_grants(ctx.db)
+    if not grants:
+        return missing("grants", "no access grants are held: no access source has been pulled")
+    links = resolver.canonical_map(ctx.db)
+    people: dict[str, list[Any]] = {}
+    for person in repository.current_persons(ctx.db):
+        people.setdefault(links.get(person.entity_id, person.entity_id), []).append(person)
+
+    def status(members: list[Any]) -> str:
+        held = {m.employment_status for m in members}
+        for value in (EmploymentStatus.terminated, EmploymentStatus.active):
+            if value in held:
+                return value.value
+        return EmploymentStatus.unknown.value
+
+    rows: list[dict[str, Any]] = []
+    for g in sorted(grants, key=lambda x: (x.person_entity_id, x.asset_entity_id, x.role)):
+        canonical = links.get(g.person_entity_id, g.person_entity_id)
+        members = people.get(canonical, [])
+        held_status = status(members)
+        if g.state != a.state:
+            continue
+        if a.employment_status is not None and held_status != a.employment_status.value:
+            continue
+        if a.asset_prefix is not None and not g.asset_entity_id.startswith(a.asset_prefix):
+            continue
+        if a.role is not None and g.role.lower() != a.role.lower():
+            continue
+        rows.append(
+            {
+                "canonical_person_id": canonical,
+                "display_name": next((m.display_name for m in members if m.display_name), None),
+                "employment_status": held_status,
+                "account_entity_id": g.person_entity_id,
+                "asset_entity_id": g.asset_entity_id,
+                "role": g.role,
+                "state": g.state.value,
+                "state_effective_at": g.state_effective_at.isoformat(),
+                "observed_at": g.observed_at.isoformat(),
+            }
+        )
+    return {
+        "rows": rows[: a.limit],
+        "total": len(rows),
+        "truncated": len(rows) > a.limit,
+        "read_at": datetime.now(UTC).isoformat(),
+    }
 
 
 def list_assets(ctx: ToolContext, args: BaseModel) -> Any:
@@ -772,6 +1109,10 @@ TOOL_FNS: dict[str, ToolFn] = {
     "get_chunk": get_chunk,
     "list_evidence": list_evidence,
     "get_evidence_chunks": get_evidence_chunks,
+    "find_exact": find_exact,
+    "outline": outline,
+    "read_span": read_span,
+    "find_access": find_access,
     "list_assets": list_assets,
     "get_person": get_person,
     "get_current_state": get_current_state,

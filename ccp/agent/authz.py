@@ -36,7 +36,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 from ulid import ULID
 
-from ccp.agent.allowlists import ALLOWLISTS
+from ccp.agent.allowlists import ALLOWLISTS, POLICY_PINNED
 from ccp.config import REPO_ROOT
 from ccp.storage.scoped import ScopedDB
 
@@ -88,14 +88,14 @@ def base_rules() -> tuple[Rule, ...]:
         Rule(
             id="base:policy",
             principal="graph:policy",
-            tools=tuple(sorted(t for t in ALLOWLISTS["policy"] if t != "search_evidence")),
+            tools=tuple(sorted(t for t in ALLOWLISTS["policy"] if t not in POLICY_PINNED)),
         )
     )
     rules.append(
         Rule(
             id="base:policy-search",
             principal="graph:policy",
-            tools=("search_evidence",),
+            tools=tuple(sorted(POLICY_PINNED)),
             when={"evidence_type": ("policy_document",)},
         )
     )

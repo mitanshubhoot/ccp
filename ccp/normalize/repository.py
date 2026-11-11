@@ -262,24 +262,44 @@ def current_evidence(
         query += " WHERE evidence_type = %s"
         params = (*params, evidence_type.value)
     rows = db.fetch_all(query + " ORDER BY observed_at DESC, entity_id", params)
-    return [
-        Evidence(
-            tenant_id=TenantId(r[0]),
-            entity_id=r[1],
-            observed_at=r[2],
-            source_connector=r[3],
-            source_event_id=r[4],
-            evidence_type=EvidenceType(r[5]),
-            title=r[6],
-            text=r[7],
-            subject_entity_id=r[8],
-            issued_at=r[9],
-            raw_ref=r[10],
-            page_texts=tuple(_load(r[11])) if r[11] is not None else None,
-            guardrail_events=tuple(_load(r[12])),
-        )
-        for r in rows
-    ]
+    return [_evidence(r) for r in rows]
+
+
+_EVIDENCE_COLUMNS = (
+    "tenant_id, entity_id, observed_at, source_connector, source_event_id, evidence_type, title,"
+    " text, subject_entity_id, issued_at, raw_ref, page_texts, guardrail_events"
+)
+
+
+def _evidence(r: tuple[Any, ...]) -> Evidence:
+    return Evidence(
+        tenant_id=TenantId(r[0]),
+        entity_id=r[1],
+        observed_at=r[2],
+        source_connector=r[3],
+        source_event_id=r[4],
+        evidence_type=EvidenceType(r[5]),
+        title=r[6],
+        text=r[7],
+        subject_entity_id=r[8],
+        issued_at=r[9],
+        raw_ref=r[10],
+        page_texts=tuple(_load(r[11])) if r[11] is not None else None,
+        guardrail_events=tuple(_load(r[12])),
+    )
+
+
+def evidence_version(
+    db: ScopedDB, entity_id: str, source_event_id: str | None = None
+) -> Evidence | None:
+    """One observation of an evidence entity: the named one (its version id), else the newest."""
+    query = f"SELECT {_EVIDENCE_COLUMNS} FROM evidence WHERE entity_id = %s"  # noqa: S608
+    params: tuple[Any, ...] = (entity_id,)
+    if source_event_id is not None:
+        query += " AND source_event_id = %s"
+        params = (*params, source_event_id)
+    row = db.fetch_one(query + " ORDER BY observed_at DESC, source_event_id DESC LIMIT 1", params)
+    return _evidence(row) if row is not None else None
 
 
 def current_vendors(db: ScopedDB) -> list[Vendor]:

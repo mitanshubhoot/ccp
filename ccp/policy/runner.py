@@ -13,7 +13,7 @@ from typing import Any
 from ulid import ULID
 
 from ccp.agent import authz, core, threads
-from ccp.agent.allowlists import ALLOWLISTS
+from ccp.agent.allowlists import ALLOWLISTS, POLICY_PINNED
 from ccp.agent.graphs import policy as graph_module
 from ccp.agent.tools import ToolContext, bind_tools
 from ccp.approvals import store as approvals
@@ -91,7 +91,7 @@ def _build(
             ScopedDB(agent, db.tenant), providers.embedder, providers.reranker, providers.retrieval
         ),
         tuple(sorted(ALLOWLISTS[GRAPH])),
-        fixed={"search_evidence": {"evidence_type": "policy_document"}},
+        fixed={name: {"evidence_type": "policy_document"} for name in POLICY_PINNED},
         gate=authz.Gate(f"graph:{GRAPH}", run_id=run_id, log_db=db),
     )
     deps = core.ModelDeps(providers.llm, settings.policy_model, tracker, reasoning=True, log_db=db)
