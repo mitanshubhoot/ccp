@@ -141,6 +141,10 @@ step; work through it when the credentials are available.
       separate audit account: an hourly checkpoint signs in KMS and lands locked in
       compliance mode; `ccp audit verify` is clean; a restore drill on an RDS snapshot with
       one altered row gives exactly one finding (A-137).
+- [ ] `ccp audit package build --framework soc2 --as-of ... --by NAME` with the KMS
+      signing key and the audit bucket: every file lands locked in compliance mode, and
+      `python ccp/audit/package_verify.py <folder> --public-key <KMS public key PEM>`
+      verifies on a machine with no CCP install; an altered results.json fails (A-168).
 
 - [ ] `terraform init -backend-config=...` and `terraform apply` of `infra/terraform` into a
       cell and an audit account; `ccp db migrate` against the RDS instance creates pgvector

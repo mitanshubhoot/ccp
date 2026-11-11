@@ -34,6 +34,8 @@ class Signer(Protocol):
 
     def verify(self, message: bytes, signature: bytes) -> bool: ...
 
+    def public_key_pem(self) -> str: ...
+
 
 class LocalSigner:
     def __init__(self, path: Path) -> None:
@@ -60,6 +62,16 @@ class LocalSigner:
     def sign(self, message: bytes) -> bytes:
         return self._key.sign(message)
 
+    def public_key_pem(self) -> str:
+        """The key a package's verifier checks against (A-168)."""
+        return (
+            self._key.public_key()
+            .public_bytes(
+                serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+            .decode("ascii")
+        )
+
     def verify(self, message: bytes, signature: bytes) -> bool:
         try:
             self._key.public_key().verify(signature, message)
@@ -72,6 +84,14 @@ class KmsSigner:
     def __init__(self, key_id: str, client: Any) -> None:
         self.key_id = key_id
         self._client = client
+
+    def public_key_pem(self) -> str:
+        """KMS gives the public half as DER; a package carries it as PEM (A-168)."""
+        der: bytes = self._client.get_public_key(KeyId=self.key_id)["PublicKey"]
+        key = serialization.load_der_public_key(der)
+        return key.public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        ).decode("ascii")
 
     def sign(self, message: bytes) -> bytes:
         answer = self._client.sign(

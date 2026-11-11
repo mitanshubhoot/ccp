@@ -60,6 +60,7 @@ CHAINED = (
     "answer_library",
     "resource_inventory",
     "playbook_results",
+    "audit_packages",
 )
 
 

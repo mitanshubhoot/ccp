@@ -17,6 +17,7 @@ from ccp.approvals import cli as approvals_cli
 from ccp.audit import checkpoints as audit_checkpoints
 from ccp.audit import verify as audit_verify
 from ccp.auth import members
+from ccp.compliance_state import packages as audit_packages
 from ccp.compliance_state import reader as state_reader
 from ccp.compliance_state import run as pipeline
 from ccp.compliance_state import writer as state_writer  # noqa: F401 - registers the state consumer
@@ -721,6 +722,7 @@ app.add_typer(rules_app, name="rules")
 app.add_typer(auth_app, name="auth")
 app.add_typer(members_app, name="members")
 app.add_typer(audit_app, name="audit")
+audit_app.add_typer(audit_packages.package_app, name="package")
 app.add_typer(aws_app, name="aws")
 app.add_typer(bundles_app, name="bundles")
 app.add_typer(worker_app, name="worker")
