@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 
+from ccp import tenancy
 from ccp.config import Settings, TenantSettings
 from ccp.evaluators import completeness, deterministic, inventory, registry, tier2
 from ccp.evaluators import verdict as verdicts
@@ -114,7 +115,8 @@ def commit_verdict(db: ScopedDB, verdict: Verdict) -> bool:
 
 
 def cached_tenant_settings(tenant_id: str, settings: Settings) -> TenantSettings:
-    return settings.load_tenants()[tenant_id]
+    """The tenant's settings now: its current version, else the tenants file (A-133)."""
+    return tenancy.lookup(settings, tenant_id)
 
 
 def expected_key(

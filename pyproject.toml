@@ -89,6 +89,7 @@ layers = [
     "ccp.remediation",
     "ccp.approvals.cli",
     "ccp.approvals.actions",
+    "ccp.tenants",
     "ccp.compliance_state",
     "ccp.agent",
     "ccp.evaluators",

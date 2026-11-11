@@ -39,6 +39,7 @@ training in the Voyage organization settings); `LANGFUSE_PUBLIC_KEY` and `LANGFU
 
 | Area | Commands |
 |---|---|
+| Tenants | `ccp tenants list`, `create`, `show`, `history`, `set` (a change of scope waits for an approver); `ccp members list`, `grant`, `revoke` |
 | Ingest and normalize | `ccp ingest`, `ccp normalize`, `ccp identity resolve` and `review`, `ccp worker` |
 | Evaluate | `ccp evaluate run` and `clock`, `ccp state current`, `history`, `asof`, `ccp report` |
 | Retrieval | `ccp index rebuild`, `refresh`, `stats`, `distractors`, `calibrate`, `search` |

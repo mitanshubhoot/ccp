@@ -29,6 +29,7 @@ from ccp.policy.schema import GapReport, PolicyDraft, PolicyGap
 from ccp.storage import checkpoints
 from ccp.storage.db import Pools, agent_pool
 from ccp.storage.scoped import ScopedDB
+from ccp.tenancy import TenantContext
 
 GRAPH = graph_module.GRAPH_NAME
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -63,7 +64,8 @@ def other_tenant_tokens(settings: Settings, tenant_id: str) -> list[str]:
     for one tenant must never contain them (S9). The whole display name, the GitHub org and
     the id always count; a single word of the name counts only when it is distinctive."""
     tokens: list[str] = []
-    for other_id, other in settings.load_tenants().items():
+    for ctx in TenantContext.all(settings):  # the file's tenants and onboarded ones (A-133)
+        other_id, other = ctx.tenant_id, ctx.settings
         if other_id == tenant_id:
             continue
         tokens.extend([other.display_name, other.github_org, other_id])

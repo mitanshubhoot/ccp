@@ -17,6 +17,9 @@ identity_merge        approve -> the two records are linked as one person; rejec
                                  involved are evaluated again (A-132)
 break_glass_review    approve -> the break-glass use was justified; reject -> it was not, and
                                  the approvals audit reports it (A-132)
+scope_change          approve -> the tenant's settings asked for become its current version,
+                                 if the version they were asked against is still current
+                                 (A-133)
 
 An admin may approve an urgent item (a remediation or its rollback) they asked for by
 break-glass, with a reason; another approver then reviews the use (A-132).
@@ -40,6 +43,7 @@ from ccp.evaluators.tier2 import Providers
 from ccp.identity import resolver
 from ccp.storage import exceptions as stored_exceptions
 from ccp.storage.scoped import ScopedDB
+from ccp.tenants import scope
 
 MIN_BREAK_GLASS_REASON = 20  # characters
 
@@ -132,6 +136,15 @@ def approve(
     check_plain_decision(item.kind, decision, status)
     if item.kind == "exception":
         return _grant_exception(db, item, who, note)
+    if item.kind == "scope_change":
+
+        def adopt(cur: Any) -> None:
+            scope.apply_in(cur, db, item, who)
+
+        updated = store.record_event(db, approval_id, "approved", who, note, within=adopt)
+        scope.forget(db)
+        changed = ", ".join(sorted(item.payload["changes"]))
+        return Outcome(updated, f"settings changed ({changed}); the next evaluation reads them")
     if item.kind == "identity_merge":
         write = resolver.resolution_writer(
             db, item.ref_id, "merge", who.label, note, approval_id=approval_id

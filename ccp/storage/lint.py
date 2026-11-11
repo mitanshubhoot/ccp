@@ -72,6 +72,7 @@ INSERT_ONLY: frozenset[str] = frozenset(
         "execution_journal",
         "control_exceptions",
         "exception_revocations",
+        "tenant_versions",
     }
 )
 # Operational state that is updated in place by design.
@@ -91,6 +92,7 @@ OPERATIONAL: frozenset[str] = frozenset(
 # Cross-tenant dispatch metadata (A-106): no row-level security, and exactly these columns.
 DISPATCH: dict[str, frozenset[str]] = {
     "work_hints": frozenset({"tenant_id", "consumer", "ready_at", "served_at"}),
+    "tenant_directory": frozenset({"tenant_id", "created_at"}),  # which tenants exist (A-133)
 }
 
 

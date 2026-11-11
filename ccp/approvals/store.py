@@ -37,6 +37,7 @@ Kind = Literal[
     "exception",
     "identity_merge",
     "break_glass_review",
+    "scope_change",
 ]
 Event = Literal["opened", "approved", "rejected", "changes_requested", "closed"]
 KINDS: tuple[Kind, ...] = (
@@ -48,6 +49,7 @@ KINDS: tuple[Kind, ...] = (
     "exception",
     "identity_merge",
     "break_glass_review",
+    "scope_change",
 )
 OPEN_STATES = ("opened", "changes_requested")
 DECIDED_STATES = ("approved", "rejected")
@@ -61,6 +63,7 @@ EXPIRES: dict[str, timedelta] = {
     "exception": timedelta(days=14),
     "identity_merge": timedelta(days=30),
     "break_glass_review": timedelta(days=7),  # a break-glass use is reviewed within a week
+    "scope_change": timedelta(days=14),
 }
 # Break-glass (A-132): an admin may approve an urgent item they asked for, with a reason,
 # a few times a day per tenant; each use opens a review that another approver decides.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -55,6 +56,9 @@ from ccp.storage import bitemporal, db
 from ccp.storage import exceptions as stored_exceptions
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
+from ccp.tenants import onboarding
+from ccp.tenants import scope as tenant_scope
+from ccp.tenants import versions as tenant_versions
 
 app = typer.Typer(
     no_args_is_help=True, add_completion=False, help="ccp: compliance companion platform"
@@ -1206,7 +1210,7 @@ def connectors_pull(
 
 @tenants_app.command("list")
 def tenants_list() -> None:
-    """List the configured tenants."""
+    """List the active tenants: the tenants file's and those onboarded (A-133)."""
     for ctx in TenantContext.all(_settings()):
         s = ctx.settings
         typer.echo(
@@ -1214,6 +1218,106 @@ def tenants_list() -> None:
             f"admin_limit={s.org_admin_limit} sla_h={s.termination_revocation_sla_hours} "
             f"critical_tags={','.join(s.critical_asset_tags)}"
         )
+
+
+@tenants_app.command("create")
+def tenants_create(
+    tenant_id: str,
+    display_name: str = typer.Option(..., "--display-name"),
+    github_org: str = typer.Option(..., "--github-org"),
+    admin_subject: str = typer.Option(..., "--admin-subject", help="the first admin's subject"),
+    admin_issuer: str | None = typer.Option(
+        None, "--admin-issuer", help="their issuer (default: the configured one)"
+    ),
+    time_zone: str = typer.Option("UTC", "--time-zone"),
+) -> None:
+    """Onboard a tenant: its first version and its first admin, no deploy (A-133)."""
+    settings = _settings()
+    issuer = admin_issuer or auth.verifier(settings).issuer
+    pool = db.app_pool(settings)
+    try:
+        ctx = onboarding.create(
+            settings,
+            pool,
+            tenant_id,
+            display_name=display_name,
+            github_org=github_org,
+            admin=auth.Principal(issuer, admin_subject),
+            time_zone=time_zone,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    finally:
+        pool.close()
+    typer.echo(f"{ctx.tenant_id}: onboarded; {issuer}#{admin_subject} is its admin")
+
+
+@tenants_app.command("show")
+def tenants_show(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """The settings in force and the version they come from."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        current, version = tenant_versions.effective(ScopedDB(pool, ctx))
+    finally:
+        pool.close()
+    typer.echo(f"version {version}")
+    typer.echo(json.dumps(current.model_dump(mode="json"), indent=2))
+
+
+@tenants_app.command("history")
+def tenants_history(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        found = tenant_versions.history(ScopedDB(pool, ctx))
+    finally:
+        pool.close()
+    if not found:
+        typer.echo("no versions: the tenants file is in force")
+    for v in found:
+        allowed = f" approval={v.approval_id}" if v.approval_id else ""
+        typer.echo(
+            f"{v.recorded_at:%Y-%m-%d %H:%M} {v.version_id} {v.status:<10} {v.reason}"
+            f"  by {v.recorded_by}{allowed}"
+        )
+
+
+@tenants_app.command("set")
+def tenants_set(
+    changes: list[str] = typer.Argument(..., help="field=JSON value, e.g. org_admin_limit=2"),
+    token: str = typer.Option(..., "--token", envvar="CCP_TOKEN"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Change settings as an admin: a change of scope waits for an approver (A-133)."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    try:
+        who = auth.authenticate(settings, token)
+    except auth.InvalidToken as exc:
+        raise typer.BadParameter(f"sign-in token refused: {exc}") from exc
+    asked: dict[str, object] = {}
+    for change in changes:
+        field, sep, raw = change.partition("=")
+        if not sep:
+            raise typer.BadParameter(f"{change!r} is not field=value")
+        try:
+            asked[field] = json.loads(raw)
+        except json.JSONDecodeError:
+            asked[field] = raw
+    pool = db.app_pool(settings)
+    try:
+        version, item = tenant_scope.change(ScopedDB(pool, ctx), who, asked)
+    except (ValueError, PermissionError) as exc:
+        raise typer.BadParameter(f"refused: {exc}") from exc
+    finally:
+        pool.close()
+    if item is not None:
+        typer.echo(f"a change of scope: approval {item} waits for an approver")
+    else:
+        typer.echo(f"recorded as version {version}")
 
 
 @db_app.command("migrate")
