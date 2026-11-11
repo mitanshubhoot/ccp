@@ -93,9 +93,8 @@ def test_only_a_failing_subject_takes_a_bounded_accountable_exception(
 ) -> None:
     _, acme = world
     asker = member(acme, "rita", "reviewer")
-    passing = next(v for v in latest_per_subject(acme, "HR-1") if v.status.value == "pass")
     cases = [
-        ({"subject": passing.subject}, "only a failing subject"),
+        ({"subject": "person:hris:person:E0000"}, "only a failing subject"),  # never assessed
         ({"until": datetime.now(UTC) - timedelta(days=1)}, "ends in the future"),
         ({"until": _until(400)}, "at most 365 days"),
         ({"reason": "because"}, "at least 20 characters"),

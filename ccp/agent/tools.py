@@ -170,8 +170,16 @@ class PersonOut(_Out):
     accounts: list[AccountOut]
 
 
+class ExceptionOut(_Out):
+    until: str
+    owner: str
+    reason: str
+
+
 class StateOut(_Out):
     status: str
+    shown_as: str  # "fail (excepted until D)" while an exception holds (A-132)
+    exception: ExceptionOut | None = None
     valid_from: str
     verdict_id: str
     reason: str
@@ -195,6 +203,7 @@ class FindingOut(_Out):
     subject_key: str
     test_id: str
     status: str
+    shown_as: str  # still a failure when excepted (A-132)
     verdict_id: str
 
 
@@ -233,6 +242,7 @@ class ControlOut(_Out):
 class RollupRowOut(_Out):
     requirement_id: str
     state: str
+    shown_as: str  # "fail (excepted until D)" when every failing subject is excepted (A-132)
     blocking_test_id: str | None
     blocking_subject_key: str | None
     counts: dict[str, int]
