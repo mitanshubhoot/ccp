@@ -243,6 +243,16 @@ def _drafted(
         if f.chunk_id in by_id and citations.quote_supported(f.quote, by_id[f.chunk_id]["text"])
     ]
     given = direction if direction in ("yes", "no") else "none: decide from the facts"
+    facts_nonce = prompt_guard.new_nonce()
+    listed = "\n".join(f'- {f["statement"]} ("{f["quote"]}")' for f in facts)
+    fenced_facts = prompt_guard.frame_evidence(  # quotes are evidence: a document block
+        [
+            prompt_guard.FramedChunk(
+                chunk_id="facts", text=listed or "(no checked facts)", evidence_type="facts"
+            )
+        ],
+        facts_nonce,
+    ).text
     prose = llm.extract(
         schema=AnswerProse,
         system=[
@@ -250,12 +260,13 @@ def _drafted(
             SystemBlock(schema_block(AnswerProse), cache=True),
         ],
         user=(
-            f"Question: {question}\nDirection decided by CCP's tested controls: {given}\n"
-            "Checked facts (system data):\n"
-            + "\n".join(f'- {f["statement"]} ("{f["quote"]}")' for f in facts)
+            f"{prompt_guard.fence_declaration(facts_nonce)}\n\nQuestion: {question}\n"
+            f"Direction decided by CCP's tested controls: {given}\n"
+            "The checked facts are in the fenced block."
         ),
         model=settings.ccp_questionnaire_model,
         tracker=tracker,
+        documents=[fenced_facts],
     )
     parsed: AnswerProse = prose.parsed
     checks = check_prose(parsed, direction, facts, question)
