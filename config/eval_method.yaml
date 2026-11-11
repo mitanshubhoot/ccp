@@ -1,0 +1,20 @@
+# How CCP's published quality figures were produced (LT6, spec.md A-170). Every published
+# snapshot carries this method beside its numbers, so a buyer or an auditor can judge them.
+#
+#   labellers        who labelled the gold cases, and what qualifies them
+#   run_settings     how each case was run when the figures were measured
+#   min_fail_cases   a false-PASS bound is published only on at least this many
+#                    FAIL-labelled cases (300 with none passed gives a 1% bound at 95%);
+#                    below it the figure is withheld and the count is shown
+
+labellers:
+  - role: compliance analyst
+    qualifications: holds CISA or ISO 27001 Lead Auditor; two years of SOC 2 fieldwork
+  - role: second annotator
+    qualifications: the same, labelling blind to the first; disagreements adjudicated
+run_settings:
+  runs_per_case: 5
+  thinking: off for extraction (Haiku 5.5); adaptive for agents (Sonnet 5.5)
+  sampling: the provider's defaults; no temperature override
+  infrastructure: the production cell and release bundle, through the production path
+min_fail_cases: 300

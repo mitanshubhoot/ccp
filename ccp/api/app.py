@@ -56,6 +56,7 @@ from ccp.auth import members
 from ccp.compliance_state import auditors, reader
 from ccp.compliance_state import exceptions as exception_requests
 from ccp.config import Settings
+from ccp.evals import publish as quality_publish
 from ccp.evaluators import feedback as upload_feedback
 from ccp.evaluators.tier2 import Providers
 from ccp.knowledge import graph as knowledge
@@ -451,6 +452,27 @@ def fix_metrics(s: Member) -> dict[str, Any]:
         "reopened": m.reopened,
         "reopen_rate_30d": m.reopen_rate,
     }
+
+
+# -- method cards (A-170): how a verdict or a suggestion came to be -------------------------
+
+
+@router.get("/tenants/{tenant_id}/verdicts/{verdict_id}/card")
+def verdict_card(verdict_id: str, s: Member) -> dict[str, Any]:
+    card = quality_publish.verdict_card(s.db, verdict_id)
+    if card is None:
+        raise HTTPException(404, f"no verdict {verdict_id!r}")
+    out: dict[str, Any] = jsonable_encoder(card)
+    return out
+
+
+@router.get("/tenants/{tenant_id}/fixes/{suggestion_id}/card")
+def fix_card(suggestion_id: str, s: Member) -> dict[str, Any]:
+    card = quality_publish.suggestion_card(s.db, suggestion_id)
+    if card is None:
+        raise HTTPException(404, f"no suggestion {suggestion_id!r}")
+    out: dict[str, Any] = jsonable_encoder(card)
+    return out
 
 
 # -- the auditor workspace (A-169): time-boxed and read-only ---------------------------------

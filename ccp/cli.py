@@ -32,6 +32,7 @@ from ccp.evals import drafting as check_drafting
 from ccp.evals import labels as eval_labels
 from ccp.evals import mapping as mapping_cli
 from ccp.evals import production as _production  # noqa: F401 - registers the quality jobs
+from ccp.evals import publish as quality_publish
 from ccp.evals import relabel as eval_relabel
 from ccp.evals import runner as eval_runner
 from ccp.evals.schema import GoldenCase
@@ -1026,6 +1027,35 @@ def _eval_selection(
     if not chosen:
         raise typer.BadParameter("no golden cases matched")
     return chosen, hashes
+
+
+@evals_app.command("publish")
+def evals_publish(
+    report: Path = typer.Option(Path("evals/runs/latest.json"), "--report"),
+) -> None:
+    """Write this quarter's quality snapshot per AI workflow (A-170)."""
+    for path in quality_publish.publish(report, Settings()):
+        snap = json.loads(path.read_text(encoding="utf-8"))
+        shown = snap["withheld"] or f"false PASS at most {snap['false_pass_upper']}"
+        typer.echo(f"{snap['workflow']:<16} {shown}  ({path})")
+
+
+@evals_app.command("card")
+def evals_card(
+    verdict: str = typer.Option(..., "--verdict"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """The method card of one verdict (A-170)."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        card = quality_publish.verdict_card(ScopedDB(pool, ctx), verdict)
+        if card is None:
+            raise typer.BadParameter(f"no verdict {verdict!r}")
+        typer.echo(json.dumps(card, indent=2, default=str))
+    finally:
+        pool.close()
 
 
 @evals_app.command("size")

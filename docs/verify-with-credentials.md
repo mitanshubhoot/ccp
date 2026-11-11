@@ -7,6 +7,11 @@ step; work through it when the credentials are available.
 
 ## Anthropic API key (`ANTHROPIC_API_KEY`)
 
+- [ ] After a keyed `ccp evals run` with five runs per case, `ccp evals publish` writes
+      this quarter's snapshot per AI workflow; with fewer than 300 FAIL-labelled cases the
+      false-PASS bound is withheld with the count shown, and `GET .../verdicts/{id}/card`
+      on a model verdict names the snapshot (A-170). Growing the gold set is labellers'
+      work.
 - [ ] Upload a real console screenshot and a scanned access review with the worker
       running: `GET /v1/tenants/{t}/evidence/{id}/feedback` answers within seconds of
       landing (`seconds_after_landing`), Claude's transcription of a screenshot dated a
