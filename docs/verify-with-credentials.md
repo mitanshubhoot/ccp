@@ -30,6 +30,11 @@ step; work through it when the credentials are available.
       fixtures and shadow, and a reviewer promotes only a draft with no shadow
       difference (`ccp knowledge checks review`) (A-165). Count compile and fixture pass
       rates over 20 drafts.
+- [ ] In a sandbox account with AWS Config recording, `ccp coverage inventory` lands
+      the Config responses and a whole snapshot; `ccp coverage map --rows` gives every
+      resource a status; with the recorder stopped the snapshot is incomplete and every
+      row reads not assessed (A-166). `ccp coverage registry` twice a week apart, with
+      CCP's own credentials, queues the types AWS added.
 - [ ] The Investigator on a failing GH-1 or HR-1 verdict chooses
       `github_remove_collaborator` with the right repository and login from the
       context's fix list (prompt `investigator_diagnose_v2`); a choice outside the list

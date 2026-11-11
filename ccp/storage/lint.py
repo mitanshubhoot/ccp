@@ -101,6 +101,8 @@ INSERT_ONLY: frozenset[str] = frozenset(
         "questionnaire_answers",
         "answer_events",
         "answer_library",
+        "resource_inventory",
+        "playbook_results",
     }
 )
 # Operational state that is updated in place by design.

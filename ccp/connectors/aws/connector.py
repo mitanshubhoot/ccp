@@ -360,3 +360,37 @@ def windows(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
         out.append((at, min(at + WINDOW, end)))
         at += WINDOW
     return out
+
+
+def inventory_of(connector: AwsConnector) -> list[dict[str, str]] | None:
+    """Every resource AWS Config records in the account, by type (A-166); None when no
+    recorder is recording, so the inventory is not whole and must not be read as such."""
+    connector.responses = []
+    config = connector._watch(connector._client(connector._assumed(), "config"))
+    status = config.describe_configuration_recorder_status()
+    if not any(r.get("recording") for r in status.get("ConfigurationRecordersStatus", [])):
+        return None
+    out: list[dict[str, str]] = []
+    token: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {
+            "Expression": "SELECT resourceType, resourceId, resourceName, awsRegion",
+            "Limit": 100,
+        }
+        if token:
+            kwargs["NextToken"] = token
+        page = config.select_resource_config(**kwargs)
+        for raw in page.get("Results", []):
+            item = json.loads(raw)
+            out.append(
+                {
+                    "resource_type": str(item.get("resourceType")),
+                    "resource_id": str(item.get("resourceId")),
+                    "name": str(item.get("resourceName") or item.get("resourceId")),
+                    "region": str(item.get("awsRegion") or ""),
+                }
+            )
+        token = page.get("NextToken")
+        if not token:
+            break
+    return out

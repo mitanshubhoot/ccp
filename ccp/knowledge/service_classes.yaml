@@ -1,0 +1,48 @@
+# Service classes (LT11, spec.md A-166): what CCP expects of every cloud resource, by the
+# kind of thing it is. Reviewed data, versioned with the catalogue.
+#
+#   classes     each class and the intents every resource of it should meet
+#   types       a reviewed lookup from a provider's resource type to its class; a type
+#               not listed here is unclassified and its resources show not assessed until
+#               a person approves a class for it (`ccp coverage classify`)
+#   coverage    which deterministic test decides an intent for a type; an intent with no
+#               test is a gap, read by the class's playbook (A-167), which can raise FAIL
+#               or needs_review, never PASS
+
+classes:
+  data_store: [not_public, encrypted, backed_up, logged]
+  compute: [patched, least_privilege, logged]
+  network_edge: [not_public, logged]
+  identity: [mfa, least_privilege]
+  keys_secrets: [rotated, least_privilege]
+  logging: [logged, retained]
+  messaging: [encrypted, not_public]
+  ai_ml: [not_public, logged]
+  container: [patched, not_public]
+  serverless: [least_privilege, logged]
+
+types:
+  AWS::S3::Bucket: data_store
+  AWS::RDS::DBInstance: data_store
+  AWS::DynamoDB::Table: data_store
+  AWS::EC2::Instance: compute
+  AWS::EC2::SecurityGroup: network_edge
+  AWS::ElasticLoadBalancingV2::LoadBalancer: network_edge
+  AWS::CloudFront::Distribution: network_edge
+  AWS::IAM::User: identity
+  AWS::IAM::Role: identity
+  AWS::KMS::Key: keys_secrets
+  AWS::SecretsManager::Secret: keys_secrets
+  AWS::CloudTrail::Trail: logging
+  AWS::Logs::LogGroup: logging
+  AWS::SQS::Queue: messaging
+  AWS::SNS::Topic: messaging
+  AWS::SageMaker::NotebookInstance: ai_ml
+  AWS::ECR::Repository: container
+  AWS::ECS::Cluster: container
+  AWS::Lambda::Function: serverless
+
+coverage:
+  AWS::S3::Bucket: {not_public: AWS-1}
+  AWS::IAM::User: {mfa: AWS-2}
+  AWS::CloudTrail::Trail: {logged: AWS-3}

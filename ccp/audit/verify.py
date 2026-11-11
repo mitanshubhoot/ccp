@@ -58,6 +58,8 @@ CHAINED = (
     "auditor_decisions",
     "answer_events",
     "answer_library",
+    "resource_inventory",
+    "playbook_results",
 )
 
 

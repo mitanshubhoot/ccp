@@ -51,6 +51,8 @@ class ScheduleSpec(BaseModel):
         "tasks",
         "relabel",
         "answer_staleness",
+        "inventory",
+        "registry_diff",
     ]
     every: str = Field(
         pattern=r"^(every [1-9][0-9]* (minutes|hours)|daily ([01][0-9]|2[0-3]):[0-5][0-9])$"
@@ -84,6 +86,10 @@ DEFAULT_SCHEDULES: tuple[ScheduleSpec, ...] = (
     ScheduleSpec(id="relabel", job="relabel", every="daily 05:00"),
     # approved questionnaire answers re-checked against the verdicts and documents (A-163)
     ScheduleSpec(id="answer-staleness", job="answer_staleness", every="daily 05:30"),
+    # the AWS inventory coverage is measured over, after the nightly pull (A-166)
+    ScheduleSpec(id="inventory", job="inventory", every="daily 01:40"),
+    # AWS's resource-type registry, compared on Mondays (A-166)
+    ScheduleSpec(id="registry-diff", job="registry_diff", every="daily 06:00"),
 )
 
 

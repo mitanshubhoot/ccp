@@ -59,6 +59,7 @@ from ccp.llm import release
 from ccp.llm.budget import BudgetTracker, RunBudget
 from ccp.llm.client import try_build_client
 from ccp.lookups import cli as lookups_cli
+from ccp.lookups import coverage_cli  # registers the inventory and registry jobs
 from ccp.lookups import runner as _lookups  # noqa: F401 - registers the lookup consumers
 from ccp.normalize import consumer as normalize_consumer
 from ccp.normalize import repository
@@ -125,6 +126,7 @@ app.add_typer(evidence_cli.app, name="evidence")
 app.add_typer(questionnaires_cli.app, name="questionnaires")
 app.add_typer(tasks_cli.app, name="tasks")
 app.add_typer(lookups_cli.app, name="lookups")
+app.add_typer(coverage_cli.app, name="coverage")
 state_app = typer.Typer(no_args_is_help=True, help="The bitemporal compliance state")
 app.add_typer(state_app, name="state")
 
