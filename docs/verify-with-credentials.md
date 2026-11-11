@@ -12,6 +12,10 @@ step; work through it when the credentials are available.
       false-PASS bound is withheld with the count shown, and `GET .../verdicts/{id}/card`
       on a model verdict names the snapshot (A-170). Growing the gold set is labellers'
       work.
+- [ ] Once a questionnaire snapshot meets the bar on the bundle in force (Gate 3), an
+      administrator sets `questionnaire/library_answer` to sampled
+      (`POST /v1/tenants/{t}/autonomy`); run `autonomy.simulate` over a month of real
+      library answers first and review its false accepts (A-171).
 - [ ] Upload a real console screenshot and a scanned access review with the worker
       running: `GET /v1/tenants/{t}/evidence/{id}/feedback` answers within seconds of
       landing (`seconds_after_landing`), Claude's transcription of a screenshot dated a

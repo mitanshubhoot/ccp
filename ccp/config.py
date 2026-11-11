@@ -54,6 +54,7 @@ class ScheduleSpec(BaseModel):
         "inventory",
         "registry_diff",
         "playbooks",
+        "autonomy_watch",
     ]
     every: str = Field(
         pattern=r"^(every [1-9][0-9]* (minutes|hours)|daily ([01][0-9]|2[0-3]):[0-5][0-9])$"
@@ -93,6 +94,8 @@ DEFAULT_SCHEDULES: tuple[ScheduleSpec, ...] = (
     ScheduleSpec(id="registry-diff", job="registry_diff", every="daily 06:00"),
     # the coverage gaps read by their class's playbook, after the inventory (A-167)
     ScheduleSpec(id="playbooks", job="playbooks", every="daily 02:40"),
+    # a class that skips review is demoted on a bundle change or a failing check (A-171)
+    ScheduleSpec(id="autonomy-watch", job="autonomy_watch", every="every 1 hours"),
 )
 
 

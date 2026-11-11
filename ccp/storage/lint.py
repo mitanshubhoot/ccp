@@ -108,6 +108,8 @@ INSERT_ONLY: frozenset[str] = frozenset(
         "auditor_revocations",
         "auditor_access",
         "attestations",
+        "autonomy_levels",
+        "auto_decisions",
     }
 )
 # Operational state that is updated in place by design.

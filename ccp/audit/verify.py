@@ -64,6 +64,8 @@ CHAINED = (
     "auditor_grants",
     "auditor_revocations",
     "attestations",
+    "autonomy_levels",
+    "auto_decisions",
 )
 
 

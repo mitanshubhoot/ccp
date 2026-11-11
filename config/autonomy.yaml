@@ -1,0 +1,32 @@
+# Which drafts may skip a person's review, and on what evidence (LT8, spec.md A-171).
+# CCP suggests and drafts; it changes nothing in a customer's systems, so "autonomy" here
+# only means a draft is accepted without a person reading it first. Levels, per tenant,
+# workflow and decision class:
+#
+#   shadow        drafted and recorded, never shown
+#   suggest       shown as a suggestion; a person decides
+#   approve_each  a person approves every one (the default)
+#   sampled       accepted without review, except a seeded sample and anything past the
+#                 day's exposure budget, which go to a person
+#
+# Only a class marked reversible and low impact may reach sampled. Promotion needs an
+# administrator's opt-in and a published quality snapshot (A-170) for the workflow, on the
+# release bundle in force, that meets the bar below; a bundle change or a failing quality
+# check demotes the class to approve_each at once.
+
+promotion:
+  max_false_accept_upper: 0.01   # the snapshot's false-PASS upper bound
+  min_fail_cases: 300            # FAIL-labelled cases the bound rests on
+  min_pass_k: 0.90
+exposure:
+  max_auto_per_day: 50           # per tenant, workflow and class
+  sample_rate: 0.10              # still reviewed, chosen by a seeded hash of the item
+
+classes:
+  questionnaire:
+    library_answer: {reversible: true, impact: low, snapshot: questionnaire}
+    drafted_answer: {reversible: true, impact: high, snapshot: questionnaire}
+  tier2_verdict:
+    low_confidence_review: {reversible: true, impact: low, snapshot: tier2_verdict}
+  fixes:
+    suggestion: {reversible: true, impact: high, snapshot: investigation}

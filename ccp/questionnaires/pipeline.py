@@ -31,6 +31,7 @@ from typing import Any
 
 import yaml
 
+from ccp.compliance_state import autonomy
 from ccp.config import Settings
 from ccp.evaluators import citations
 from ccp.evaluators.extraction import schema_block
@@ -295,7 +296,7 @@ def answer_question(
     hit, stale = store.match(db, question)
     stages["library"] = {"hit": hit.library_id if hit else None, "stale": stale}
     if hit is not None:
-        return store.record_answer(
+        answer_id = store.record_answer(
             db,
             questionnaire_id=questionnaire_id,
             question_id=str(q["id"]),
@@ -311,6 +312,9 @@ def answer_question(
             verdict_ids=hit.verdict_ids,
             library_id=hit.library_id,
         )
+        if autonomy.decide(db, "questionnaire", "library_answer", answer_id) == "auto":
+            store.approve(db, answer_id, "ccp:auto")  # the level and snapshot are recorded
+        return answer_id
     read = facts or Facts.read(db, datetime.now(UTC))
     direction, verdict_ids, counts = (
         direction_of(read, control_id) if control_id else ("unmapped", [], {})

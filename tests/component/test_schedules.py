@@ -76,6 +76,7 @@ def test_the_defaults_sync_on_the_tenants_wall_clock(own: tuple[Settings, Scoped
         "inventory",  # A-166
         "registry-diff",
         "playbooks",  # A-167
+        "autonomy-watch",  # A-171
     }
     zone, full_run_at, enabled = rows["full-run"]
     assert zone == "America/New_York" and enabled
@@ -219,4 +220,5 @@ def test_the_worker_loop_drives_the_scheduler_until_the_next_slot(
         "inventory",  # A-166
         "registry-diff",
         "playbooks",  # A-167
+        "autonomy-watch",  # A-171
     }

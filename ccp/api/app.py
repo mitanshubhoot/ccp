@@ -53,7 +53,7 @@ from ccp.api import ui
 from ccp.approvals import actions, store
 from ccp.audit import checkpoints as audit_checkpoints
 from ccp.auth import members
-from ccp.compliance_state import auditors, reader
+from ccp.compliance_state import auditors, autonomy, reader
 from ccp.compliance_state import exceptions as exception_requests
 from ccp.config import Settings
 from ccp.evals import publish as quality_publish
@@ -452,6 +452,34 @@ def fix_metrics(s: Member) -> dict[str, Any]:
         "reopened": m.reopened,
         "reopen_rate_30d": m.reopen_rate,
     }
+
+
+# -- which drafts skip review (A-171): an administrator's opt-in, on a snapshot ------------
+
+
+class LevelBody(BaseModel):
+    workflow: str
+    decision_class: str
+    level: Literal["shadow", "suggest", "approve_each", "sampled"]
+    reason: str
+
+
+@router.post("/tenants/{tenant_id}/autonomy")
+def autonomy_level(body: LevelBody, s: Member) -> dict[str, Any]:
+    _at_least(s, "admin")
+    try:
+        level_id = autonomy.set_level(
+            s.db,
+            s.settings,
+            body.workflow,
+            body.decision_class,
+            body.level,
+            s.who.principal_id,
+            body.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"level_id": level_id, "level": body.level}
 
 
 # -- method cards (A-170): how a verdict or a suggestion came to be -------------------------
