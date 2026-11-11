@@ -1,0 +1,10 @@
+# Long-task kinds whose read items fan out (spec.md A-151). A kind fans out only when
+# this says so and a single-run baseline of it is recorded (`ccp tasks measure --mode
+# single`, written to evals/runs/); until then its open reads run together in one run
+# per pass, at most `single_run_items` of them, so there is a number to beat.
+single_run_items: 10
+kinds:
+  audit_prep:
+    fanout: true
+  questionnaire:
+    fanout: true

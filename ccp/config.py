@@ -250,6 +250,7 @@ class Settings(BaseSettings):
     ccp_investigator_model: str | None = None
     ccp_policy_model: str | None = None
     ccp_copilot_model: str | None = None
+    ccp_task_model: str | None = None  # long tasks' read runs (A-151)
 
     # Embeddings
     ccp_embed_provider: Literal["voyage", "openai"] = "voyage"
@@ -302,6 +303,10 @@ class Settings(BaseSettings):
     @property
     def copilot_model(self) -> str:
         return self.ccp_copilot_model or self.ccp_tier3_model
+
+    @property
+    def task_model(self) -> str:
+        return self.ccp_task_model or self.ccp_tier3_model
 
     @property
     def logs_dir(self) -> Path:

@@ -26,6 +26,11 @@ step; work through it when the credentials are available.
       then the hourly `tasks` job; check items settle from the verdicts with no model
       call, the gap list (`ccp tasks gaps`) matches the rollup, and after 20 read runs
       the forecast uses their measured p95 cost instead of the $0.20 setting (A-150).
+- [ ] The single-run baseline and the fan-out on Sonnet 5.5: `ccp tasks measure --kind
+      questionnaire --fixture evals/golden/tasks/questionnaire.yaml --mode single`, then
+      `--mode fanout`; both land in evals/runs/, the fan-out's accuracy is not below the
+      single run's, each item's run in `ccp agent` holds that item alone, and a real
+      reading's pointers (evidence, chunk, offsets) open the quoted passage (A-151).
 - [ ] Prompt caching: cache reads appear on repeated stable prefixes.
 - [ ] `ccp replay <id> --execute` on a model-backed verdict.
 

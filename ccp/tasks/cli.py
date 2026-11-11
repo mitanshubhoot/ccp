@@ -11,10 +11,11 @@ import typer
 import yaml
 
 from ccp.config import Settings
+from ccp.evaluators.tier2 import Providers
 from ccp.observability import steps
 from ccp.storage import db
 from ccp.storage.scoped import ScopedDB
-from ccp.tasks import runner, store
+from ccp.tasks import launcher, runner, store
 from ccp.tenancy import TenantContext
 
 app = typer.Typer(no_args_is_help=True, help="Long tasks: planned by code, run item by item")
@@ -103,12 +104,16 @@ def plan(
 def advance(
     task: str = typer.Option(..., "--task"),
     tenant: str | None = typer.Option(None, "--tenant"),
+    drain: bool = typer.Option(False, "--drain", help="also run the queued item jobs"),
 ) -> None:
     """One pass: caps, checks settled by code, follow-ups added, reads launched."""
     settings = _settings()
     scoped, pool = _scoped(settings, tenant)
     try:
         summary = runner.advance(scoped, settings, task, reader=_reader())
+        if drain:
+            for item_id, status in launcher.drain(scoped, settings):
+                typer.echo(f"  {item_id}: {status}")
     finally:
         pool.close()
     typer.echo(
@@ -121,8 +126,8 @@ def advance(
         typer.echo(f"  {event}")
 
 
-def _reader() -> runner.Reader | None:
-    return None  # the fan-out launcher (A-151) supplies one
+def _reader() -> runner.Reader:
+    return launcher.reader(Settings())
 
 
 @app.command("show")
@@ -231,3 +236,35 @@ def resume(
     finally:
         pool.close()
     typer.echo(f"{task}: open")
+
+
+@app.command("measure")
+def measure(
+    kind: str = typer.Option("questionnaire", "--kind"),
+    fixture: Path = typer.Option(..., "--fixture", help="labelled questions (YAML)"),
+    mode: str = typer.Option("single", "--mode", help="single (the baseline) or fanout"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Run a labelled task in one mode and score it; the single mode is the baseline a kind
+    needs before its reads fan out (A-151). Needs a model key."""
+    if mode not in ("single", "fanout"):
+        raise typer.BadParameter("--mode is single or fanout")
+    settings = _settings()
+    providers = Providers.from_settings(settings)
+    if providers.llm is None:
+        typer.echo("measuring needs ANTHROPIC_API_KEY; nothing was measured", err=True)
+        raise typer.Exit(code=2)
+    loaded = yaml.safe_load(fixture.read_text(encoding="utf-8")) or {}
+    scoped, pool = _scoped(settings, tenant)
+    try:
+        record = launcher.measure(
+            scoped,
+            settings,
+            kind,
+            list(loaded.get("questions") or []),
+            mode=mode,
+            providers=providers,
+        )
+    finally:
+        pool.close()
+    typer.echo(json.dumps(record, indent=2, sort_keys=True))

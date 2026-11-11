@@ -1,0 +1,20 @@
+# A labelled questionnaire for `ccp tasks measure` (spec.md A-151): each question's
+# expected answer as a reviewer read acme's evidence. Unmapped questions become read
+# items; the score is the share of readings whose answer matches. Labelling more
+# questions, and a second annotator, is people's work.
+questions:
+  - id: mfa
+    text: Does the information security policy require multi-factor authentication?
+    expected: "yes"
+  - id: leavers
+    text: Is access for leavers removed within a stated time after termination?
+    expected: "yes"
+  - id: disclosure
+    text: Is there a coordinated vulnerability disclosure process with stated timelines?
+    expected: "yes"
+  - id: backups
+    text: Are backups encrypted at rest?
+    expected: insufficient_evidence
+  - id: pentest
+    text: Is an external penetration test performed every year?
+    expected: insufficient_evidence

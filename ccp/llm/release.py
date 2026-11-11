@@ -31,7 +31,7 @@ from ccp.config import REPO_ROOT, Settings
 from ccp.knowledge import catalogue
 from ccp.llm.models import MODELS
 
-CONFIG_FILES = ("retrieval.yaml", "evaluation.yaml", "eval_gates.yaml")
+CONFIG_FILES = ("retrieval.yaml", "evaluation.yaml", "eval_gates.yaml", "task_kinds.yaml")
 _MANIFESTS: dict[str, dict[str, Any]] = {}
 
 
@@ -52,6 +52,7 @@ def roles(settings: Settings) -> dict[str, str]:
         "investigator": settings.investigator_model,
         "policy": settings.policy_model,
         "copilot": settings.copilot_model,
+        "task_item": settings.task_model,
         "judge": settings.ccp_judge_model,
         "second_reader": settings.ccp_second_reader_model,
         "embed": settings.ccp_embed_model,

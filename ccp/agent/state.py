@@ -63,4 +63,6 @@ class AgentState(TypedDict, total=False):
     intent: Annotated[str | None, keep_last]  # copilot: explain | status | missing | act | other
     turn: Annotated[int | None, keep_last]  # copilot: 1-based turn within the session thread
     final: Annotated[dict[str, Any] | None, keep_last]  # non-verdict graphs' output
+    task: Annotated[dict[str, Any] | None, keep_last]  # task_item: the parent task
+    task_items: Annotated[list[dict[str, Any]] | None, keep_last]  # its items (A-151)
     final_verdict: Annotated[dict[str, Any] | None, keep_last]

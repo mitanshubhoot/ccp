@@ -27,7 +27,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ccp.config import Settings
-from ccp.evaluators import jobs
 from ccp.knowledge import graph as knowledge
 from ccp.llm import release
 from ccp.storage.scoped import ScopedDB
@@ -335,6 +334,3 @@ def advance_open(
         for task in store.list_tasks(db, "open")
         if advance(db, settings, task.task_id, reader=reader, now=slot).status
     )
-
-
-jobs.JOBS["tasks"] = lambda db, settings, slot: advance_open(db, settings, slot)

@@ -27,6 +27,7 @@ TOPICS: dict[str, TopicKind] = {
     "investigations": TopicKind.parallel,
     "jobs": TopicKind.parallel,  # scheduled jobs (A-108)
     "applies": TopicKind.parallel,  # recorded decisions to apply (A-110)
+    "task_items": TopicKind.parallel,  # a long task's fanned-out reads (A-151)
     "verdicts": TopicKind.ordered,
 }
 

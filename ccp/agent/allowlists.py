@@ -31,6 +31,12 @@ ALLOWLISTS: dict[str, frozenset[str]] = {
     "investigator": frozenset(
         TIER3_BASE + ("get_verdict", "list_findings", "get_access_grants", "get_control")
     ),
+    # a task item reads evidence and the verdicts its facts name; it holds no list,
+    # grant or write tool, and nothing that starts another run (A-151)
+    "task_item": frozenset(
+        ("search_evidence", "get_chunk", "list_evidence", "get_evidence_chunks")
+        + ("find_exact", "outline", "read_span", "get_verdict", "get_control")
+    ),
     # a policy draft must never contain named individuals' access details
     "policy": frozenset(POLICY_PINNED + ("get_chunk", "get_control", "get_framework_rollup")),
     # the copilot's restriction is that it has no write path, not fewer reads
