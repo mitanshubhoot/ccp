@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import typer
 
+from ccp import auth
 from ccp.agent import cli as agent_cli
 from ccp.agent import tier3 as _tier3  # noqa: F401 - registers tier 3
 from ccp.approvals import cli as approvals_cli
+from ccp.auth import members
 from ccp.compliance_state import reader as state_reader
 from ccp.compliance_state import run as pipeline
 from ccp.compliance_state import writer as state_writer  # noqa: F401 - registers the state consumer
@@ -67,6 +69,8 @@ knowledge_app = typer.Typer(no_args_is_help=True, help="Frameworks, controls, te
 evaluate_app = typer.Typer(no_args_is_help=True, help="Trigger and run evaluations")
 index_app = typer.Typer(no_args_is_help=True, help="The retrieval index over current evidence")
 connections_app = typer.Typer(no_args_is_help=True, help="Connections and their health (A-121)")
+auth_app = typer.Typer(no_args_is_help=True, help="Sign-in tokens (A-129)")
+members_app = typer.Typer(no_args_is_help=True, help="Roles per tenant (A-129)")
 rules_app = typer.Typer(
     no_args_is_help=True, help="Rule changes: amendments by default, corrections by decision"
 )
@@ -462,6 +466,8 @@ app.add_typer(connectors_app, name="connectors")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(connections_app, name="connections")
 app.add_typer(rules_app, name="rules")
+app.add_typer(auth_app, name="auth")
+app.add_typer(members_app, name="members")
 app.add_typer(worker_app, name="worker")
 app.add_typer(evals_app, name="evals")
 app.add_typer(normalize_app, name="normalize")
@@ -880,6 +886,83 @@ def evals_threshold(
             raise typer.Exit(code=1)
         path = eval_runner.write_threshold(thresholds.CONFIG_PATH, suggested)
         typer.echo(f"written to {path}")
+
+
+@auth_app.command("dev-token")
+def auth_dev_token(
+    subject: str = typer.Option(..., "--sub", help="the person's stable id at the issuer"),
+    email: str | None = typer.Option(None, "--email"),
+    name: str | None = typer.Option(None, "--name"),
+    hours: int = typer.Option(8, "--hours"),
+) -> None:
+    """A token from the local dev issuer, for CCP_AUTH_MODE=dev only (A-129)."""
+    settings = _settings()
+    if settings.ccp_auth_mode != "dev":
+        typer.echo("dev tokens are for CCP_AUTH_MODE=dev only", err=True)
+        raise typer.Exit(code=2)
+    from ccp.auth import dev_issuer
+
+    typer.echo(dev_issuer.mint(settings, subject, email, name, timedelta(hours=hours)))
+
+
+@members_app.command("list")
+def members_list(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """The tenant's members and their roles (A-129)."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        found = members.current(ScopedDB(pool, ctx))
+    finally:
+        pool.close()
+    for m in found:
+        typer.echo(f"{m.role:<9} {m.principal.label:<28} {m.principal.principal_id}")
+
+
+@members_app.command("grant")
+def members_grant(
+    subject: str = typer.Option(..., "--sub", help="the person's stable id at the issuer"),
+    role: str = typer.Option(..., "--role", help="viewer | reviewer | approver | admin"),
+    issuer: str | None = typer.Option(None, "--issuer", help="default: the trusted issuer"),
+    email: str | None = typer.Option(None, "--email"),
+    name: str | None = typer.Option(None, "--name"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Grant a role from the server's command line, recorded as granted by the operator; a
+    signed-in admin grants through the API instead (A-129)."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    chosen = next((r for r in members.ROLES if r == role), None)
+    if chosen is None:
+        raise typer.BadParameter(f"role must be one of {', '.join(members.ROLES)}")
+    who = auth.Principal(issuer or auth.verifier(settings).issuer, subject, email, name)
+    pool = db.app_pool(settings)
+    try:
+        granted = members.grant(ScopedDB(pool, ctx), who, chosen, members.OPERATOR)
+    finally:
+        pool.close()
+    typer.echo(f"{granted.role} {who.label} ({who.principal_id}) in {ctx.tenant_id}")
+
+
+@members_app.command("revoke")
+def members_revoke(
+    subject: str = typer.Option(..., "--sub"),
+    issuer: str | None = typer.Option(None, "--issuer", help="default: the trusted issuer"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """End a membership, recorded as revoked by the operator (A-129)."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    who = auth.Principal(issuer or auth.verifier(settings).issuer, subject)
+    pool = db.app_pool(settings)
+    try:
+        members.revoke(ScopedDB(pool, ctx), who, members.OPERATOR)
+    except LookupError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    finally:
+        pool.close()
+    typer.echo(f"revoked {who.principal_id} in {ctx.tenant_id}")
 
 
 @rules_app.command("preview")

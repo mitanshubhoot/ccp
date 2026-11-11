@@ -156,6 +156,13 @@ class Settings(BaseSettings):
     # A connection with no complete pull for this long is stale (A-121): a daily sync, and
     # two hours' grace for a slow one.
     ccp_sync_stale_hours: int = Field(default=26, gt=0)
+    # Sign-in (A-129): `dev` trusts only the local dev issuer (ccp/auth/dev_issuer.py);
+    # `oidc` trusts only the configured issuer (Cognito, federated to each customer's SAML
+    # or OIDC provider) and the keys it publishes. The audience is CCP's client id there.
+    ccp_auth_mode: Literal["dev", "oidc"] = "dev"
+    ccp_oidc_issuer: str | None = None
+    ccp_oidc_audience: str = "ccp"
+    ccp_oidc_jwks_url: str | None = None
     ccp_golden_dir: Path = REPO_ROOT / "evals" / "golden"
     ccp_eval_runs_dir: Path = REPO_ROOT / "evals" / "runs"
     ccp_rubrics_dir: Path = REPO_ROOT / "evals" / "rubrics"
