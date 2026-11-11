@@ -38,7 +38,7 @@ from fastapi import APIRouter, Cookie, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from ccp import auth, tenancy
+from ccp import auth, credentials, tenancy
 from ccp.agent import runlog, stops, threads
 from ccp.api import reasons
 from ccp.approvals import actions, store
@@ -196,11 +196,11 @@ def callback(
         "client_id": settings.ccp_oidc_audience,
         "code_verifier": verifier,
     }
-    secret = settings.ccp_oidc_client_secret
+    secret = credentials.secret(settings, "oidc:client")
     http: httpx.Client = request.app.state.http
     url = str(settings.ccp_oidc_token_url)
     if secret is not None:  # a confidential client also proves itself; PKCE either way
-        basic = httpx.BasicAuth(settings.ccp_oidc_audience, secret.get_secret_value())
+        basic = httpx.BasicAuth(settings.ccp_oidc_audience, secret)
         answer = http.post(url, data=form, auth=basic, timeout=10.0)
     else:
         answer = http.post(url, data=form, timeout=10.0)

@@ -8,6 +8,7 @@
     rerank:voyage        VOYAGE_API_KEY                       reranking
     trace:langfuse_public / trace:langfuse_secret             tracing
     github:read          GITHUB_TOKEN                         the GitHub connector's pulls
+    oidc:client          CCP_OIDC_CLIENT_SECRET               the UI's code exchange (A-135)
 
 GitHub's write credential has no purpose here: only the remediation broker
 (ccp/remediation/broker.py) reaches it, through `remediation_token`, after it has checked
@@ -33,6 +34,7 @@ Purpose = Literal[
     "trace:langfuse_public",
     "trace:langfuse_secret",
     "github:read",
+    "oidc:client",
 ]
 
 _SETTING: dict[str, str] = {
@@ -44,6 +46,7 @@ _SETTING: dict[str, str] = {
     "trace:langfuse_public": "langfuse_public_key",
     "trace:langfuse_secret": "langfuse_secret_key",
     "github:read": "github_token",
+    "oidc:client": "ccp_oidc_client_secret",
 }
 
 
