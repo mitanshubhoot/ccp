@@ -133,6 +133,16 @@ def mark_finished(
     )
 
 
+def mark_cancelled(db: ScopedDB, thread_id: str, why: str, trajectory: list[str]) -> None:
+    """A person stopped the run (A-135): its record stays, and nothing it would have
+    decided is decided."""
+    db.execute(
+        "UPDATE agent_threads SET status = 'cancelled', error = %s, trajectory = %s,"
+        " updated_at = now() WHERE thread_id = %s",
+        (why[:2000], json.dumps(trajectory), thread_id),
+    )
+
+
 def mark_failed(db: ScopedDB, thread_id: str, error: str, trajectory: list[str]) -> None:
     db.execute(
         "UPDATE agent_threads SET status = 'failed', error = %s, trajectory = %s,"

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}CCP{% endblock %}</title>
+<style>
+  :root { --ink: #1d2433; --muted: #5b6475; --line: #d9dee7; --bg: #f7f8fa; --card: #fff;
+          --fail: #b42318; --pass: #067647; --wait: #8a6100; --accent: #2e5aac; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, sans-serif; color: var(--ink); background: var(--bg); }
+  header { display: flex; gap: 16px; align-items: center; padding: 10px 20px;
+           border-bottom: 1px solid var(--line); background: var(--card); flex-wrap: wrap; }
+  header nav a { margin-right: 12px; color: var(--accent); text-decoration: none; }
+  header .who { margin-left: auto; color: var(--muted); }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+          padding: 14px 16px; margin-bottom: 14px; }
+  table { width: 100%; border-collapse: collapse; background: var(--card); }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  pre { background: #f1f3f6; padding: 10px; overflow-x: auto; font-size: 13px; border-radius: 6px; }
+  .status-fail { color: var(--fail); font-weight: 600; }
+  .status-pass { color: var(--pass); font-weight: 600; }
+  .status-other { color: var(--wait); font-weight: 600; }
+  .muted { color: var(--muted); }
+  .flash { background: #eef4ff; border: 1px solid #c7d7fe; padding: 8px 12px; border-radius: 6px; }
+  form.inline { display: inline-flex; gap: 6px; align-items: center; margin: 4px 8px 4px 0; }
+  button { font: inherit; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--line);
+           background: var(--card); cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  input[type=text] { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  .label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <strong>CCP</strong>
+  {% if tenant %}
+  <span>{{ tenant.settings.display_name }}</span>
+  <nav>
+    <a href="/ui/t/{{ tenant.tenant_id }}/inbox">Inbox</a>
+    <a href="/ui/t/{{ tenant.tenant_id }}/findings">Findings</a>
+    <a href="/ui/t/{{ tenant.tenant_id }}/report/soc2">SOC 2</a>
+    <a href="/ui/t/{{ tenant.tenant_id }}/report/iso27001">ISO 27001</a>
+    <a href="/ui/t/{{ tenant.tenant_id }}/runs">Runs</a>
+  </nav>
+  {% endif %}
+  {% if who %}
+  <span class="who">{{ who.label }}{% if role %} · {{ role }}{% endif %}</span>
+  <form class="inline" method="post" action="/ui/logout"><button>Sign out</button></form>
+  {% endif %}
+</header>
+<main>
+  {% if flash %}<p class="flash">{{ flash }}</p>{% endif %}
+  {% block body %}{% endblock %}
+</main>
+</body>
+</html>

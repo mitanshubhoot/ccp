@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ result.framework_id }} · CCP{% endblock %}
+{% block body %}
+<h1>{{ result.framework_id }}</h1>
+{% if result.no_evaluations_yet %}<p class="card">No evaluations yet: nothing has been assessed.</p>{% endif %}
+<p class="muted">{% for k, v in result.summary.items() %}{{ k }} {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+<table>
+  <tr><th>Requirement</th><th>State</th><th>Blocked by</th><th>Why pending, and what clears it</th></tr>
+  {% for row in rows %}
+  {% set r = row.r %}
+  <tr>
+    <td>{{ r.requirement_id }}</td>
+    <td class="{{ 'status-fail' if r.state == 'fail' else ('status-pass' if r.state == 'pass' else 'status-other') }}">{{ r.shown }}</td>
+    <td>{% if r.blocking_test_id %}{{ r.blocking_test_id }}{% if r.blocking_subject_key %} on {{ r.blocking_subject_key }}{% endif %}{% endif %}</td>
+    <td>{% for reason in row.reasons %}<div><code>{{ reason.code }}</code> ({{ r.pending_reasons[reason.code] }}): {{ reason.says }}. <strong>Next:</strong> {{ reason.next_action }}.</div>{% endfor %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

@@ -53,6 +53,9 @@ step; work through it when the credentials are available.
 - [ ] `ccp serve` with `CCP_AUTH_MODE=oidc`: a real ID token reaches `/v1/me`, a token for
       another client or issuer is 401, and a member's decision over HTTP records their
       issuer and subject (A-134).
+- [ ] Browser sign-in at `/ui/login` with `CCP_OIDC_AUTHORIZE_URL`, `CCP_OIDC_TOKEN_URL`
+      (and `CCP_OIDC_CLIENT_SECRET` for a confidential app client) and `CCP_UI_BASE_URL` set
+      to the registered callback's origin: the code flow with PKCE ends signed in (A-135).
 
 ## A git remote (NT1)
 

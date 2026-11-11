@@ -163,6 +163,12 @@ class Settings(BaseSettings):
     ccp_oidc_issuer: str | None = None
     ccp_oidc_audience: str = "ccp"
     ccp_oidc_jwks_url: str | None = None
+    # browser sign-in (A-135): the provider's authorize and token endpoints, the app
+    # client's secret when it has one (PKCE is used either way), and the UI's own URL
+    ccp_oidc_authorize_url: str | None = None
+    ccp_oidc_token_url: str | None = None
+    ccp_oidc_client_secret: SecretStr | None = None
+    ccp_ui_base_url: str = "http://127.0.0.1:8000"
     ccp_golden_dir: Path = REPO_ROOT / "evals" / "golden"
     ccp_eval_runs_dir: Path = REPO_ROOT / "evals" / "runs"
     ccp_rubrics_dir: Path = REPO_ROOT / "evals" / "rubrics"

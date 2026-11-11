@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Findings · CCP{% endblock %}
+{% block body %}
+<h1>Findings</h1>
+{% if not rows %}<p class="card">No evaluations yet: nothing has been assessed.</p>{% else %}
+<table>
+  <tr><th>Subject</th><th>Status</th><th>Why, and what clears it</th></tr>
+  {% for row in rows %}
+  {% set s = row.head.status.value %}
+  <tr>
+    <td>{{ row.head.subject_key }}<br><a class="muted" href="/ui/t/{{ tenant.tenant_id }}/verdicts/{{ row.head.verdict_id }}">the verdict</a></td>
+    <td class="{{ 'status-fail' if s == 'fail' else ('status-pass' if s == 'pass' else 'status-other') }}">{{ row.shown }}</td>
+    <td>
+      {% for r in row.reasons %}
+      <div><code>{{ r.code }}</code>: {{ r.says }}. <strong>Next:</strong> {{ r.next_action }}.</div>
+      {% endfor %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}

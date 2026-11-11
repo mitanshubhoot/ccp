@@ -23,7 +23,7 @@ from typing import Any
 
 import psycopg
 
-from ccp.agent import authz, core, threads
+from ccp.agent import authz, core, stops, threads
 from ccp.agent.allowlists import ALLOWLISTS
 from ccp.agent.graphs import investigator as graph_module
 from ccp.agent.tools import ToolContext, bind_tools
@@ -40,6 +40,7 @@ from ccp.ingest.worker import register
 from ccp.investigation import schema
 from ccp.investigation.schema import Investigation, MissingEvidence, RemediationProposal
 from ccp.llm.budget import BudgetTracker, RunBudget
+from ccp.llm.errors import RunStopped
 from ccp.observability import steps
 from ccp.remediation import proposals as proposal_store
 from ccp.storage import checkpoints
@@ -116,6 +117,7 @@ def investigate(
     else:  # a retried job: continue its own run from the last checkpoint
         threads.mark_running(db, thread_id)
     graph, pool, tracker = _build(db, settings, providers, moment, run_id=thread_id)
+    tracker.stop = stops.watcher(db, thread_id)  # Stop (A-135)
     config = {"configurable": {"thread_id": thread_id}}
     initial: dict[str, Any] = {
         "tenant_id": db.tenant.tenant_id,
@@ -157,6 +159,9 @@ def investigate(
                 {"investigation_id": investigation.investigation_id, "trajectory": trajectory}
             )
             return investigation
+    except RunStopped as exc:
+        threads.mark_cancelled(db, thread_id, str(exc), trajectory)
+        raise
     except Exception as exc:
         threads.mark_failed(db, thread_id, f"{type(exc).__name__}: {exc}", trajectory)
         raise

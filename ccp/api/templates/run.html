@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Run · CCP{% endblock %}
+{% block body %}
+<h1>{{ run.graph }} run</h1>
+<div class="card">
+  <p><code>{{ run.thread_id }}</code> · status <strong id="status">{{ run.status }}</strong>
+  {% if run.error %}<br><span class="muted">{{ run.error }}</span>{% endif %}</p>
+  {% if run.status in ('running', 'interrupted') %}
+    {% if stopped_by %}
+    <p class="muted">Stop asked by {{ stopped_by }}: the run ends at its next step.</p>
+    {% elif role in ('reviewer', 'approver', 'admin') %}
+    <form class="inline" method="post" action="/ui/t/{{ tenant.tenant_id }}/runs/{{ run.thread_id }}/stop">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="text" name="reason" placeholder="why (optional)">
+      <button>Stop</button>
+    </form>
+    <p class="muted">A stopped run ends cancelled: it keeps its record and changes no status.</p>
+    {% endif %}
+  {% endif %}
+</div>
+<div class="card">
+  <div class="label">Steps, from the run log</div>
+  <table id="steps">
+    <tr><th>#</th><th>Node</th><th>Kind</th><th>Detail</th><th>At</th></tr>
+    {% for s in steps %}
+    <tr><td>{{ s.seq }}</td><td>{{ s.node }}</td><td>{{ s.kind }}</td><td>{{ s.detail or '' }}</td><td>{{ s.at }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% if run.status in ('running', 'interrupted') %}
+<script>
+  (function () {
+    var last = {{ (steps[-1].seq if steps else -1) | tojson }};
+    var table = document.getElementById('steps');
+    var source = new EventSource(window.location.pathname + '/events');
+    source.onmessage = function (e) {
+      var s = JSON.parse(e.data);
+      if (s.seq <= last) return;
+      last = s.seq;
+      var row = table.insertRow(-1);
+      [s.seq, s.node, s.kind, s.detail || '', s.at].forEach(function (v) {
+        row.insertCell(-1).textContent = v;
+      });
+    };
+    source.addEventListener('end', function (e) {
+      document.getElementById('status').textContent = JSON.parse(e.data).status;
+      source.close();
+    });
+  })();
+</script>
+{% endif %}
+{% endblock %}

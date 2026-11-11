@@ -73,6 +73,7 @@ INSERT_ONLY: frozenset[str] = frozenset(
         "control_exceptions",
         "exception_revocations",
         "tenant_versions",
+        "run_stops",
     }
 )
 # Operational state that is updated in place by design.

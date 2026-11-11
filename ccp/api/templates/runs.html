@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Runs · CCP{% endblock %}
+{% block body %}
+<h1>Agent runs</h1>
+{% if not runs %}<p class="card">No agent runs yet.</p>{% else %}
+<table>
+  <tr><th>Run</th><th>Graph</th><th>Status</th><th>Updated</th></tr>
+  {% for r in runs %}
+  <tr>
+    <td><a href="/ui/t/{{ tenant.tenant_id }}/runs/{{ r.thread_id }}">{{ r.thread_id }}</a></td>
+    <td>{{ r.graph }}{% if r.test_id %} · {{ r.test_id }}{% endif %}</td>
+    <td>{{ r.status }}</td>
+    <td>{{ r.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}

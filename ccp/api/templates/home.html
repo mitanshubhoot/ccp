@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Your tenants · CCP{% endblock %}
+{% block body %}
+<h1>Your tenants</h1>
+{% if not tenants %}
+<p class="card">You are not a member of any tenant yet. An admin of one adds you, or you
+onboard a new one through the API (<code>POST /v1/tenants</code>).</p>
+{% else %}
+<table>
+  <tr><th>Tenant</th><th>Your role</th><th></th></tr>
+  {% for t in tenants %}
+  <tr>
+    <td>{{ t.name }} <span class="muted">({{ t.tenant_id }})</span></td>
+    <td>{{ t.role }}</td>
+    <td><a href="/ui/t/{{ t.tenant_id }}/inbox">Inbox</a> ·
+        <a href="/ui/t/{{ t.tenant_id }}/findings">Findings</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}

@@ -39,15 +39,17 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
+import httpx
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
 from ccp import auth, tenancy
 from ccp.agent import rest
 from ccp.agent.rest import Caller
+from ccp.api import ui
 from ccp.approvals import actions, store
 from ccp.auth import members
 from ccp.compliance_state import exceptions as exception_requests
@@ -514,7 +516,9 @@ async def tool_call(name: str, request: Request, s: Member) -> JSONResponse:
 # -- the app -------------------------------------------------------------------------------
 
 
-def create_app(settings: Settings, pools: Pools | None = None) -> FastAPI:
+def create_app(
+    settings: Settings, pools: Pools | None = None, http: httpx.Client | None = None
+) -> FastAPI:
     """The API over `settings`. Pass `pools` to share connections (tests); otherwise the app
     opens its own when it starts and closes them when it stops."""
 
@@ -535,9 +539,16 @@ def create_app(settings: Settings, pools: Pools | None = None) -> FastAPI:
 
     app = FastAPI(title="CCP", version="1", lifespan=lifespan)
     app.state.settings = settings
+    app.state.http = http or httpx.Client()
     if pools is not None:
         app.state.pools = pools
     for kind, status in ERRORS:
         app.add_exception_handler(kind, _error(status))
+    app.add_exception_handler(ui.SignIn, _to_sign_in)
     app.include_router(router)
+    app.include_router(ui.ui)
     return app
+
+
+async def _to_sign_in(request: Request, exc: Exception) -> RedirectResponse:
+    return RedirectResponse("/ui/login", status_code=303)

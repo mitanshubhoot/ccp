@@ -36,6 +36,26 @@ def _usage(u: dict[str, Any]) -> Usage:
     return Usage(**{k: u[k] for k in Usage.__dataclass_fields__ if k in u})
 
 
+def steps_of(db: ScopedDB, thread_id: str, after: int = -1) -> list[dict[str, Any]]:
+    """A run's recorded steps after `after`, for its page (A-135): what was called and when,
+    from the record, never the model's account of it."""
+    rows = db.fetch_all(
+        "SELECT seq, node, kind, model, request->>'name', created_at FROM agent_steps"
+        " WHERE thread_id = %s AND seq > %s ORDER BY seq",
+        (thread_id, after),
+    )
+    return [
+        {
+            "seq": int(r[0]),
+            "node": str(r[1]),
+            "kind": str(r[2]),
+            "detail": str(r[4] or r[3] or ""),
+            "at": r[5].isoformat(),
+        }
+        for r in rows
+    ]
+
+
 class RunLog:
     def __init__(
         self, db: ScopedDB, thread_id: str, *, source: str | None = None, replay: bool = False

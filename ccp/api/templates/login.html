@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Sign in · CCP{% endblock %}
+{% block body %}
+<div class="card">
+  <h1>Sign in</h1>
+  <p class="muted">Offline sign-in through the local dev issuer ({{ issuer }}). A server with
+  <code>CCP_AUTH_MODE=oidc</code> sends you to your identity provider instead.</p>
+  <form method="post" action="/ui/login">
+    <label>Subject <input type="text" name="subject" required autofocus></label>
+    <button class="primary">Sign in</button>
+  </form>
+</div>
+{% endblock %}

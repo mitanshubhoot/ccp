@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Verdict · CCP{% endblock %}
+{% block body %}
+<h1>{{ v.test_id }} on {{ v.subject }}</h1>
+<div class="card">
+  <p><span class="{{ 'status-fail' if v.status.value == 'fail' else ('status-pass' if v.status.value == 'pass' else 'status-other') }}">{{ v.status.value }}</span>
+    · tier {{ v.tier }} · rule {{ v.rule_version or 'n/a' }} · valid from {{ v.valid_from.strftime('%Y-%m-%d %H:%M') }}</p>
+  {% if model_written %}
+  <div class="label">Summary (written by a model; the rule over the checked fields decided)</div>
+  {% else %}
+  <div class="label">Why (written by the rule)</div>
+  {% endif %}
+  <p>{{ v.reasoning }}</p>
+  <p class="muted">confidence {{ '%.2f'|format(v.confidence) }} (cap {{ '%.2f'|format(v.confidence_cap) }}){% if v.model %} · {{ v.model }}{% endif %}</p>
+</div>
+{% if reasons %}
+<div class="card">
+  <div class="label">Reasons and next actions</div>
+  {% for r in reasons %}<div><code>{{ r.code }}</code>: {{ r.says }}. <strong>Next:</strong> {{ r.next_action }}.</div>{% endfor %}
+</div>
+{% endif %}
+<div class="card">
+  <div class="label">Citations code checked against the evidence</div>
+  {% if not checked %}<p class="muted">None.</p>{% endif %}
+  {% for c in checked %}<p><mark>“{{ c.quote }}”</mark> <span class="muted">supports {{ c.supports }} · chunk {{ c.chunk_id }}</span></p>{% endfor %}
+  {% if unchecked %}
+  <div class="label">Quotes that failed the check (shown as text, never as evidence)</div>
+  {% for c in unchecked %}<p class="muted">“{{ c.quote }}” · {{ c.supports }}</p>{% endfor %}
+  {% endif %}
+</div>
+{% endblock %}

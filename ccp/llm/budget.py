@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from ccp.config import Settings
-from ccp.llm.errors import BudgetExceeded
+from ccp.llm.errors import BudgetExceeded, RunStopped
 
 
 @dataclass(frozen=True)
@@ -67,6 +67,8 @@ class BudgetTracker:
     usd: float = 0.0
     tool_calls: int = 0
     started: float = field(default=0.0)
+    # who asked the run to stop, asked at every boundary (A-135); None: nobody can stop it
+    stop: Callable[[], str | None] | None = None
 
     def __post_init__(self) -> None:
         self.started = self.clock()
@@ -106,6 +108,10 @@ class BudgetTracker:
         self.check_clock()
 
     def check_clock(self) -> None:
+        if self.stop is not None:
+            stopped_by = self.stop()
+            if stopped_by is not None:
+                raise RunStopped(f"run_stopped: stopped by {stopped_by}")
         elapsed = self.clock() - self.started
         if elapsed > self.budget.max_seconds:
             raise BudgetExceeded(

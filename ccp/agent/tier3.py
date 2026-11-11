@@ -21,7 +21,7 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command
 from ulid import ULID
 
-from ccp.agent import authz, core, threads
+from ccp.agent import authz, core, stops, threads
 from ccp.agent.allowlists import ALLOWLISTS
 from ccp.agent.graphs import tier3 as graph_module
 from ccp.agent.runlog import ReplayDiverged
@@ -36,6 +36,7 @@ from ccp.evaluators.verdict import TriggerReason, Verdict, evaluation_key
 from ccp.knowledge import graph as knowledge
 from ccp.knowledge.graph import TestSpec
 from ccp.llm.budget import BudgetTracker, RunBudget
+from ccp.llm.errors import RunStopped
 from ccp.observability import steps
 from ccp.retrieval.chunker import CHUNKER_VERSION
 from ccp.storage import checkpoints
@@ -225,6 +226,7 @@ def evaluate(
         thread_id = checkpoints.thread_id_for(tenant, spec.test_id, subject_key, run_id)
         threads.create(db, thread_id, GRAPH, spec.test_id, subject_key, evaluation_key=key)
     graph, _saver, pool, tracker = _build(db, settings, spec, providers, ctx.now, run_id=thread_id)
+    tracker.stop = stops.watcher(db, thread_id)  # Stop (A-135)
     config = {"configurable": {"thread_id": thread_id}}
     initial: dict[str, Any] = {
         "tenant_id": tenant.tenant_id,
@@ -285,6 +287,9 @@ def evaluate(
             verdict = Verdict.model_validate(final)
             threads.mark_finished(db, thread_id, verdict.verdict_id, trajectory)
             return verdict
+    except RunStopped as exc:
+        threads.mark_cancelled(db, thread_id, str(exc), trajectory)
+        raise
     except Exception as exc:
         threads.mark_failed(db, thread_id, f"{type(exc).__name__}: {exc}", trajectory)
         raise
@@ -353,6 +358,7 @@ def resume(
     moment = now or datetime.now(UTC)
     active = providers or Providers.from_settings(settings)
     graph, _saver, pool, tracker = _build(db, settings, spec, active, moment, run_id=thread_id)
+    tracker.stop = stops.watcher(db, thread_id)  # Stop (A-135)
     config = {"configurable": {"thread_id": thread_id}}
     trajectory = list(row.trajectory)
     try:
@@ -421,6 +427,9 @@ def resume(
             verdict = Verdict.model_validate(final)
             threads.mark_finished(db, thread_id, verdict.verdict_id, trajectory, decision)
             return verdict
+    except RunStopped as exc:
+        threads.mark_cancelled(db, thread_id, str(exc), trajectory)
+        raise
     except Exception as exc:
         threads.mark_failed(db, thread_id, f"{type(exc).__name__}: {exc}", trajectory)
         raise

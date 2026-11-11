@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Inbox · CCP{% endblock %}
+{% block body %}
+<h1>Inbox</h1>
+<p class="muted">Every item shows what code wrote, its hash and when it expires. An expired
+item is not offered: nothing acts without a decision. To change a proposal, ask for changes;
+the change comes back as a new item with a new hash for someone to decide.</p>
+{% if not items %}<p class="card">Nothing waits for a decision.</p>{% endif %}
+{% for row in items %}
+{% set i = row.item %}
+<div class="card" id="{{ i.approval_id }}">
+  <div class="label">{{ i.kind.replace('_', ' ') }} · opened {{ i.opened_at.strftime('%Y-%m-%d %H:%M') }}
+    · expires {{ i.expires_at.strftime('%Y-%m-%d %H:%M') if i.expires_at else 'never' }}</div>
+  <p>Asked by <strong>{{ i.requested_by or 'the system' }}</strong> · state {{ i.state }}
+    · undo: {{ row.undo }}</p>
+  <pre>{{ row.payload }}</pre>
+  <p class="muted">payload sha256 <code>{{ i.payload_sha256 }}</code></p>
+  {% if row.mine %}
+  <p class="muted">You asked for this, so someone else decides it.</p>
+  {% else %}
+  {% for action, label in [('approve', 'Approve'), ('reject', 'Reject'), ('request-changes', 'Ask for changes')] %}
+  <form class="inline" method="post" action="/ui/t/{{ tenant.tenant_id }}/approvals/{{ i.approval_id }}/{{ action }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="payload_sha256" value="{{ i.payload_sha256 }}">
+    {% if action != 'approve' %}<input type="text" name="note" placeholder="why" required>{% endif %}
+    <button {% if action == 'approve' %}class="primary"{% endif %}>{{ label }}</button>
+  </form>
+  {% endfor %}
+  {% endif %}
+</div>
+{% endfor %}
+{% endblock %}

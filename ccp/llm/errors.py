@@ -28,6 +28,11 @@ class BudgetExceeded(TerminalModelError):
     """A run budget cap was hit; the run stops and the record dead-letters with the cap named."""
 
 
+class RunStopped(BudgetExceeded):
+    """A person stopped the run (A-135): it ends cancelled at the next node boundary or tool
+    call, keeps its record, changes no status, and its job is not retried."""
+
+
 class UnpricedModel(TerminalModelError):
     """No price is known for the model, so a dollar cap could not stop it; refused (A-97)."""
 
