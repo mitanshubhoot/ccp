@@ -22,6 +22,7 @@ from ccp.remediation import runner as remediation
 from ccp.retrieval import index
 from ccp.storage.scoped import ScopedDB
 from tests.component.test_copilot_stub import make_providers
+from tests.support.members import member
 from tests.support.pipeline import prepared_tenants
 
 pytestmark = pytest.mark.db
@@ -82,7 +83,7 @@ def test_fix_this_refuses_the_write_tool_and_opens_an_approval_only_after_yes(wo
     result = remediation.execute(acme, settings, proposal_id, live=False, github=recorder)
     assert result.mode == "dry_run" and recorder.deletes == []
     # approved, but CCP_REMEDIATION_LIVE unset: still only a dry run
-    approval_actions.approve(acme, settings, item.approval_id, "cto", "go")
+    approval_actions.approve(acme, settings, item.approval_id, member(acme, "cto"), "go")
     result = remediation.execute(acme, settings, proposal_id, live=False, github=recorder)
     assert result.mode == "dry_run" and recorder.deletes == []
     result = remediation.execute(acme, settings, proposal_id, live=True, github=recorder)

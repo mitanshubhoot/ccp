@@ -1,7 +1,8 @@
 """``ccp approvals ...``: list, show, approve, reject, request-changes, close, resume, audit.
 
 A refused decision exits 2 and records nothing; a decision that was recorded but could not be
-applied exits 1 and names the `resume` command that applies it (A-95)."""
+applied exits 1 and names the `resume` command that applies it (A-95). A decision proves who
+makes it with a sign-in token (`--token`, or CCP_TOKEN), never a typed name (A-130)."""
 
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ from typing import NoReturn
 
 import typer
 
+from ccp import auth
 from ccp.agent import decisions
 from ccp.approvals import actions, store
 from ccp.config import Settings
@@ -37,6 +39,17 @@ def _tenant(settings: Settings, tenant_id: str | None) -> TenantContext:
 def _refuse(message: str) -> NoReturn:
     typer.echo(f"refused: {message}", err=True)
     raise typer.Exit(2)
+
+
+REFUSED = (LookupError, ValueError, PermissionError, actions.PayloadChanged)
+TOKEN = typer.Option(..., "--token", envvar="CCP_TOKEN", help="your sign-in token")
+
+
+def _signed_in(settings: Settings, token: str) -> auth.Principal:
+    try:
+        return auth.authenticate(settings, token)
+    except auth.InvalidToken as exc:
+        _refuse(f"sign-in token refused: {exc}")
 
 
 def _report(approval_id: str, reviewer: str, outcome: actions.Outcome) -> None:
@@ -100,51 +113,57 @@ def show(approval_id: str, tenant: str | None = typer.Option(None, "--tenant")) 
 @app.command("approve")
 def approve(
     approval_id: str,
-    reviewer: str = typer.Option(..., "--reviewer"),
+    token: str = TOKEN,
     note: str | None = typer.Option(None, "--note"),
     decision: str = typer.Option(
         "approve", "--decision", help="tier3_interrupt: approve | override | regather"
     ),
     status: str | None = typer.Option(None, "--status", help="with --decision override"),
+    seen: str | None = typer.Option(
+        None, "--payload-sha256", help="the payload hash you were shown (`approvals show`)"
+    ),
     tenant: str | None = typer.Option(None, "--tenant"),
 ) -> None:
     settings = _settings()
     ctx = _tenant(settings, tenant)
+    who = _signed_in(settings, token)
     pool = db.app_pool(settings)
     try:
         outcome = actions.approve(
             ScopedDB(pool, ctx),
             settings,
             approval_id,
-            reviewer,
+            who,
             note,
             decision=decision,
             status=status,
+            seen_sha256=seen,
         )
-    except (LookupError, ValueError, actions.PayloadChanged) as exc:
+    except REFUSED as exc:
         _refuse(str(exc))
     finally:
         pool.close()
-    _report(approval_id, reviewer, outcome)
+    _report(approval_id, who.label, outcome)
 
 
 @app.command("reject")
 def reject(
     approval_id: str,
-    reviewer: str = typer.Option(..., "--reviewer"),
+    token: str = TOKEN,
     note: str = typer.Option(..., "--note"),
     tenant: str | None = typer.Option(None, "--tenant"),
 ) -> None:
     settings = _settings()
     ctx = _tenant(settings, tenant)
+    who = _signed_in(settings, token)
     pool = db.app_pool(settings)
     try:
-        outcome = actions.reject(ScopedDB(pool, ctx), settings, approval_id, reviewer, note)
-    except (LookupError, ValueError, actions.PayloadChanged) as exc:
+        outcome = actions.reject(ScopedDB(pool, ctx), settings, approval_id, who, note)
+    except REFUSED as exc:
         _refuse(str(exc))
     finally:
         pool.close()
-    _report(approval_id, reviewer, outcome)
+    _report(approval_id, who.label, outcome)
 
 
 @app.command("resume")
@@ -165,16 +184,17 @@ def resume(approval_id: str, tenant: str | None = typer.Option(None, "--tenant")
 @app.command("request-changes")
 def request_changes(
     approval_id: str,
-    reviewer: str = typer.Option(..., "--reviewer"),
+    token: str = TOKEN,
     note: str = typer.Option(..., "--note"),
     tenant: str | None = typer.Option(None, "--tenant"),
 ) -> None:
     settings = _settings()
     ctx = _tenant(settings, tenant)
+    who = _signed_in(settings, token)
     pool = db.app_pool(settings)
     try:
-        outcome = actions.request_changes(ScopedDB(pool, ctx), approval_id, reviewer, note)
-    except (LookupError, ValueError) as exc:
+        outcome = actions.request_changes(ScopedDB(pool, ctx), approval_id, who, note)
+    except REFUSED as exc:
         _refuse(str(exc))
     finally:
         pool.close()
@@ -184,16 +204,17 @@ def request_changes(
 @app.command("close")
 def close(
     approval_id: str,
-    reviewer: str = typer.Option(..., "--reviewer"),
+    token: str = TOKEN,
     note: str | None = typer.Option(None, "--note"),
     tenant: str | None = typer.Option(None, "--tenant"),
 ) -> None:
     settings = _settings()
     ctx = _tenant(settings, tenant)
+    who = _signed_in(settings, token)
     pool = db.app_pool(settings)
     try:
-        outcome = actions.close(ScopedDB(pool, ctx), approval_id, reviewer, note)
-    except (LookupError, ValueError) as exc:
+        outcome = actions.close(ScopedDB(pool, ctx), approval_id, who, note)
+    except REFUSED as exc:
         _refuse(str(exc))
     finally:
         pool.close()

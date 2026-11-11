@@ -35,6 +35,7 @@ import psycopg
 from ccp.agent import threads, tier3
 from ccp.approvals import store as approvals
 from ccp.approvals.store import Approval
+from ccp.auth.tokens import Principal
 from ccp.config import Settings
 from ccp.evaluators import runner as evaluations
 from ccp.evaluators import verdict as verdicts
@@ -240,7 +241,9 @@ def decide(
     decision: dict[str, Any],
     providers: Providers | None = None,
     now: datetime | None = None,
+    principal: Principal | None = None,
 ) -> DecisionOutcome:
+    """Record a signed-in member's decision (A-130) and apply it."""
     item = _open_tier3_item(db, approval_id)
     chosen = validate(decision)
     if event == "rejected" and (
@@ -258,7 +261,7 @@ def decide(
         db,
         approval_id,
         event,
-        chosen["reviewer"],
+        principal if principal is not None else chosen["reviewer"],
         chosen.get("note"),
         decision=chosen,
         within=lambda cur: queued.append(queue_apply(cur, db, item)),

@@ -1,6 +1,12 @@
 """Approval items and their events (spec.md Layer 16). Append-only: the state of an item is
 its latest event, read through the approval_status view. A deciding event carries the exact
-decision as given (A-95), so whatever acts on it later reads the decision from here."""
+decision as given (A-95), so whatever acts on it later reads the decision from here.
+
+A decision (approve, reject, ask for changes) is made only by a signed-in member of the
+tenant holding the role it needs, never by the item's requester, and never after the item
+expires; and an item takes one approve or reject, whatever races, because a unique index
+holds the second one back (A-130). An agent or the system may open and close items; only a
+person decides them."""
 
 from __future__ import annotations
 
@@ -8,12 +14,15 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import psycopg
+from psycopg import errors as pg_errors
 from ulid import ULID
 
+from ccp.auth import members
+from ccp.auth.tokens import Principal
 from ccp.storage.scoped import ScopedDB
 
 Kind = Literal[
@@ -29,6 +38,28 @@ KINDS: tuple[Kind, ...] = (
 )
 OPEN_STATES = ("opened", "changes_requested")
 DECIDED_STATES = ("approved", "rejected")
+# How long an item waits for a decision (A-130); after that nothing acts on it.
+EXPIRES: dict[str, timedelta] = {
+    "tier3_interrupt": timedelta(days=14),
+    "remediation": timedelta(days=3),
+    "remediation_rollback": timedelta(days=3),
+    "policy_draft": timedelta(days=30),
+    "evidence_request": timedelta(days=30),
+}
+# The role each decision needs (A-130).
+DECISIVE: dict[str, members.Role] = {
+    "approved": "approver",
+    "rejected": "approver",
+    "changes_requested": "reviewer",
+}
+
+
+class Expired(ValueError):
+    """The item's time to decide has passed; it must be opened again."""
+
+
+class AlreadyDecided(ValueError):
+    """Someone else decided the item first."""
 
 
 def payload_hash(payload: dict[str, Any]) -> str:
@@ -50,6 +81,12 @@ class Approval:
     note: str | None
     decided_at: datetime
     decision: dict[str, Any] | None = None
+    requested_by: str | None = None
+    expires_at: datetime | None = None
+    principal_id: str | None = None  # the signed-in member behind the latest event
+
+    def expired(self, now: datetime | None = None) -> bool:
+        return self.expires_at is not None and (now or datetime.now(UTC)) >= self.expires_at
 
     @property
     def is_open(self) -> bool:
@@ -62,7 +99,7 @@ class Approval:
 
 _COLUMNS = (
     "approval_id, tenant_id, kind, ref_id, payload, payload_sha256, opened_at, state, reviewer,"
-    " note, decided_at, decision"
+    " note, decided_at, decision, requested_by, expires_at, principal_id"
 )
 
 
@@ -86,21 +123,34 @@ def _row(r: tuple[Any, ...]) -> Approval:
         note=r[9],
         decided_at=r[10],
         decision=dict(decision) if decision is not None else None,
+        requested_by=str(r[12]) if r[12] is not None else None,
+        expires_at=r[13],
+        principal_id=str(r[14]) if r[14] is not None else None,
     )
 
 
 def open_item(
-    db: ScopedDB, kind: Kind, ref_id: str, payload: dict[str, Any], opened_by: str = "system"
+    db: ScopedDB,
+    kind: Kind,
+    ref_id: str,
+    payload: dict[str, Any],
+    opened_by: str = "system",
+    *,
+    requested_by: str | None = None,
+    expires_in: timedelta | None = None,
 ) -> str:
-    """Open an item and record its `opened` event. Idempotent per (kind, ref_id) while open."""
+    """Open an item and record its `opened` event. Idempotent per (kind, ref_id) while open
+    and unexpired. `requested_by` (default: who opened it) may never decide it, and it
+    expires after `expires_in` (default: its kind's) (A-130)."""
     existing = for_ref(db, kind, ref_id)
-    if existing is not None and existing.is_open:
+    if existing is not None and existing.is_open and not existing.expired():
         return existing.approval_id
     approval_id = str(ULID())
+    expires_at = datetime.now(UTC) + (expires_in or EXPIRES.get(kind, timedelta(days=7)))
     with db.transaction() as cur:
         cur.execute(
-            "INSERT INTO approvals (approval_id, tenant_id, kind, ref_id, payload, payload_sha256)"
-            " VALUES (%s, %s, %s, %s, %s, %s)",
+            "INSERT INTO approvals (approval_id, tenant_id, kind, ref_id, payload, payload_sha256,"
+            " requested_by, expires_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 approval_id,
                 db.tenant.tenant_id,
@@ -108,6 +158,8 @@ def open_item(
                 ref_id,
                 json.dumps(payload, default=str),
                 payload_hash(payload),
+                requested_by or opened_by,
+                expires_at,
             ),
         )
         cur.execute(
@@ -118,18 +170,43 @@ def open_item(
     return approval_id
 
 
+def _authorize(
+    db: ScopedDB, current: Approval, event: Event, by: Principal | str
+) -> tuple[str | None, str | None]:
+    """(principal id, role) behind an event; a decision needs a signed-in member with the
+    role, who did not ask for it, on an item that has not expired (A-130)."""
+    needed = DECISIVE.get(event)
+    if needed is None and event == "closed" and isinstance(by, Principal):
+        needed = "reviewer"  # a person closes as a reviewer; the system closes as itself
+    if needed is None:
+        return None, None
+    if not isinstance(by, Principal):
+        raise members.NotPermitted("a decision is made by a signed-in member, never a typed name")
+    role = members.require(db, by, needed)
+    if event in DECISIVE:
+        if current.requested_by == by.principal_id:
+            raise members.NotPermitted(f"{by.label} asked for this, so may not decide it")
+        if current.expired():
+            raise Expired(
+                f"approval {current.approval_id!r} expired at {current.expires_at}; open it again"
+            )
+    return by.principal_id, role
+
+
 def record_event(
     db: ScopedDB,
     approval_id: str,
     event: Event,
-    reviewer: str,
+    by: Principal | str,
     note: str | None = None,
     *,
     decision: dict[str, Any] | None = None,
     within: Callable[[psycopg.Cursor[Any]], None] | None = None,
 ) -> Approval:
-    """Append one event. `within` runs in the same transaction, so whatever it writes (the
-    apply job of a decision, A-110) commits with the event or not at all."""
+    """Append one event, by a signed-in member or, for opening and closing, by the system.
+    `within` runs in the same transaction, so whatever it writes (the apply job of a
+    decision, A-110) commits with the event or not at all."""
+    reviewer = by.label if isinstance(by, Principal) else by
     if not reviewer or not reviewer.strip():
         raise ValueError("a reviewer name is required")
     current = get(db, approval_id)
@@ -137,19 +214,44 @@ def record_event(
         raise LookupError(f"no approval item {approval_id!r}")
     if event in DECIDED_STATES and not current.is_open:
         raise ValueError(f"approval {approval_id!r} is already {current.state}")
+    principal_id, role = _authorize(db, current, event, by)
+    try:
+        _append_event(
+            db, current, event, reviewer.strip(), note, decision, principal_id, role, within
+        )
+    except pg_errors.UniqueViolation as exc:
+        raise AlreadyDecided(f"approval {approval_id!r} was decided by someone else first") from exc
+    updated = get(db, approval_id)
+    assert updated is not None
+    return updated
+
+
+def _append_event(
+    db: ScopedDB,
+    current: Approval,
+    event: Event,
+    reviewer: str,
+    note: str | None,
+    decision: dict[str, Any] | None,
+    principal_id: str | None,
+    role: str | None,
+    within: Callable[[psycopg.Cursor[Any]], None] | None,
+) -> None:
+    approval_id = current.approval_id
     with db.transaction() as cur:
         cur.execute(
-            "INSERT INTO approval_events"
-            " (event_id, approval_id, tenant_id, event, reviewer, note, decision)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO approval_events (event_id, approval_id, tenant_id, event, reviewer,"
+            " note, decision, principal_id, role) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 str(ULID()),
                 approval_id,
                 db.tenant.tenant_id,
                 event,
-                reviewer.strip(),
+                reviewer,
                 note,
                 json.dumps(decision, default=str) if decision is not None else None,
+                principal_id,
+                role,
             ),
         )
         if event in DECIDED_STATES:  # every decision is also a label (A-100)
@@ -168,15 +270,12 @@ def record_event(
                         decision if decision is not None else {"event": event, "note": note},
                         default=str,
                     ),
-                    reviewer.strip(),
+                    reviewer,
                     db.tenant.settings.label_consent,
                 ),
             )
         if within is not None:
             within(cur)
-    updated = get(db, approval_id)
-    assert updated is not None
-    return updated
 
 
 def labels(db: ScopedDB, usable_for: str | None = None) -> list[dict[str, Any]]:

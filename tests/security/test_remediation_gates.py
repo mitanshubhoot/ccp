@@ -18,6 +18,7 @@ from ccp.evaluators.verdict import latest_per_subject
 from ccp.remediation import gates, proposals, runner
 from ccp.remediation.github_admin import RecordingGitHubAdmin
 from ccp.storage.scoped import ScopedDB
+from tests.support.members import member
 from tests.support.pipeline import prepared_tenants
 
 pytestmark = pytest.mark.db
@@ -72,7 +73,7 @@ def test_any_missing_gate_refuses_and_never_calls_github(
     if "gate5" in present:
         item = approvals.for_ref(acme, "remediation", proposal_id)
         assert item is not None
-        approvals.record_event(acme, item.approval_id, "approved", "reviewer")
+        approvals.record_event(acme, item.approval_id, "approved", member(acme, "reviewer"))
     config = ALLOWED if "gate3" in present else gates.RemediationConfig()
     phrase = gates.confirmation_phrase("acme-example", "platform", "jsmith")
     github = RecordingGitHubAdmin(permissions={("acme-example", "platform", "jsmith"): "write"})
@@ -107,7 +108,9 @@ def test_all_five_gates_make_exactly_one_call_and_record_the_pre_state(
     settings, acme, proposal_id = world
     item = approvals.for_ref(acme, "remediation", proposal_id)
     assert item is not None
-    approvals.record_event(acme, item.approval_id, "approved", "security-lead", "confirmed")
+    approvals.record_event(
+        acme, item.approval_id, "approved", member(acme, "security-lead"), "confirmed"
+    )
     github = RecordingGitHubAdmin(permissions={("acme-example", "platform", "jsmith"): "write"})
     result = runner.execute(
         acme,
@@ -143,7 +146,9 @@ def test_all_five_gates_make_exactly_one_call_and_record_the_pre_state(
     assert len(github.calls) == calls_before
     undo = approvals.for_ref(acme, "remediation_rollback", proposal_id)
     assert undo is not None and undo.is_open and undo.payload["restore_permission"] == "write"
-    approvals.record_event(acme, undo.approval_id, "approved", "security-lead", "undo it")
+    approvals.record_event(
+        acme, undo.approval_id, "approved", member(acme, "security-lead"), "undo it"
+    )
     dry = runner.rollback(acme, live_settings, proposal_id, github=github, config=ALLOWED)
     assert dry.mode == "dry_run" and len(github.calls) == calls_before
     wrong = runner.rollback(
@@ -181,7 +186,7 @@ def test_an_edited_proposal_fails_the_payload_hash_check(
     proposal_id = _fresh_proposal(acme, settings)
     item = approvals.for_ref(acme, "remediation", proposal_id)
     assert item is not None
-    approvals.record_event(acme, item.approval_id, "approved", "reviewer")
+    approvals.record_event(acme, item.approval_id, "approved", member(acme, "reviewer"))
     acme.execute(
         "UPDATE remediation_proposals SET target = %s WHERE proposal_id = %s",
         ('{"repo": "acme-example/platform", "login": "pnatarajan"}', proposal_id),
@@ -217,7 +222,7 @@ def test_org_member_removal_is_never_live(world: tuple[Settings, ScopedDB, str])
     }
     item = approvals.for_ref(acme, "remediation", org_proposal.proposal_id)
     assert item is not None
-    approvals.record_event(acme, item.approval_id, "approved", "reviewer")
+    approvals.record_event(acme, item.approval_id, "approved", member(acme, "reviewer"))
     github = RecordingGitHubAdmin()
     live = runner.execute(
         acme,

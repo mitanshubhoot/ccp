@@ -39,6 +39,7 @@ from ccp.retrieval.config import RetrievalConfig
 from ccp.retrieval.embeddings import HashingEmbeddingClient
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
+from tests.support.members import member
 from tests.support.pipeline import prepared_tenants
 
 NOW = datetime(2026, 9, 11, 12, tzinfo=UTC)
@@ -335,7 +336,7 @@ def test_every_decision_is_an_insert_only_label_with_its_consent_scope(
 ) -> None:
     settings, acme = world
     item = approvals.open_item(acme, "policy_draft", "draft-labels", {"path": "drafts/x.md"})
-    approvals.record_event(acme, item, "approved", "cto", "fine")
+    approvals.record_event(acme, item, "approved", member(acme, "cto"), "fine")
     found = [x for x in approvals.labels(acme) if x["approval_id"] == item]
     assert len(found) == 1 and found[0]["consent_scope"] == "none"
     assert found[0]["proposed"] == {"path": "drafts/x.md"}
@@ -348,7 +349,7 @@ def test_every_decision_is_an_insert_only_label_with_its_consent_scope(
         ),
     )
     second = approvals.open_item(opted, "policy_draft", "draft-labels-2", {"path": "drafts/y.md"})
-    approvals.record_event(opted, second, "rejected", "cto", "no")
+    approvals.record_event(opted, second, "rejected", member(opted, "cto"), "no")
     usable = approvals.labels(opted, usable_for="eval")
     assert [x["approval_id"] for x in usable if x["approval_id"] == second] == [second]
     assert not approvals.labels(opted, usable_for="training") or all(

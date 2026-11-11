@@ -47,8 +47,10 @@ training in the Voyage organization settings); `LANGFUSE_PUBLIC_KEY` and `LANGFU
 | Evals | `ccp evals run [--suite all]`, `calibrate`, `regress`, `capture <trace_id>`, `threshold` |
 | Replay | `ccp replay <id> [--execute]` for a verdict, investigation, gap report, or copilot answer |
 
-Every command takes `--tenant` (or `CCP_TENANT`). There is no user identity: the CLI is
-the operator, and the approval stage records who typed the decision.
+Every command takes `--tenant` (or `CCP_TENANT`). A decision proves who makes it with a
+sign-in token (`--token`, or `CCP_TOKEN`), verified on the server, from a member of the
+tenant holding the role it needs (A-129, A-130). Offline, `ccp auth dev-token` mints one
+from a local dev issuer, and `ccp members grant` gives the role.
 
 ## How a verdict is made, in one paragraph
 
@@ -118,8 +120,9 @@ below 0.5, and `--apply` refuses to lower the gate unless `--allow-lower` is pas
   built from.
 - The latency SLOs are provisional laptop numbers; the first case of a target also pays
   for preparing its tenant.
-- No authenticated users, so the Copilot has no cross-session memory and every approval
-  records a typed reviewer name rather than an identity.
+- Sign-in is verified against a real identity provider only once one is configured
+  (`CCP_AUTH_MODE=oidc`); until then the local dev issuer stands in. The Copilot has no
+  cross-session memory.
 - Cost figures use the published list prices on the date in
   `ccp/observability/cost.py` and mis-state spend if those change; they never change a
   verdict.

@@ -16,6 +16,7 @@ import pytest
 from ccp.agent import decisions, threads, tier3
 from ccp.agent.graphs.tier3 import TRAJECTORY_HAPPY
 from ccp.approvals import store as approvals
+from ccp.auth import dev_issuer
 from ccp.config import Settings
 from ccp.evaluators import registry, runner
 from ccp.evaluators.context import load_context
@@ -28,6 +29,7 @@ from ccp.retrieval.embeddings import HashingEmbeddingClient
 from ccp.retrieval.rerank import LexicalOverlapReranker
 from ccp.storage.scoped import ScopedDB
 from ccp.types import VerdictStatus
+from tests.support.members import member
 from tests.support.pipeline import prepared_tenants
 from tests.support.stub_agent import stub_chat_search_once, stub_extract_agent
 
@@ -201,8 +203,8 @@ def test_resume_from_a_separate_process_completes_the_thread(world) -> None:  # 
             "override",
             "--status",
             "fail",
-            "--reviewer",
-            "auditor",
+            "--token",
+            dev_issuer.mint(settings, member(acme, "auditor").subject),
             "--note",
             "no inventory on file",
         ],
@@ -248,6 +250,7 @@ def test_resume_approve_keeps_the_draft_status(world) -> None:  # type: ignore[n
         decision=decisions.build("approve", "auditor"),
         providers=providers,
         now=NOW,
+        principal=member(acme, "auditor"),
     )
     final = result.verdict
     assert result.resumed and final is not None

@@ -9,6 +9,7 @@ import json
 
 import typer
 
+from ccp import auth
 from ccp.agent import decisions, threads, tier3
 from ccp.approvals import store as approvals
 from ccp.config import Settings
@@ -116,20 +117,25 @@ def inspect(
 def resume(
     thread: str = typer.Option(..., "--thread"),
     decision: str = typer.Option(..., "--decision", help="approve | override | regather"),
-    reviewer: str = typer.Option(..., "--reviewer"),
+    token: str = typer.Option(..., "--token", envvar="CCP_TOKEN", help="your sign-in token"),
     status: str | None = typer.Option(
         None, "--status", help="with override: pass|fail|partial|needs_review"
     ),
     note: str | None = typer.Option(None, "--note"),
     tenant: str | None = typer.Option(None, "--tenant"),
 ) -> None:
-    """Record a decision on the thread's open approval item, then resume from it; persists
-    the resulting verdict."""
+    """Record a signed-in member's decision on the thread's open approval item, then resume
+    from it; persists the resulting verdict (A-130)."""
+    settings = _settings()
     try:
-        chosen = decisions.build(decision, reviewer, note, status)
+        who = auth.authenticate(settings, token)
+    except auth.InvalidToken as exc:
+        typer.echo(f"refused: sign-in token refused: {exc}", err=True)
+        raise typer.Exit(2) from None
+    try:
+        chosen = decisions.build(decision, who.label, note, status)
     except decisions.InvalidDecision as exc:
         raise typer.BadParameter(str(exc)) from None
-    settings = _settings()
     ctx = _guarded_tenant(settings, thread, tenant)
     pool = db.app_pool(settings)
     try:
@@ -149,9 +155,9 @@ def resume(
         item = waiting[0]
         try:
             result = decisions.decide(
-                scoped, settings, item.approval_id, event="approved", decision=chosen
+                scoped, settings, item.approval_id, event="approved", decision=chosen, principal=who
             )
-        except (LookupError, ValueError, decisions.PayloadChanged) as exc:
+        except (LookupError, ValueError, PermissionError, decisions.PayloadChanged) as exc:
             typer.echo(f"refused: {exc}", err=True)
             raise typer.Exit(2) from None
     finally:

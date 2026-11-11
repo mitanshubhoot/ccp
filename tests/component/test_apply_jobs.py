@@ -28,6 +28,7 @@ from ccp.retrieval.embeddings import HashingEmbeddingClient
 from ccp.retrieval.rerank import LexicalOverlapReranker
 from ccp.storage.scoped import ScopedDB
 from ccp.types import VerdictStatus
+from tests.support.members import member
 from tests.support.pipeline import prepared_tenants
 from tests.support.stub_agent import stub_chat_search_once, stub_extract_agent
 
@@ -81,7 +82,9 @@ def _jobs(acme: ScopedDB, item: store.Approval) -> list[tuple[str, int]]:
 def test_a_decision_commits_with_its_job_and_is_applied_once(world) -> None:  # type: ignore[no-untyped-def]
     settings, acme, providers = world
     thread_id, item = _interrupt(world)
-    outcome = actions.approve(acme, settings, item.approval_id, "auditor", providers=providers)
+    outcome = actions.approve(
+        acme, settings, item.approval_id, member(acme, "auditor"), providers=providers
+    )
     assert outcome.ok and "thread resumed" in outcome.detail
     assert _jobs(acme, item) == [("done", 1)]  # queued with the decision, applied at once
     row = threads.get(acme, thread_id)
@@ -117,7 +120,9 @@ def test_a_failed_apply_is_retried_by_its_job(
         return real_resume(*args, **kwargs)
 
     monkeypatch.setattr(tier3, "resume", outage_once)
-    outcome = actions.approve(acme, settings, item.approval_id, "auditor", providers=providers)
+    outcome = actions.approve(
+        acme, settings, item.approval_id, member(acme, "auditor"), providers=providers
+    )
     assert not outcome.ok and "resume failed" in outcome.detail and "applies" in outcome.detail
     assert _jobs(acme, item) == [("pending", 1)]  # kept for a retry, not dead, not lost
     assert item.approval_id in {i.approval_id for i in decisions.unapplied(acme)}

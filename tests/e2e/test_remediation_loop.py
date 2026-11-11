@@ -25,6 +25,7 @@ from ccp.storage.db import app_pool, scratch_database
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
 from ccp.types import VerdictStatus
+from tests.support.members import member
 
 pytestmark = pytest.mark.db
 
@@ -72,7 +73,11 @@ def test_simulated_loop_closes_the_finding(world: tuple[Settings, ScopedDB]) -> 
         item = approvals.for_ref(acme, "remediation", p.proposal_id)
         assert item is not None and item.is_open
         approval_actions.approve(
-            acme, settings, item.approval_id, "security-lead", "approved for the drill"
+            acme,
+            settings,
+            item.approval_id,
+            member(acme, "security-lead"),
+            "approved for the drill",
         )
     # execute in simulated mode: nothing real exists to change, gate 5 still applies
     connector = github_fixture.GitHubFixtureConnector(settings.ccp_fixtures_dir)
@@ -118,14 +123,14 @@ def test_rejected_approval_leaves_state_unchanged(world: tuple[Settings, ScopedD
     item = approvals.for_ref(acme, "remediation", repo.proposal_id)
     assert item is not None
     outcome = approval_actions.reject(
-        acme, settings, item.approval_id, "security-lead", "not this one"
+        acme, settings, item.approval_id, member(acme, "security-lead"), "not this one"
     )
     assert outcome.approval.state == "rejected"
     assert proposals.get(acme, repo.proposal_id).status == "rejected"  # type: ignore[union-attr]
     refused = runner.simulate(acme, settings, repo.proposal_id)
     assert refused.mode == "refused"
     with pytest.raises(ValueError):  # a decided item cannot be approved afterwards
-        approval_actions.approve(acme, settings, item.approval_id, "someone")
+        approval_actions.approve(acme, settings, item.approval_id, member(acme, "someone"))
     after = reader.current_state(acme, JANE)
     assert (
         after is not None and after.row_id == before.row_id and after.status is VerdictStatus.failed

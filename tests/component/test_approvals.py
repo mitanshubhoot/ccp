@@ -14,6 +14,7 @@ import pytest
 
 from ccp.agent import threads, tier3
 from ccp.approvals import actions, store
+from ccp.auth import dev_issuer
 from ccp.config import Settings
 from ccp.evaluators.context import load_context
 from ccp.evaluators.verdict import latest_per_subject
@@ -24,6 +25,7 @@ from ccp.retrieval.config import RetrievalConfig
 from ccp.retrieval.embeddings import HashingEmbeddingClient
 from ccp.storage.scoped import ScopedDB
 from ccp.types import VerdictStatus
+from tests.support.members import member
 from tests.support.pipeline import prepared_tenants
 from tests.support.stub_agent import stub_chat_search_once, stub_extract_agent
 
@@ -52,13 +54,13 @@ def test_items_are_append_only_and_state_is_the_latest_event(world) -> None:  # 
     with pytest.raises(ValueError):
         store.record_event(acme, approval_id, "approved", " ")
     changed = store.record_event(
-        acme, approval_id, "changes_requested", "editor", "tighten section 2"
+        acme, approval_id, "changes_requested", member(acme, "editor"), "tighten section 2"
     )
     assert changed.state == "changes_requested" and changed.is_open
-    approved = store.record_event(acme, approval_id, "approved", "cto", "fine now")
+    approved = store.record_event(acme, approval_id, "approved", member(acme, "cto"), "fine now")
     assert approved.state == "approved" and not approved.is_open and approved.note == "fine now"
     with pytest.raises(ValueError):
-        store.record_event(acme, approval_id, "rejected", "cto")
+        store.record_event(acme, approval_id, "rejected", member(acme, "cto"))
     assert [e["event"] for e in store.history(acme, approval_id)] == [
         "opened",
         "changes_requested",
@@ -123,8 +125,8 @@ def test_tier3_interrupt_becomes_an_approval_item_and_the_cli_resumes_it(world) 
             item.approval_id,
             "--tenant",
             "acme",
-            "--reviewer",
-            "auditor",
+            "--token",
+            dev_issuer.mint(settings, member(acme, "auditor").subject),
             "--decision",
             "override",
             "--status",
@@ -148,7 +150,7 @@ def test_tier3_interrupt_becomes_an_approval_item_and_the_cli_resumes_it(world) 
     final = {v.subject_key: v for v in latest_per_subject(acme, "HR-4")}["HR-4|tenant"]
     assert final.status is VerdictStatus.partial and final.trigger_reason == "human_decision"
     with pytest.raises(ValueError):
-        actions.approve(acme, settings, item.approval_id, "again")
+        actions.approve(acme, settings, item.approval_id, member(acme, "again"))
 
 
 def test_rejecting_an_interrupt_resumes_as_needs_review(world) -> None:  # type: ignore[no-untyped-def]
@@ -167,7 +169,9 @@ def test_rejecting_an_interrupt_resumes_as_needs_review(world) -> None:  # type:
     thread_id = (verdict.request_json or {})["thread_id"]
     item = store.for_ref(acme, "tier3_interrupt", thread_id)
     assert item is not None
-    outcome = actions.reject(acme, settings, item.approval_id, "auditor", "not enough evidence")
+    outcome = actions.reject(
+        acme, settings, item.approval_id, member(acme, "auditor"), "not enough evidence"
+    )
     assert outcome.approval.state == "rejected" and "needs_review" in outcome.detail
     row = threads.get(acme, thread_id)
     assert row is not None and row.status == "finished" and row.decision is not None

@@ -18,6 +18,7 @@ from ccp.retrieval import index
 from ccp.retrieval.config import RetrievalConfig
 from ccp.retrieval.embeddings import HashingEmbeddingClient
 from ccp.storage.scoped import ScopedDB
+from tests.support.members import member
 from tests.support.pipeline import prepared_tenants
 from tests.support.stub_policy import analyze, compose, gather
 
@@ -55,7 +56,9 @@ def test_a_draft_changes_no_evidence_and_neither_does_approving_it(world) -> Non
     before = _counts(acme)
     _, draft = runner.draft(acme, settings, "CTL-VULN-DISCLOSURE", providers, now=NOW)
     assert draft.path and _counts(acme) == before
-    outcome = approval_actions.approve(acme, settings, draft.approval_id, "cto", "looks right")
+    outcome = approval_actions.approve(
+        acme, settings, draft.approval_id, member(acme, "cto"), "looks right"
+    )
     assert outcome.approval.state == "approved"
     assert _counts(acme) == before  # only the manual upload path can change them
     assert acme.fetch_one("SELECT count(*) FROM evidence WHERE raw_ref LIKE %s", ("%drafts%",)) == (

@@ -27,6 +27,7 @@ from ccp.evaluators.verdict import latest_per_subject
 from ccp.remediation import broker, gates, github_admin, proposals, runner
 from ccp.remediation.github_admin import RecordingGitHubAdmin
 from ccp.storage.scoped import ScopedDB
+from tests.support.members import member
 from tests.support.pipeline import prepared_tenants
 
 REPO = Path(__file__).resolve().parents[2]
@@ -117,7 +118,9 @@ def test_the_broker_issues_only_for_an_approved_operation_and_records_it(world) 
         broker.issue(
             acme, with_token, operation=operation, action="execute", approval=item, scope=scope
         )
-    decided = approvals.record_event(acme, item.approval_id, "approved", "security-lead")
+    decided = approvals.record_event(
+        acme, item.approval_id, "approved", member(acme, "security-lead")
+    )
     with pytest.raises(broker.NotApproved):  # an approval of another operation
         broker.issue(
             acme, with_token, operation="another", action="execute", approval=decided, scope=scope
@@ -144,7 +147,9 @@ def test_the_executor_acts_only_with_the_brokers_credential(
     settings, acme, proposal_id = world
     item = approvals.for_ref(acme, "remediation", proposal_id)
     assert item is not None
-    approvals.record_event(acme, item.approval_id, "approved", "security-lead", "confirmed")
+    approvals.record_event(
+        acme, item.approval_id, "approved", member(acme, "security-lead"), "confirmed"
+    )
     tokens: list[str] = []
 
     def live_admin(token: str) -> Any:

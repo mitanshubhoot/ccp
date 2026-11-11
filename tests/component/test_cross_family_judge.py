@@ -29,6 +29,7 @@ from ccp.llm.openai_judge import CrossFamilyJudgeClient
 from ccp.observability import cost
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
+from tests.support.members import member
 from tests.support.pipeline import prepared_tenants
 from tests.support.stub_judge import lenient_judge
 
@@ -298,22 +299,32 @@ def test_reviewer_labels_become_intake_outside_the_repository(
     draft = {"status": "pass", "reasoning": "MFA enforced for the org.", "confidence": 0.8}
     approved = approvals.open_item(opted, "tier3_interrupt", "thread-a", {"draft": draft})
     approvals.record_event(
-        opted, approved, "approved", "lead", "ok", decision=decisions.build("approve", "lead")
+        opted,
+        approved,
+        "approved",
+        member(opted, "lead"),
+        "ok",
+        decision=decisions.build("approve", "lead"),
     )
     overridden = approvals.open_item(opted, "tier3_interrupt", "thread-b", {"draft": draft})
     approvals.record_event(
         opted,
         overridden,
         "approved",
-        "lead",
+        member(opted, "lead"),
         "wrong",
         decision=decisions.build("override", "lead", status="fail"),
     )
     other = approvals.open_item(opted, "policy_draft", "draft-z", {"path": "drafts/z.md"})
-    approvals.record_event(opted, other, "approved", "cto", "fine")
+    approvals.record_event(opted, other, "approved", member(opted, "cto"), "fine")
     unconsented = approvals.open_item(acme, "tier3_interrupt", "thread-c", {"draft": draft})
     approvals.record_event(
-        acme, unconsented, "approved", "lead", "ok", decision=decisions.build("approve", "lead")
+        acme,
+        unconsented,
+        "approved",
+        member(acme, "lead"),
+        "ok",
+        decision=decisions.build("approve", "lead"),
     )
 
     out = tmp_path / "intake" / "acme-labels.yaml"

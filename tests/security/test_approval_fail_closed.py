@@ -41,6 +41,7 @@ from ccp.retrieval.config import RetrievalConfig
 from ccp.retrieval.embeddings import HashingEmbeddingClient
 from ccp.storage.scoped import ScopedDB
 from ccp.types import VerdictStatus
+from tests.support.members import member
 from tests.support.pipeline import prepared_tenants
 from tests.support.stub_agent import stub_chat_search_once, stub_extract_agent
 
@@ -196,7 +197,7 @@ def test_a_decision_is_recorded_first_and_survives_a_failed_resume(
         acme,
         settings,
         item.approval_id,
-        "auditor",
+        member(acme, "auditor"),
         "inventory pending",
         decision="override",
         status="partial",
@@ -213,7 +214,7 @@ def test_a_decision_is_recorded_first_and_survives_a_failed_resume(
     assert item.approval_id in _unapplied(acme)
     monkeypatch.undo()
     with pytest.raises(ValueError):  # decided: it cannot be decided again
-        actions.approve(acme, settings, item.approval_id, "someone else")
+        actions.approve(acme, settings, item.approval_id, member(acme, "someone else"))
     resumed = actions.resume(acme, settings, item.approval_id, providers=providers)
     assert resumed.ok and "thread resumed: partial" in resumed.detail
     row = threads.get(acme, thread_id)
@@ -234,7 +235,9 @@ def test_a_failed_commit_after_the_resume_is_retried_from_the_final_state(
         raise RuntimeError("database went away")
 
     monkeypatch.setattr(evaluations, "commit_verdict", database_went_away)
-    outcome = actions.approve(acme, settings, item.approval_id, "auditor", providers=providers)
+    outcome = actions.approve(
+        acme, settings, item.approval_id, member(acme, "auditor"), providers=providers
+    )
     assert not outcome.ok
     row = threads.get(acme, thread_id)
     assert row is not None and row.status == "finished" and row.verdict_id
@@ -267,13 +270,15 @@ def test_an_item_that_does_not_show_the_pending_interrupt_records_nothing(
         (str(ULID()), forged, "acme"),
     )
     with pytest.raises(actions.PayloadChanged):
-        actions.approve(acme, settings, forged, "auditor", providers=providers)
+        actions.approve(acme, settings, forged, member(acme, "auditor"), providers=providers)
     shown = store.get(acme, forged)
     assert shown is not None and shown.state == "opened" and shown.decision is None
     row = threads.get(acme, thread_id)
     assert row is not None and row.status == "interrupted"
     # the genuine item still decides the thread
-    outcome = actions.reject(acme, settings, item.approval_id, "auditor", "not enough evidence")
+    outcome = actions.reject(
+        acme, settings, item.approval_id, member(acme, "auditor"), "not enough evidence"
+    )
     assert outcome.ok and "needs_review" in outcome.detail
     row = threads.get(acme, thread_id)
     assert row is not None and row.status == "finished" and row.decision is not None
@@ -288,7 +293,7 @@ def test_a_stored_decision_without_a_reviewer_is_held_for_review(
     thread_id, item = _interrupt(world)
     # bypass decide(): the event names a reviewer, the decision itself does not
     store.record_event(
-        acme, item.approval_id, "approved", "auditor", decision={"action": "approve"}
+        acme, item.approval_id, "approved", member(acme, "auditor"), decision={"action": "approve"}
     )
     final = tier3.resume(acme, settings, thread_id, providers, approval_id=item.approval_id)
     assert final.status is VerdictStatus.needs_review
@@ -309,7 +314,7 @@ def test_resume_needs_this_threads_recorded_decision(
         acme,
         other.approval_id,
         "approved",
-        "auditor",
+        member(acme, "auditor"),
         decision=decisions.build("override", "auditor", status="pass"),
     )
     with pytest.raises(LookupError, match="not an item of thread"):  # another thread's decision
@@ -339,7 +344,7 @@ def test_a_rollback_needs_its_own_approval_bound_to_what_it_restores(
         )
         item = store.for_ref(acme, "remediation", created.proposal_id)
         assert item is not None
-        actions.approve(acme, settings, item.approval_id, "security-lead")
+        actions.approve(acme, settings, item.approval_id, member(acme, "security-lead"))
         return created
 
     # simulated: the rollback approval is the only gate
@@ -350,8 +355,8 @@ def test_a_rollback_needs_its_own_approval_bound_to_what_it_restores(
     undo = store.for_ref(acme, "remediation_rollback", simulated.proposal_id)
     assert undo is not None and undo.is_open
     with pytest.raises(actions.InvalidDecision):  # not a tier 3 item: no decisions
-        actions.approve(acme, settings, undo.approval_id, "cto", decision="override")
-    actions.approve(acme, settings, undo.approval_id, "cto", "undo the drill")
+        actions.approve(acme, settings, undo.approval_id, member(acme, "cto"), decision="override")
+    actions.approve(acme, settings, undo.approval_id, member(acme, "cto"), "undo the drill")
     rolled = runner.rollback(acme, settings, simulated.proposal_id)
     assert rolled.mode == "rolled_back" and rolled.proposal.status == "rolled_back"
 
@@ -373,7 +378,7 @@ def test_a_rollback_needs_its_own_approval_bound_to_what_it_restores(
     assert first.mode == "refused"
     undo = store.for_ref(acme, "remediation_rollback", executed.proposal_id)
     assert undo is not None and undo.payload["restore_permission"] == "write"
-    actions.approve(acme, settings, undo.approval_id, "cto")
+    actions.approve(acme, settings, undo.approval_id, member(acme, "cto"))
     acme.execute(
         "UPDATE remediation_proposals SET pre_state = %s WHERE proposal_id = %s",
         ('{"permission": "admin"}', executed.proposal_id),
@@ -447,7 +452,7 @@ def test_the_audits_find_actions_without_approvals(
         acme,
         item.approval_id,
         "approved",
-        "auditor",
+        member(acme, "auditor"),
         decision=decisions.build("approve", "auditor"),
     )
     outcome = actions.resume(acme, settings, item.approval_id, providers=providers)

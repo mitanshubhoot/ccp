@@ -16,9 +16,12 @@ Only tier 3 items take a decision other than a plain approve; every other kind r
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
+
 
 from ccp.agent import decisions
 from ccp.approvals import store
+from ccp.auth.tokens import Principal
 from ccp.config import Settings
 from ccp.evaluators.tier2 import Providers
 from ccp.storage.scoped import ScopedDB
@@ -41,6 +44,16 @@ def _open(db: ScopedDB, approval_id: str) -> store.Approval:
     if not item.is_open:
         raise ValueError(f"approval {approval_id!r} is already {item.state}")
     return item
+
+
+def _check_seen(item: store.Approval, seen_sha256: str | None) -> None:
+    """A decision is on what the person was shown: a payload hash they were not shown is
+    refused before anything is recorded (A-130)."""
+    if seen_sha256 is not None and seen_sha256 != item.payload_sha256:
+        raise PayloadChanged(
+            f"approval {item.approval_id!r} holds payload {item.payload_sha256[:12]}, not the"
+            f" {seen_sha256[:12]} that was shown; nothing was recorded"
+        )
 
 
 def check_plain_decision(kind: str, decision: str, status: str | None) -> None:
@@ -77,22 +90,30 @@ def approve(
     db: ScopedDB,
     settings: Settings,
     approval_id: str,
-    reviewer: str,
+    who: Principal,
     note: str | None = None,
     *,
     decision: str = "approve",
     status: str | None = None,
     providers: Providers | None = None,
+    seen_sha256: str | None = None,
 ) -> Outcome:
     item = _open(db, approval_id)
+    _check_seen(item, seen_sha256)
     if item.kind == "tier3_interrupt":
-        chosen = decisions.build(decision, reviewer, note, status)
+        chosen = decisions.build(decision, who.label, note, status)
         result = decisions.decide(
-            db, settings, approval_id, event="approved", decision=chosen, providers=providers
+            db,
+            settings,
+            approval_id,
+            event="approved",
+            decision=chosen,
+            providers=providers,
+            principal=who,
         )
         return _tier3_outcome(result, rejected=False)
     check_plain_decision(item.kind, decision, status)
-    updated = store.record_event(db, approval_id, "approved", reviewer, note)
+    updated = store.record_event(db, approval_id, "approved", who, note)
     if item.kind == "remediation":
         return Outcome(updated, "gate 5 satisfied; run `ccp remediate execute` with gates 1 to 4")
     if item.kind == "remediation_rollback":
@@ -106,25 +127,36 @@ def reject(
     db: ScopedDB,
     settings: Settings,
     approval_id: str,
-    reviewer: str,
+    who: Principal,
     note: str,
     *,
     providers: Providers | None = None,
+    seen_sha256: str | None = None,
 ) -> Outcome:
     item = _open(db, approval_id)
+    _check_seen(item, seen_sha256)
     if item.kind == "tier3_interrupt":
-        chosen = decisions.build("override", reviewer, note, "needs_review")
+        chosen = decisions.build("override", who.label, note, "needs_review")
         result = decisions.decide(
-            db, settings, approval_id, event="rejected", decision=chosen, providers=providers
+            db,
+            settings,
+            approval_id,
+            event="rejected",
+            decision=chosen,
+            providers=providers,
+            principal=who,
         )
         return _tier3_outcome(result, rejected=True)
-    if item.kind == "remediation":
-        db.execute(
-            "UPDATE remediation_proposals SET status = 'rejected', updated_at = now()"
-            " WHERE proposal_id = %s",
-            (item.ref_id,),
-        )
-    updated = store.record_event(db, approval_id, "rejected", reviewer, note)
+
+    def mark_rejected(cur: Any) -> None:  # with the decision, never before it
+        if item.kind == "remediation":
+            cur.execute(
+                "UPDATE remediation_proposals SET status = 'rejected', updated_at = now()"
+                " WHERE proposal_id = %s",
+                (item.ref_id,),
+            )
+
+    updated = store.record_event(db, approval_id, "rejected", who, note, within=mark_rejected)
     return Outcome(updated, f"{item.kind} rejected")
 
 
@@ -136,12 +168,12 @@ def resume(
     return _tier3_outcome(result, rejected=result.approval.state == "rejected")
 
 
-def request_changes(db: ScopedDB, approval_id: str, reviewer: str, note: str) -> Outcome:
+def request_changes(db: ScopedDB, approval_id: str, who: Principal, note: str) -> Outcome:
     return Outcome(
-        store.record_event(db, approval_id, "changes_requested", reviewer, note),
+        store.record_event(db, approval_id, "changes_requested", who, note),
         "changes requested",
     )
 
 
-def close(db: ScopedDB, approval_id: str, reviewer: str, note: str | None = None) -> Outcome:
-    return Outcome(store.record_event(db, approval_id, "closed", reviewer, note), "closed")
+def close(db: ScopedDB, approval_id: str, who: Principal | str, note: str | None = None) -> Outcome:
+    return Outcome(store.record_event(db, approval_id, "closed", who, note), "closed")
