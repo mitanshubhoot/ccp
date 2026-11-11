@@ -23,7 +23,7 @@ from typing import Any
 
 import psycopg
 
-from ccp.agent import authz, core, stops, threads
+from ccp.agent import authz, core, harness, stops, threads
 from ccp.agent.allowlists import ALLOWLISTS
 from ccp.agent.graphs import investigator as graph_module
 from ccp.agent.tools import ToolContext, bind_tools
@@ -154,6 +154,7 @@ def investigate(
                 raise RuntimeError("investigator graph finished without a result")
             investigation = _finish(db, verdict, final, s)
             threads.mark_finished(db, thread_id, verdict.verdict_id, trajectory)
+            harness.record(db, thread_id, list(investigation.guardrail_events))
             budget_gate.record_spend(db, tracker.usd, tracker.tokens, s.step_id, moment)
             s.set_output(
                 {"investigation_id": investigation.investigation_id, "trajectory": trajectory}

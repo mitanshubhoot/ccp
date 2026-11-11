@@ -12,7 +12,7 @@ from typing import Any
 
 from ulid import ULID
 
-from ccp.agent import authz, core, threads
+from ccp.agent import authz, core, harness, threads
 from ccp.agent.allowlists import ALLOWLISTS, POLICY_PINNED
 from ccp.agent.graphs import policy as graph_module
 from ccp.agent.tools import ToolContext, bind_tools
@@ -152,6 +152,7 @@ def _run(
             if not final:
                 raise RuntimeError("policy graph finished without a result")
             threads.mark_finished(db, thread_id, control_id, trajectory)
+            harness.record(db, thread_id, list(final.get("guardrail_events") or []))
             budget_gate.record_spend(db, tracker.usd, tracker.tokens, s.step_id, now)
             s.set_output(
                 {

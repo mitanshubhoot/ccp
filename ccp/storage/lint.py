@@ -88,6 +88,7 @@ INSERT_ONLY: frozenset[str] = frozenset(
         "task_events",
         "tool_results",
         "task_answers",
+        "run_metrics",
     }
 )
 # Operational state that is updated in place by design.

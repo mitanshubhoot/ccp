@@ -10,7 +10,7 @@ import json
 import typer
 
 from ccp import auth
-from ccp.agent import decisions, threads, tier3
+from ccp.agent import decisions, harness, threads, tier3
 from ccp.approvals import store as approvals
 from ccp.config import Settings
 from ccp.observability import steps
@@ -213,3 +213,48 @@ def lint() -> None:
     if problems:
         raise typer.Exit(1)
     typer.echo("rule of two: no principal reads untrusted content, holds private data and acts")
+
+
+@app.command("harness")
+def harness_report(
+    graph: str | None = typer.Option(None, "--graph"),
+    bundle: str | None = typer.Option(None, "--bundle"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Harness metrics per graph and bundle, and how fanned-out task reads went (A-155)."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        scoped = ScopedDB(pool, ctx)
+        out = {
+            "graphs": harness.report(scoped, graph, bundle),
+            "fanout": harness.fanout(scoped),
+        }
+    finally:
+        pool.close()
+    typer.echo(json.dumps(out, indent=2, sort_keys=True, default=str))
+
+
+@app.command("harness-gate")
+def harness_gate(
+    baseline: str = typer.Option(..., "--baseline", help="the bundle in production"),
+    candidate: str = typer.Option(..., "--candidate", help="the bundle to ship"),
+    graph: str | None = typer.Option(None, "--graph"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Refuse a bundle whose runs end in loop or cap stops more often (A-155); exit 1."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        results = harness.gate(ScopedDB(pool, ctx), baseline, candidate, graph)
+    finally:
+        pool.close()
+    for r in results:
+        typer.echo(
+            f"{r.graph}: {r.verdict} (baseline {r.baseline_rate} over {r.baseline_runs} runs,"
+            f" candidate {r.candidate_rate} over {r.candidate_runs})"
+        )
+    if any(r.blocks for r in results):
+        raise typer.Exit(code=1)

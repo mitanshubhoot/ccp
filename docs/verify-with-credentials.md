@@ -43,6 +43,11 @@ step; work through it when the credentials are available.
 - [ ] A waiting item answered by a person (`ccp tasks answer`) on Sonnet 5.5: the new
       run searches for the evidence the answer points to and cites it, rather than citing
       the answer; an answer that carries an instruction changes nothing it reads (A-154).
+- [ ] Harness metrics on a real model: after a week of runs, `ccp agent harness` per
+      graph and bundle (stop rates, tool error and repeat rates, first-pass rate,
+      correction success, tokens and dollars per accepted result); before the next
+      bundle ships, `ccp agent harness-gate --baseline <prod> --candidate <new>` on the
+      eval organization's runs exits 0 (A-155).
 - [ ] Prompt caching: cache reads appear on repeated stable prefixes.
 - [ ] `ccp replay <id> --execute` on a model-backed verdict.
 

@@ -21,7 +21,7 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command
 from ulid import ULID
 
-from ccp.agent import authz, core, stops, threads
+from ccp.agent import authz, core, harness, stops, threads
 from ccp.agent.allowlists import ALLOWLISTS
 from ccp.agent.graphs import tier3 as graph_module
 from ccp.agent.runlog import ReplayDiverged
@@ -279,6 +279,7 @@ def evaluate(
                     values,
                 )
                 threads.mark_interrupted(db, thread_id, payload, trajectory)
+                harness.record(db, thread_id, list(values.get("guardrail_events") or []))
                 approvals.open_item(db, APPROVAL_KIND, thread_id, item_payload(thread_id, payload))
                 return verdict
             final = values.get("final_verdict")
@@ -286,6 +287,7 @@ def evaluate(
                 raise RuntimeError("graph finished without a final verdict")
             verdict = Verdict.model_validate(final)
             threads.mark_finished(db, thread_id, verdict.verdict_id, trajectory)
+            harness.record(db, thread_id, verdict.guardrail_events)  # A-155
             return verdict
     except RunStopped as exc:
         threads.mark_cancelled(db, thread_id, str(exc), trajectory)
@@ -408,6 +410,7 @@ def resume(
             s.set_output({"trajectory": trajectory, "interrupted": payload is not None})
             if payload is not None:  # regather led back to the gate: a new decision is needed
                 threads.mark_interrupted(db, thread_id, payload, trajectory)
+                harness.record(db, thread_id, list(values.get("guardrail_events") or []))
                 approvals.open_item(db, APPROVAL_KIND, thread_id, item_payload(thread_id, payload))
                 return _interrupted_verdict(
                     db.tenant,
@@ -426,6 +429,7 @@ def resume(
                 raise RuntimeError("graph finished without a final verdict")
             verdict = Verdict.model_validate(final)
             threads.mark_finished(db, thread_id, verdict.verdict_id, trajectory, decision)
+            harness.record(db, thread_id, verdict.guardrail_events)  # A-155
             return verdict
     except RunStopped as exc:
         threads.mark_cancelled(db, thread_id, str(exc), trajectory)

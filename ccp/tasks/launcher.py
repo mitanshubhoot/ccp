@@ -31,7 +31,7 @@ from typing import Any
 
 import yaml
 
-from ccp.agent import authz, core, stops, threads
+from ccp.agent import authz, core, harness, stops, threads
 from ccp.agent.allowlists import ALLOWLISTS
 from ccp.agent.graphs import task_item as graph_module
 from ccp.agent.tools import ToolContext, bind_tools
@@ -195,6 +195,7 @@ def run_items(
                 trajectory.extend(str(k) for k in update)
             final = dict(graph.get_state(config).values.get("final") or {})
             threads.mark_finished(db, run_id, task.task_id, trajectory)
+            harness.record(db, run_id, list(final.get("guardrail_events") or []))
             budget_gate.record_spend(db, tracker.usd, tracker.tokens, s.step_id, moment)
             s.set_output({"trajectory": trajectory, "usd": round(tracker.usd, 6)})
     except RunStopped as exc:
