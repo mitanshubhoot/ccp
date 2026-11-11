@@ -366,6 +366,84 @@ def index_calibrate(
         typer.echo(f"wrote {retrieval_cfg.CONFIG_PATH}")
 
 
+@index_app.command("compare")
+def index_compare(
+    embed: str = typer.Option(
+        ..., "--embed", help="candidate embedding model, e.g. voyage-4-large"
+    ),
+    rerank: str = typer.Option(..., "--rerank", help="candidate reranker, e.g. rerank-3, or none"),
+    baseline_rerank: str | None = typer.Option(
+        None, "--baseline-rerank", help="default: the configured reranker"
+    ),
+) -> None:
+    """Paired comparison of a candidate pair against the serving one on every tenant's golden
+    queries (A-149). Writes the candidate generation beside the serving one; never switches."""
+    from ccp.retrieval import compare as paired
+    from ccp.retrieval.rerank import RerankModelUnavailable, reranker_for
+
+    settings = _settings()
+    providers = tier2.Providers.from_settings(settings)
+    queries = retrieval_metrics.load_queries()
+    pool = db.app_pool(settings)
+    runs = []
+    usd = 0.0
+    try:
+        for tenant_id in sorted({q.tenant for q in queries}):
+            scoped = ScopedDB(pool, _tenant(settings, tenant_id))
+            serving = generations.active(scoped)
+            if serving is None:
+                typer.echo(f"{tenant_id}: no index yet; run `ccp index refresh`", err=True)
+                raise typer.Exit(2)
+            try:
+                baseline = paired.Side(
+                    embedder_for(settings, serving.embed_model),
+                    reranker_for(settings, baseline_rerank)
+                    if baseline_rerank is not None
+                    else providers.reranker,
+                    serving.generation_id,
+                )
+                candidate_embedder = embedder_for(settings, embed)
+                candidate_reranker = reranker_for(settings, rerank)
+            except (EmbeddingModelUnavailable, RerankModelUnavailable) as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(2) from exc
+            built = retrieval_index.refresh(scoped, settings, candidate_embedder, providers.llm)
+            usd += built.usd
+            candidate = paired.Side(candidate_embedder, candidate_reranker, built.generation_id)
+            runs.append(paired.compare(scoped, queries, baseline, candidate, providers.retrieval))
+    finally:
+        pool.close()
+    summary = paired.merge(runs).summary()
+    summary["candidate_index_usd"] = round(usd, 6)
+    for key in (
+        "baseline",
+        "candidate",
+        "queries",
+        "baseline_mrr",
+        "candidate_mrr",
+        "mrr_delta",
+        "mrr_delta_ci95",
+        "recall_at_5_delta",
+        "recall_at_5_delta_ci95",
+        "wins",
+        "losses",
+        "ties",
+        "sign_test_p",
+        "latency_ms_p50",
+        "candidate_index_usd",
+        "verdict",
+    ):
+        typer.echo(f"{key}: {summary[key]}")
+    for etype, row in summary["by_type"].items():
+        typer.echo(f"  {etype}: {row}")
+    out = settings.ccp_eval_runs_dir / (
+        f"retrieval-compare-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.json"
+    )
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(summary, indent=2, default=str), encoding="utf-8")
+    typer.echo(f"wrote {out}")
+
+
 @index_app.command("gate")
 def index_gate(
     distractor_count: int = typer.Option(300, "--distractors", help="installed where none are"),

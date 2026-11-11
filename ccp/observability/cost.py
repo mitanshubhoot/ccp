@@ -44,8 +44,10 @@ PRICES: dict[str, Price] = {
     # Voyage (docs.voyageai.com/docs/pricing)
     "voyage-3-large": Price(input=0.18),
     "voyage-3.5": Price(input=0.06),
+    "voyage-4-large": Price(input=0.12),  # 1,024 dimensions, as the schema keeps (A-149)
     "rerank-2.5": Price(input=0.05),
     "rerank-2.5-lite": Price(input=0.02),
+    "rerank-3": Price(input=0.05),  # the same price as rerank-2.5
     # OpenAI embeddings, list price as last seen; verify before relying on it
     "text-embedding-3-large": Price(input=0.13),
     # local providers cost nothing

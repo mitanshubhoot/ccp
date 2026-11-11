@@ -37,6 +37,12 @@ step; work through it when the credentials are available.
       floors in config/retrieval_gates.yaml (the keyless overrides do not apply); then
       `ccp index calibrate` writes the noise floor and the reliability curves, and a
       tier 2 verdict's events show `retrieval_reliability_type` or `_pooled` (A-148).
+- [ ] `ccp index compare --embed voyage-4-large --rerank rerank-3`: the candidate
+      generation is written beside the serving one, the paired report (MRR and Recall@5
+      deltas with 95% bootstrap intervals, sign test, per type deltas, latency medians,
+      the candidate index's cost) lands in evals/runs/, and nothing switches. Confirm
+      the $0.12 per million tokens for voyage-4-large and rerank-3's price on Voyage's
+      pricing page before relying on the cost line (A-149).
 - [ ] A real re-embedding: `ccp index reembed --model voyage-4-large --no-switch` writes a
       candidate generation beside the serving one and prints both measurements; without
       `--no-switch` it serves only if the gate passes, and `ccp index generations` shows

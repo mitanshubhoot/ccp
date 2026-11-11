@@ -115,5 +115,23 @@ def build_reranker(settings: Settings) -> Reranker | None:
     key = credentials.secret(settings, "rerank:voyage")
     if key is not None:
         require_voyage_terms(settings)
-        return VoyageReranker(key)
+        return VoyageReranker(key, settings.ccp_rerank_model)
     return LexicalOverlapReranker()
+
+
+class RerankModelUnavailable(RuntimeError):
+    """No client can be built for the named reranker (its provider's key is not set)."""
+
+
+def reranker_for(settings: Settings, model_id: str | None) -> Reranker | None:
+    """A reranker by name for a comparison (A-149): 'none' or None for no reranker, the
+    local stand-in by its id, else Voyage; never a silent substitute."""
+    if model_id in (None, "none"):
+        return None
+    if model_id == LexicalOverlapReranker.model_id:
+        return LexicalOverlapReranker()
+    key = credentials.secret(settings, "rerank:voyage")
+    if key is None:
+        raise RerankModelUnavailable(f"no Voyage key is set, so {model_id!r} cannot rerank")
+    require_voyage_terms(settings)
+    return VoyageReranker(key, model_id)

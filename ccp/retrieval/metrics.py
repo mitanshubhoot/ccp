@@ -13,6 +13,7 @@ are resolved against the index at run time.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -111,6 +112,7 @@ class QueryOutcome:
     top_score: float | None
     events: list[str] = field(default_factory=list)
     evidence_type: str = ""
+    latency_ms: float = 0.0  # the retrieval call, query embedding and rerank included
     hit_at_k: bool = False  # a relevant chunk among the top_k a tier is given
     distractor_at_1: bool = False
     distractors_at_5: int = 0
@@ -229,6 +231,7 @@ def evaluate_queries(
         if not relevant:
             report.unresolved.append(query.id)
             continue
+        started = time.perf_counter()
         result: RetrievalResult = retrieve(
             db,
             embedder,
@@ -242,6 +245,7 @@ def evaluate_queries(
             top_k=10,
             generation_id=generation_id,
         )
+        latency_ms = (time.perf_counter() - started) * 1000
         ranked = [c.chunk_id for c in result.chunks] or [c.chunk_id for c in result.candidates]
         listed = result.chunks or result.candidates
         given = (config or RetrievalConfig()).top_k
@@ -256,6 +260,7 @@ def evaluate_queries(
                 top_score=result.chunks[0].top_score if result.chunks else None,
                 events=list(result.events),
                 evidence_type=query.evidence_type,
+                latency_ms=round(latency_ms, 2),
                 hit_at_k=bool(set(ranked[:given]) & relevant),
                 distractor_at_1=bool(listed) and listed[0].is_distractor,
                 distractors_at_5=sum(1 for c in listed[:5] if c.is_distractor),

@@ -251,6 +251,8 @@ class Settings(BaseSettings):
     # Embeddings
     ccp_embed_provider: Literal["voyage", "openai"] = "voyage"
     ccp_embed_model: str = "voyage-3-large"
+    # the Voyage reranker; a change goes through `ccp index compare` first (A-149)
+    ccp_rerank_model: str = "rerank-2.5"
     voyage_api_key: SecretStr | None = None
     # Set true only after opting out of training in the Voyage organization settings; Voyage
     # clients are refused until then (A-96).
