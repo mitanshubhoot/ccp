@@ -1,7 +1,8 @@
 # Test specs (spec.md Layer 6). Everything the router and the evaluators need is declared
 # here at authoring time: how the test is evaluated, which evidence it consumes, which
 # rule decides, where valid time comes from, when evidence goes stale, and which sources
-# must have been seen whole for a PASS to stand (requires_complete, A-123).
+# must have been seen whole for a PASS to stand (requires_complete, A-123), and which
+# sources its subjects are listed from (subjects_from, A-124).
 tests:
   - test_id: GH-1
     title: A terminated person still holds an active GitHub org membership or repo collaboration
@@ -12,6 +13,7 @@ tests:
     controls: [CTL-ACCESS-REVOKE]
     rule: gh1_terminated_github_access
     requires_complete: [github:members, github:collaborators]
+    subjects_from: [hris:employees]
     valid_from_strategy: event_time_plus_sla
     parameters: {sla_hours_key: termination_revocation_sla_hours}
     revalidate_every_days: 30
@@ -24,6 +26,7 @@ tests:
     controls: [CTL-PRIV-LIMIT]
     rule: gh2_admin_limit
     requires_complete: [github:members]
+    subjects_from: [github:org]
     valid_from_strategy: evidence_observed
     parameters: {limit_key: org_admin_limit}
     revalidate_every_days: 30
@@ -35,6 +38,7 @@ tests:
     subject_kind: repo
     controls: [CTL-CHANGE-REVIEW]
     rule: gh3_branch_review
+    subjects_from: [github:repos]
     valid_from_strategy: evidence_observed
     revalidate_every_days: 30
   - test_id: GH-4
@@ -47,6 +51,7 @@ tests:
     prompt_version: gh4_extract_v1
     extraction_schema: DisclosurePolicyFields
     rule: gh4_disclosure_timeline
+    subjects_from: [github:repos, github:repo_settings]
     valid_from_strategy: evidence_observed
     parameters:
       retrieval_query: security vulnerability disclosure policy report response timeline acknowledge within business days
@@ -60,6 +65,7 @@ tests:
     subject_kind: repo
     controls: [CTL-SECRETS]
     rule: gh5_no_plaintext_secrets
+    subjects_from: [github:repos, github:repo_settings]
     valid_from_strategy: evidence_observed
     revalidate_every_days: 7
   - test_id: HR-1
@@ -71,6 +77,7 @@ tests:
     controls: [CTL-ACCESS-REVOKE]
     rule: hr1_offboarding_sla
     requires_complete: [github:members, github:collaborators, hris:identities]
+    subjects_from: [hris:employees]
     valid_from_strategy: event_time_plus_sla
     parameters: {sla_hours_key: termination_revocation_sla_hours}
     revalidate_every_days: 30
@@ -95,6 +102,7 @@ tests:
     prompt_version: hr3_extract_v1
     extraction_schema: TrainingRecordFields
     rule: hr3_training_current
+    subjects_from: [hris:employees]
     valid_from_strategy: evidence_observed
     parameters:
       retrieval_query: security awareness training certificate completed {display_name} employee {employee_id} completion date provider

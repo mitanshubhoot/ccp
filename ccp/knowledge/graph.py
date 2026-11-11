@@ -87,8 +87,11 @@ class TestSpec(BaseModel):
     # seen them whole, and recently, or a PASS is withheld as needs_review. A test whose PASS
     # rests on an absence names the listings that absence comes from.
     requires_complete: tuple[str, ...] = ()
+    # The source scopes its subjects are listed from (A-124): the population the rollup
+    # expects a verdict for is known whole only when these were seen whole and fresh.
+    subjects_from: tuple[str, ...] = ()
 
-    @field_validator("requires_complete")
+    @field_validator("requires_complete", "subjects_from")
     @classmethod
     def _known_scopes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         known = declared_scopes()

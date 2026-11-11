@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 
 from ccp.config import Settings, TenantSettings
-from ccp.evaluators import completeness, deterministic, registry, tier2
+from ccp.evaluators import completeness, deterministic, inventory, registry, tier2
 from ccp.evaluators import verdict as verdicts
 from ccp.evaluators.budget_gate import check_daily_budget
 from ccp.evaluators.context import load_context
@@ -254,6 +254,7 @@ def enqueue_all(
             deterministic.subjects_for(ctx) if spec.tier == 1 else tier2.subjects_for(ctx, spec)
         )
         with db.transaction() as cur:
+            inventory.record(cur, ctx, subjects)  # the population the rollup expects (A-124)
             for subject in subjects:
                 request = EvaluationRequest(spec.test_id, subject, trigger, reason="full_run")
                 if enqueue(cur, db.tenant.tenant_id, request, coalesce_seconds):

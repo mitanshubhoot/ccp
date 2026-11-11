@@ -24,9 +24,9 @@ from ccp.evals import runner as eval_runner
 from ccp.evals.schema import GoldenCase
 from ccp.evaluators import clock as clock_producer
 from ccp.evaluators import impact as impact_step
+from ccp.evaluators import inventory, thresholds, tier2
 from ccp.evaluators import jobs as _jobs  # noqa: F401 - registers jobs and the scheduler
 from ccp.evaluators import runner as evaluations
-from ccp.evaluators import thresholds, tier2
 from ccp.evaluators import verdict as verdicts
 from ccp.identity import resolver
 from ccp.ingest import ops as queue_ops
@@ -445,10 +445,13 @@ def report(
         raise typer.BadParameter(f"framework must be one of {', '.join(graph.frameworks)}")
     pool = db.app_pool(settings)
     try:
-        heads = bitemporal.heads(ScopedDB(pool, ctx))
+        scoped = ScopedDB(pool, ctx)
+        heads = bitemporal.heads(scoped)
+        covered = inventory.coverage(scoped)  # expected subjects and parked ones (A-124)
     finally:
         pool.close()
-    typer.echo(knowledge_rollup.format_rollup(knowledge_rollup.rollup(graph, heads, framework)))
+    result = knowledge_rollup.rollup(graph, heads, framework, covered)
+    typer.echo(knowledge_rollup.format_rollup(result))
 
 
 app.add_typer(db_app, name="db")

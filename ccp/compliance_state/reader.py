@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from ccp.evaluators import inventory
 from ccp.knowledge import graph as knowledge
 from ccp.knowledge import rollup as knowledge_rollup
 from ccp.knowledge.rollup import FrameworkRollup
@@ -37,7 +38,11 @@ def heads(db: ScopedDB) -> list[StateRow]:
 
 
 def framework_rollup(db: ScopedDB, framework_id: str) -> FrameworkRollup:
-    return knowledge_rollup.rollup(knowledge.load(), heads(db), framework_id)
+    """The rollup over the expected population (A-124): an unassessed, parked or stale
+    subject is pending, never a pass."""
+    return knowledge_rollup.rollup(
+        knowledge.load(), heads(db), framework_id, inventory.coverage(db)
+    )
 
 
 @dataclass(frozen=True)

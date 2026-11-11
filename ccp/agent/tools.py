@@ -25,6 +25,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ccp.agent.authz import Decision, Gate
+from ccp.evaluators import inventory
 from ccp.identity import resolver
 from ccp.knowledge import graph as knowledge
 from ccp.knowledge import rollup as knowledge_rollup
@@ -234,6 +235,7 @@ class RollupRowOut(_Out):
     blocking_test_id: str | None
     blocking_subject_key: str | None
     counts: dict[str, int]
+    pending_reasons: dict[str, int] = {}  # unassessed, parked, stale, ... (A-124)
 
 
 class RollupOut(_Out):
@@ -691,7 +693,8 @@ def get_framework_rollup(ctx: ToolContext, args: BaseModel) -> Any:
     graph = knowledge.load()
     if a.framework_id not in graph.frameworks:
         return {"error": "not found"}
-    result = knowledge_rollup.rollup(graph, bitemporal.heads(ctx.db), a.framework_id)
+    covered = inventory.coverage(ctx.db)  # the same population the operator sees (A-124)
+    result = knowledge_rollup.rollup(graph, bitemporal.heads(ctx.db), a.framework_id, covered)
     return {
         "framework_id": a.framework_id,
         "no_evaluations_yet": result.no_evaluations_yet,
@@ -702,6 +705,7 @@ def get_framework_rollup(ctx: ToolContext, args: BaseModel) -> Any:
                 "blocking_test_id": r.blocking_test_id,
                 "blocking_subject_key": r.blocking_subject_key,
                 "counts": r.counts,
+                "pending_reasons": r.pending_reasons,
             }
             for r in result.requirements
         ],
