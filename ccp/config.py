@@ -48,6 +48,7 @@ class ScheduleSpec(BaseModel):
         "canary",
         "judged_sample",
         "transcribe",
+        "tasks",
     ]
     every: str = Field(
         pattern=r"^(every [1-9][0-9]* (minutes|hours)|daily ([01][0-9]|2[0-3]):[0-5][0-9])$"
@@ -75,6 +76,8 @@ DEFAULT_SCHEDULES: tuple[ScheduleSpec, ...] = (
     ScheduleSpec(id="judged-sample", job="judged_sample", every="daily 04:30"),
     # scanned pages and screenshots transcribed after the nightly pull (A-147); needs a key
     ScheduleSpec(id="transcribe", job="transcribe", every="daily 01:45"),
+    # every open long task advanced one pass (A-150): checks settled, reads launched
+    ScheduleSpec(id="tasks", job="tasks", every="every 1 hours"),
 )
 
 
@@ -267,6 +270,15 @@ class Settings(BaseSettings):
     ccp_run_budget_usd: float = Field(default=0.50, ge=0)
     ccp_run_budget_tokens: int = Field(default=60_000, ge=0)
     ccp_run_budget_seconds: int = Field(default=120, ge=0)
+
+    # Long tasks (A-150): one read run's cost until 20 measured runs give a p95, the
+    # deadline, at most three runs per item, three passes without progress park a task,
+    # and one cost alert past 1.5 times the forecast
+    ccp_task_item_usd: float = Field(default=0.20, ge=0)
+    ccp_task_deadline_days: int = Field(default=14, ge=1)
+    ccp_task_max_runs_per_item: int = Field(default=3, ge=1, le=3)
+    ccp_task_stall_passes: int = Field(default=3, ge=1)
+    ccp_task_alert_factor: float = Field(default=1.5, gt=1)
 
     # Tracing
     langfuse_public_key: SecretStr | None = None

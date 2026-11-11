@@ -64,6 +64,7 @@ from ccp.storage import bitemporal, db
 from ccp.storage import exceptions as stored_exceptions
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
+from ccp.tasks import cli as tasks_cli  # registers the tasks job too
 from ccp.tenants import onboarding
 from ccp.tenants import scope as tenant_scope
 from ccp.tenants import versions as tenant_versions
@@ -102,6 +103,7 @@ app.add_typer(investigate_cli.app, name="investigate")
 app.add_typer(policy_cli.app, name="policy")
 app.command("copilot")(copilot_cli.copilot)
 app.add_typer(remediate_cli.app, name="remediate")
+app.add_typer(tasks_cli.app, name="tasks")
 state_app = typer.Typer(no_args_is_help=True, help="The bitemporal compliance state")
 app.add_typer(state_app, name="state")
 

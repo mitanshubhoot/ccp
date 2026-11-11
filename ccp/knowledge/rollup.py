@@ -147,6 +147,15 @@ def _seen(spec: TestSpec, rows: list[StateRow], coverage: Coverage | None) -> li
     return out
 
 
+Seen = _Seen
+
+
+def test_states(spec: TestSpec, rows: list[StateRow], coverage: Coverage | None) -> list[Seen]:
+    """A test's subjects as the rollup counts them; audit preparation settles its check
+    items with the same reading (A-150), so a task and the rollup never disagree."""
+    return _seen(spec, rows, coverage)
+
+
 def rollup(
     graph: KnowledgeGraph,
     heads: list[StateRow],

@@ -49,6 +49,7 @@ CHAINED = (
     "person_links",
     "run_stops",
     "index_activations",
+    "task_events",
 )
 
 

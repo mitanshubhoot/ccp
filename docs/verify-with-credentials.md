@@ -22,6 +22,10 @@ step; work through it when the credentials are available.
       PDF, a mixed PDF and a screenshot on Sonnet 5.5: the text is word for word, an
       unreadable page comes back `legible: false`, the transcriptions rows carry the cost,
       and the evidence's page_methods name the model and prompt (A-147).
+- [ ] A long task on a real tenant: `ccp tasks plan --kind audit_prep --framework soc2`,
+      then the hourly `tasks` job; check items settle from the verdicts with no model
+      call, the gap list (`ccp tasks gaps`) matches the rollup, and after 20 read runs
+      the forecast uses their measured p95 cost instead of the $0.20 setting (A-150).
 - [ ] Prompt caching: cache reads appear on repeated stable prefixes.
 - [ ] `ccp replay <id> --execute` on a model-backed verdict.
 
