@@ -43,7 +43,7 @@ training in the Voyage organization settings); `LANGFUSE_PUBLIC_KEY` and `LANGFU
 | Evaluate | `ccp evaluate run` and `clock`, `ccp state current`, `history`, `asof`, `ccp report` |
 | Retrieval | `ccp index rebuild`, `refresh`, `stats`, `distractors`, `calibrate`, `search` |
 | Agents | `ccp agent pending` and `resume`, `ccp investigate run`, `ccp policy gap` and `draft`, `ccp copilot --tenant acme [--ask "..."]` |
-| Human decisions | `ccp approvals list`, `show`, `approve`, `reject`, `resume`, `audit`; `ccp remediate propose`, `show`, `execute`, `rollback`, `audit` (a rollback is a proposal of its own, with its own approval) |
+| Human decisions | `ccp approvals list`, `show`, `approve`, `reject`, `resume`, `break-glass`, `audit`; `ccp exceptions request`, `list`, `revoke`; `ccp remediate propose`, `show`, `execute`, `rollback`, `audit` (a rollback is a proposal of its own, with its own approval) |
 | Evals | `ccp evals run [--suite all]`, `calibrate`, `regress`, `capture <trace_id>`, `threshold` |
 | Replay | `ccp replay <id> [--execute]` for a verdict, investigation, gap report, or copilot answer |
 

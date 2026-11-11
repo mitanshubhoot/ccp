@@ -11,6 +11,7 @@ from ccp.knowledge import graph as knowledge
 from ccp.knowledge import rollup as knowledge_rollup
 from ccp.knowledge.rollup import FrameworkRollup
 from ccp.storage import bitemporal
+from ccp.storage import exceptions as stored_exceptions
 from ccp.storage.bitemporal import StateRow
 from ccp.storage.scoped import ScopedDB
 
@@ -41,7 +42,11 @@ def framework_rollup(db: ScopedDB, framework_id: str) -> FrameworkRollup:
     """The rollup over the expected population (A-124): an unassessed, parked or stale
     subject is pending, never a pass."""
     return knowledge_rollup.rollup(
-        knowledge.load(), heads(db), framework_id, inventory.coverage(db)
+        knowledge.load(),
+        heads(db),
+        framework_id,
+        inventory.coverage(db),
+        stored_exceptions.excepted_until(db),
     )
 
 
@@ -63,11 +68,12 @@ def status_counts(db: ScopedDB) -> StatusCounts:
     return StatusCounts(by_status=dict(sorted(counts.items())), subjects=len(rows))
 
 
-def format_row(row: StateRow) -> str:
+def format_row(row: StateRow, excepted_until: datetime | None = None) -> str:
     superseded = f" supersedes={row.supersedes_row_id}" if row.supersedes_row_id else ""
     valid_to = f" to {row.valid_to.isoformat()}" if row.valid_to else ""
+    shown = stored_exceptions.label(row.status.value, excepted_until)
     return (
-        f"{row.status.value:<13} {row.subject_key:<52} valid from {row.valid_from.isoformat()}"
+        f"{shown:<13} {row.subject_key:<52} valid from {row.valid_from.isoformat()}"
         f"{valid_to}  recorded #{row.recorded_seq} {row.recorded_at.isoformat()}"
         f"  reason={row.reason}{superseded}  verdict={row.verdict_id}"
     )

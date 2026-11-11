@@ -29,6 +29,7 @@ from typing import Literal
 
 from ccp.knowledge.graph import KnowledgeGraph, TestSpec
 from ccp.storage.bitemporal import StateRow
+from ccp.storage.exceptions import label as excepted_label
 from ccp.types import VerdictStatus
 
 RequirementState = Literal["fail", "needs_review", "pending", "partial", "pass"]
@@ -68,6 +69,12 @@ class RequirementRollup:
     counts: dict[str, int] = field(default_factory=dict)
     tests: tuple[str, ...] = ()
     pending_reasons: dict[str, int] = field(default_factory=dict)  # why pending (A-124)
+    # every failing subject is under an exception until then; still a failure (A-132)
+    excepted_until: datetime | None = None
+
+    @property
+    def shown(self) -> str:
+        return excepted_label(self.state, self.excepted_until)
 
 
 @dataclass(frozen=True)
@@ -145,7 +152,10 @@ def rollup(
     heads: list[StateRow],
     framework_id: str,
     coverage: Coverage | None = None,
+    excepted: Mapping[str, datetime] | None = None,
 ) -> FrameworkRollup:
+    """`excepted` maps a subject key to the end of its exception (A-132): a requirement whose
+    every failing subject is excepted still fails, and says until when it is excepted."""
     framework = graph.frameworks[framework_id]
     by_test: dict[str, list[StateRow]] = {}
     for row in heads:
@@ -158,9 +168,12 @@ def rollup(
         verdict_ids: list[str] = []
         counts: dict[str, int] = {s: 0 for s in PRECEDENCE}
         reasons: dict[str, int] = {}
+        fails: list[tuple[str, str | None]] = []
         for spec in specs:
             for seen in _seen(spec, by_test.get(spec.test_id, []), coverage):
                 counts[seen.state] += 1
+                if seen.state == "fail":
+                    fails.append((spec.test_id, seen.subject_key))
                 if seen.why:
                     reasons[seen.why] = reasons.get(seen.why, 0) + 1
                 if seen.verdict_id:
@@ -169,6 +182,14 @@ def rollup(
                     worst, blocking = seen.state, (spec.test_id, seen.subject_key)
         if not specs:
             worst, blocking = "pending", None
+        excepted_until: datetime | None = None
+        if worst == "fail" and fails:
+            held = excepted or {}
+            unexcepted = [f for f in fails if f[1] is None or f[1] not in held]
+            if unexcepted:
+                blocking = unexcepted[0]
+            else:
+                excepted_until = min(held[f[1]] for f in fails if f[1] is not None)
         requirements.append(
             RequirementRollup(
                 framework_id=framework_id,
@@ -180,6 +201,7 @@ def rollup(
                 counts=counts,
                 tests=tuple(s.test_id for s in specs),
                 pending_reasons=reasons,
+                excepted_until=excepted_until,
             )
         )
     return FrameworkRollup(
@@ -203,7 +225,7 @@ def format_rollup(result: FrameworkRollup) -> str:
         if r.state == "pending" and r.pending_reasons:
             why = "  (" + ", ".join(f"{n} {k}" for k, n in sorted(r.pending_reasons.items())) + ")"
         lines.append(
-            f"  {r.requirement_id:<8} {r.state:<13} tests={','.join(r.tests)}{blocker}{why}"
+            f"  {r.requirement_id:<8} {r.shown:<13} tests={','.join(r.tests)}{blocker}{why}"
         )
     summary = ", ".join(f"{k}={v}" for k, v in result.summary.items())
     lines.append(f"  summary: {summary}")

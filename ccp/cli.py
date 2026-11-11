@@ -10,6 +10,7 @@ import typer
 from ccp import auth
 from ccp.agent import cli as agent_cli
 from ccp.agent import tier3 as _tier3  # noqa: F401 - registers tier 3
+from ccp.approvals import actions as approval_actions
 from ccp.approvals import cli as approvals_cli
 from ccp.auth import members
 from ccp.compliance_state import reader as state_reader
@@ -51,6 +52,7 @@ from ccp.retrieval import index as retrieval_index
 from ccp.retrieval import metrics as retrieval_metrics
 from ccp.retrieval.hybrid import retrieve
 from ccp.storage import bitemporal, db
+from ccp.storage import exceptions as stored_exceptions
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
 
@@ -80,6 +82,7 @@ app.add_typer(evaluate_app, name="evaluate")
 app.add_typer(index_app, name="index")
 app.add_typer(agent_cli.app, name="agent")
 app.add_typer(approvals_cli.app, name="approvals")
+app.add_typer(approvals_cli.exceptions_app, name="exceptions")
 app.add_typer(investigate_cli.app, name="investigate")
 app.add_typer(policy_cli.app, name="policy")
 app.command("copilot")(copilot_cli.copilot)
@@ -124,12 +127,13 @@ def state_current(
             if subject
             else state_reader.heads(scoped)
         )
+        held = stored_exceptions.excepted_until(scoped)
     finally:
         pool.close()
     if not rows:
         typer.echo("NO EVALUATIONS YET" if not subject else f"no state for {subject}")
     for row in rows:
-        typer.echo(state_reader.format_row(row))
+        typer.echo(state_reader.format_row(row, held.get(row.subject_key)))
 
 
 @state_app.command("history")
@@ -455,9 +459,10 @@ def report(
         scoped = ScopedDB(pool, ctx)
         heads = bitemporal.heads(scoped)
         covered = inventory.coverage(scoped)  # expected subjects and parked ones (A-124)
+        held = stored_exceptions.excepted_until(scoped)  # fail (excepted until D) (A-132)
     finally:
         pool.close()
-    result = knowledge_rollup.rollup(graph, heads, framework, covered)
+    result = knowledge_rollup.rollup(graph, heads, framework, covered, held)
     typer.echo(knowledge_rollup.format_rollup(result))
 
 
@@ -495,28 +500,45 @@ def identity_review(
     list_open: bool = typer.Option(False, "--list", help="List open review items"),
     resolve: str | None = typer.Option(None, "--resolve", help="Decision id to close"),
     outcome: str | None = typer.Option(None, "--as", help="merge | distinct"),
-    reviewer: str | None = typer.Option(None, "--reviewer"),
+    token: str | None = typer.Option(None, "--token", envvar="CCP_TOKEN"),
     note: str | None = typer.Option(None, "--note"),
 ) -> None:
-    """List open review items, or close one as merge or distinct."""
+    """List open review items with the approval item that decides each, or decide one as
+    merge or distinct, signed in as an approver (A-132)."""
     settings = _settings()
     ctx = _tenant(settings, tenant)
     pool = db.app_pool(settings)
     try:
         scoped = ScopedDB(pool, ctx)
+        items_for = resolver.ensure_review_items(scoped)
         if resolve:
-            if not outcome or not reviewer:
-                raise typer.BadParameter("--resolve needs --as merge|distinct and --reviewer")
-            resolver.resolve_review(scoped, resolve, outcome, reviewer, note)
-            typer.echo(f"{resolve}: {outcome} by {reviewer}")
+            if outcome not in ("merge", "distinct") or not token:
+                raise typer.BadParameter("--resolve needs --as merge|distinct and --token")
+            try:
+                who = auth.authenticate(settings, token)
+            except auth.InvalidToken as exc:
+                raise typer.BadParameter(f"sign-in token refused: {exc}") from exc
+            approval_id = items_for.get(resolve)
+            if approval_id is None:
+                raise typer.BadParameter(f"no open review item {resolve!r}")
+            try:
+                if outcome == "merge":
+                    done = approval_actions.approve(scoped, settings, approval_id, who, note)
+                else:
+                    done = approval_actions.reject(
+                        scoped, settings, approval_id, who, note or "kept as two people"
+                    )
+            except (LookupError, ValueError, PermissionError) as exc:
+                raise typer.BadParameter(f"refused: {exc}") from exc
+            typer.echo(f"{resolve}: {outcome} by {who.label}; {done.detail}")
             return
         items = resolver.open_reviews(scoped)
         if not items:
             typer.echo("no open review items")
         for item in items:
             typer.echo(
-                f"{item.decision_id}  score={item.score}  "
-                f"{item.left_entity_id}  <->  {item.right_entity_id}"
+                f"{item.decision_id}  approval={items_for.get(item.decision_id)}"
+                f"  score={item.score}  {item.left_entity_id}  <->  {item.right_entity_id}"
             )
     finally:
         pool.close()

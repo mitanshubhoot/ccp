@@ -7,12 +7,14 @@ skipped, so the log grows only when something about the pair changed.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
 from ulid import ULID
 
+from ccp.approvals import store as approvals
 from ccp.identity.blocking import CandidatePair, candidate_pairs
 from ccp.identity.config import IdentityConfig
 from ccp.identity.scoring import Scored, evaluate
@@ -118,7 +120,45 @@ def record_decision(
                     sequences.next_value(cur, db.tenant.tenant_id, sequences.OBSERVATIONS),
                 ),
             )
+            approvals.open_item_in(  # a person decides it, through the approval service (A-132)
+                cur,
+                db.tenant.tenant_id,
+                "identity_merge",
+                decision_id,
+                review_payload(decision_id, pair.left, pair.right, scored),
+                IDENTITY_RESOLVER,
+            )
     return decision_id
+
+
+IDENTITY_RESOLVER = "identity-resolver"
+
+
+def _card(person: Person) -> dict[str, Any]:
+    return {
+        "entity_id": person.entity_id,
+        "display_name": person.display_name,
+        "emails": list(person.emails),
+        "handles": dict(person.handles),
+        "employee_id": person.employee_id,
+        "employment_status": person.employment_status.value,
+    }
+
+
+def review_payload(
+    decision_id: str, left: Person, right: Person, scored: Scored | None
+) -> dict[str, Any]:
+    """What a reviewer sees: both records, the score and the features behind it. Approving
+    links them as one person; rejecting keeps them apart."""
+    return {
+        "decision_id": decision_id,
+        "left": _card(left),
+        "right": _card(right),
+        "score": scored.score if scored is not None else None,
+        "features": scored.features if scored is not None else None,
+        "approve_means": "link both records as one person",
+        "reject_means": "keep them as two people",
+    }
 
 
 def _announce_link(cur: Any, db: ScopedDB, person_entity_id: str, decision_id: str) -> None:
@@ -234,9 +274,18 @@ def open_reviews(db: ScopedDB) -> list[ReviewItem]:
     ]
 
 
-def resolve_review(
-    db: ScopedDB, decision_id: str, outcome: str, reviewer: str, note: str | None = None
-) -> None:
+def resolution_writer(
+    db: ScopedDB,
+    decision_id: str,
+    outcome: str,
+    reviewer: str,
+    note: str | None = None,
+    *,
+    approval_id: str | None = None,
+) -> Callable[[Any], None]:
+    """What resolving one open review writes, prepared now and run inside the deciding
+    event's transaction (A-132): the resolution, and for a merge the links. Either way the
+    people involved are announced, so their tests are evaluated again."""
     if outcome not in ("merge", "distinct"):
         raise ValueError("outcome must be merge or distinct")
     if not reviewer.strip():
@@ -246,10 +295,13 @@ def resolve_review(
     if item is None:
         raise LookupError(f"no open review item {decision_id!r}")
     persons = {p.entity_id: p for p in repository.current_persons(db)}
-    with db.transaction() as cur:
+    left, right = persons[item.left_entity_id], persons[item.right_entity_id]
+    canonical = _choose_canonical(db, left, right) if outcome == "merge" else None
+
+    def write(cur: Any) -> None:
         cur.execute(
             "INSERT INTO review_resolutions (resolution_id, decision_id, tenant_id, outcome,"
-            " reviewer, note, recorded_seq) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            " reviewer, note, recorded_seq, approval_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 str(ULID()),
                 decision_id,
@@ -258,11 +310,10 @@ def resolve_review(
                 reviewer,
                 note,
                 sequences.next_value(cur, db.tenant.tenant_id, sequences.OBSERVATIONS),
+                approval_id,
             ),
         )
-        if outcome == "merge":
-            left, right = persons[item.left_entity_id], persons[item.right_entity_id]
-            canonical = _choose_canonical(db, left, right)
+        if canonical is not None:
             for person in (left, right):
                 cur.execute(
                     "INSERT INTO person_links (link_id, tenant_id, person_entity_id,"
@@ -279,3 +330,32 @@ def resolve_review(
                     ),
                 )
             _announce_link(cur, db, left.entity_id, decision_id)
+        else:  # kept apart: neither is held for review any longer
+            for person in (left, right):
+                _announce_link(cur, db, person.entity_id, decision_id)
+
+    return write
+
+
+def ensure_review_items(db: ScopedDB) -> dict[str, str]:
+    """Decision id -> the identity_merge item that decides it, opening one for a review
+    that has none open (one queued before A-132, or whose item expired)."""
+    persons = {p.entity_id: p for p in repository.current_persons(db)}
+    out: dict[str, str] = {}
+    for item in open_reviews(db):
+        left, right = persons.get(item.left_entity_id), persons.get(item.right_entity_id)
+        if left is None or right is None:
+            continue
+        payload = review_payload(item.decision_id, left, right, None)
+        current = approvals.for_ref(db, "identity_merge", item.decision_id)
+        if current is not None and current.is_open and not current.expired():
+            out[item.decision_id] = current.approval_id
+            continue
+        out[item.decision_id] = approvals.open_item(
+            db,
+            "identity_merge",
+            item.decision_id,
+            {**payload, "score": item.score, "features": item.features},
+            IDENTITY_RESOLVER,
+        )
+    return out

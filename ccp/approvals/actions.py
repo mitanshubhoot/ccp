@@ -10,6 +10,16 @@ remediation_rollback  approve -> the rollback proposal's gate 5 becomes true and
                                  minted; remediate rollback still needs gates 1 to 4 live
 policy_draft          approve -> the draft is marked approved; nothing else happens
 evidence_request      closed by the human after uploading; the upload triggers re-evaluation
+exception             approve -> the exception is minted: the subject reads "fail (excepted
+                                 until D)" until D, and still counts as a failure (A-132)
+identity_merge        approve -> the two records are linked as one person; reject -> they are
+                                 kept apart; either way the review closes and the people
+                                 involved are evaluated again (A-132)
+break_glass_review    approve -> the break-glass use was justified; reject -> it was not, and
+                                 the approvals audit reports it (A-132)
+
+An admin may approve an urgent item (a remediation or its rollback) they asked for by
+break-glass, with a reason; another approver then reviews the use (A-132).
 
 Only tier 3 items take a decision other than a plain approve; every other kind refuses one.
 """
@@ -17,6 +27,7 @@ Only tier 3 items take a decision other than a plain approve; every other kind r
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from ulid import ULID
@@ -26,7 +37,11 @@ from ccp.approvals import store
 from ccp.auth.tokens import Principal
 from ccp.config import Settings
 from ccp.evaluators.tier2 import Providers
+from ccp.identity import resolver
+from ccp.storage import exceptions as stored_exceptions
 from ccp.storage.scoped import ScopedDB
+
+MIN_BREAK_GLASS_REASON = 20  # characters
 
 InvalidDecision = decisions.InvalidDecision
 PayloadChanged = decisions.PayloadChanged
@@ -115,6 +130,14 @@ def approve(
         )
         return _tier3_outcome(result, rejected=False)
     check_plain_decision(item.kind, decision, status)
+    if item.kind == "exception":
+        return _grant_exception(db, item, who, note)
+    if item.kind == "identity_merge":
+        write = resolver.resolution_writer(
+            db, item.ref_id, "merge", who.label, note, approval_id=approval_id
+        )
+        updated = store.record_event(db, approval_id, "approved", who, note, within=write)
+        return Outcome(updated, "linked as one person; the people involved are evaluated again")
     updated = store.record_event(db, approval_id, "approved", who, note)
     if item.kind == "remediation":
         return Outcome(
@@ -156,7 +179,17 @@ def reject(
         )
         return _tier3_outcome(result, rejected=True)
 
+    kept_apart = (
+        resolver.resolution_writer(
+            db, item.ref_id, "distinct", who.label, note, approval_id=approval_id
+        )
+        if item.kind == "identity_merge"
+        else None
+    )
+
     def mark_rejected(cur: Any) -> None:  # with the decision, never before it
+        if kept_apart is not None:
+            kept_apart(cur)
         if item.kind in ("remediation", "remediation_rollback"):  # a new event (A-131)
             cur.execute(
                 "INSERT INTO proposal_events (event_id, tenant_id, proposal_id, status,"
@@ -168,6 +201,63 @@ def reject(
 
     updated = store.record_event(db, approval_id, "rejected", who, note, within=mark_rejected)
     return Outcome(updated, f"{item.kind} rejected")
+
+
+def _grant_exception(
+    db: ScopedDB, item: store.Approval, who: Principal, note: str | None
+) -> Outcome:
+    """Approving an exception mints it in the decision's transaction, from the payload the
+    approver saw; one whose date has passed meanwhile is refused (A-132)."""
+    asked = item.payload
+    until = datetime.fromisoformat(str(asked["until"]))
+    if until <= datetime.now(UTC):
+        raise store.Expired(f"the exception asked for ended at {until}; ask again")
+
+    def grant(cur: Any) -> None:
+        stored_exceptions.insert(
+            cur,
+            db.tenant.tenant_id,
+            approval_id=item.approval_id,
+            test_id=str(asked["test_id"]),
+            subject_key=str(asked["subject_key"]),
+            reason=str(asked["reason"]),
+            owner=str(asked["owner"]),
+            valid_until=until,
+            granted_by=who.principal_id,
+        )
+
+    updated = store.record_event(db, item.approval_id, "approved", who, note, within=grant)
+    return Outcome(
+        updated,
+        f"exception granted: {asked['subject_key']} shows as {asked['shows_as']}, never as pass",
+    )
+
+
+def break_glass(
+    db: ScopedDB,
+    settings: Settings,
+    approval_id: str,
+    who: Principal,
+    reason: str,
+    *,
+    seen_sha256: str | None = None,
+) -> Outcome:
+    """Approve an urgent item an admin asked for themselves, with a reason. The approval
+    mints its grant like any other; a break_glass_review item opens at once for another
+    approver, and the approvals audit reports a use left unreviewed or judged unjustified."""
+    if len(reason.strip()) < MIN_BREAK_GLASS_REASON:
+        raise ValueError(f"say why in at least {MIN_BREAK_GLASS_REASON} characters")
+    item = _open(db, approval_id)
+    _check_seen(item, seen_sha256)
+    updated = store.record_event(
+        db, approval_id, "approved", who, reason.strip(), break_glass=reason.strip()
+    )
+    review = store.for_ref(db, "break_glass_review", approval_id)
+    return Outcome(
+        updated,
+        f"approved by break-glass; approval {review.approval_id if review else '?'} asks another"
+        f" approver to review this use within {store.EXPIRES['break_glass_review'].days} days",
+    )
 
 
 def resume(

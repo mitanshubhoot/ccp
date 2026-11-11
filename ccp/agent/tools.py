@@ -36,6 +36,7 @@ from ccp.retrieval.embeddings import EmbeddingClient
 from ccp.retrieval.rerank import Reranker
 from ccp.security.secrets_patterns import redact
 from ccp.storage import bitemporal
+from ccp.storage import exceptions as stored_exceptions
 from ccp.storage.scoped import ScopedDB
 from ccp.types import EvidenceType
 
@@ -590,8 +591,16 @@ def get_current_state(ctx: ToolContext, args: BaseModel) -> Any:
     row = bitemporal.current_state(ctx.db, subject_key)
     if row is None:
         return missing("evaluation", f"no evaluation of {subject_key} yet")
+    held = stored_exceptions.active(ctx.db).get(subject_key)
+    until = held.valid_until if held is not None and row.status.value == "fail" else None
     return {
         "status": row.status.value,
+        "shown_as": stored_exceptions.label(row.status.value, until),
+        "exception": (
+            {"until": until.isoformat(), "owner": held.owner, "reason": held.reason}
+            if held is not None and until is not None
+            else None
+        ),
         "valid_from": row.valid_from.isoformat(),
         "verdict_id": row.verdict_id,
         "reason": row.reason,
@@ -625,12 +634,14 @@ def list_findings(ctx: ToolContext, args: BaseModel) -> Any:
     rows = bitemporal.heads(ctx.db)
     if not rows:
         return missing("evaluations", "no evaluations yet: nothing has been assessed")
+    held = stored_exceptions.excepted_until(ctx.db)
     return {
         "findings": [
             {
                 "subject_key": r.subject_key,
                 "test_id": r.test_id,
                 "status": r.status.value,
+                "shown_as": stored_exceptions.label(r.status.value, held.get(r.subject_key)),
                 "verdict_id": r.verdict_id,
             }
             for r in rows
@@ -694,7 +705,8 @@ def get_framework_rollup(ctx: ToolContext, args: BaseModel) -> Any:
     if a.framework_id not in graph.frameworks:
         return {"error": "not found"}
     covered = inventory.coverage(ctx.db)  # the same population the operator sees (A-124)
-    result = knowledge_rollup.rollup(graph, bitemporal.heads(ctx.db), a.framework_id, covered)
+    held = stored_exceptions.excepted_until(ctx.db)  # "fail (excepted until D)" (A-132)
+    result = knowledge_rollup.rollup(graph, bitemporal.heads(ctx.db), a.framework_id, covered, held)
     return {
         "framework_id": a.framework_id,
         "no_evaluations_yet": result.no_evaluations_yet,
@@ -702,6 +714,7 @@ def get_framework_rollup(ctx: ToolContext, args: BaseModel) -> Any:
             {
                 "requirement_id": r.requirement_id,
                 "state": r.state,
+                "shown_as": r.shown,
                 "blocking_test_id": r.blocking_test_id,
                 "blocking_subject_key": r.blocking_subject_key,
                 "counts": r.counts,

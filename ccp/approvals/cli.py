@@ -7,6 +7,7 @@ makes it with a sign-in token (`--token`, or CCP_TOKEN), never a typed name (A-1
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import NoReturn
 
 import typer
@@ -14,13 +15,18 @@ import typer
 from ccp import auth
 from ccp.agent import decisions
 from ccp.approvals import actions, store
+from ccp.compliance_state import exceptions
 from ccp.config import Settings
 from ccp.observability import steps
 from ccp.storage import db
+from ccp.storage import exceptions as stored_exceptions
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
 
 app = typer.Typer(no_args_is_help=True, help="The shared human-in-the-loop stage")
+exceptions_app = typer.Typer(
+    no_args_is_help=True, help="Control exceptions: a failure accepted until a date (A-132)"
+)
 
 
 def _settings() -> Settings:
@@ -232,6 +238,7 @@ def audit(tenant: str | None = typer.Option(None, "--tenant")) -> None:
         scoped = ScopedDB(pool, ctx)
         pending = decisions.unapplied(scoped)
         problems = decisions.audit(scoped)
+        glass = store.break_glass_problems(scoped)
     finally:
         pool.close()
     for item in pending:
@@ -241,6 +248,109 @@ def audit(tenant: str | None = typer.Option(None, "--tenant")) -> None:
         )
     for problem in problems:
         typer.echo(f"unrecorded: {problem}")
-    if pending or problems:
+    for problem in glass:
+        typer.echo(f"break-glass: {problem}")
+    if pending or problems or glass:
         raise typer.Exit(1)
-    typer.echo("every applied tier 3 decision is recorded, and every recorded one is applied")
+    typer.echo(
+        "every applied tier 3 decision is recorded, every recorded one is applied, and every"
+        " break-glass use is reviewed or still within its review window"
+    )
+
+
+@app.command("break-glass")
+def break_glass(
+    approval_id: str,
+    reason: str = typer.Option(..., "--reason", help="why this cannot wait for another approver"),
+    token: str = TOKEN,
+    seen: str | None = typer.Option(None, "--payload-sha256"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """An admin approves an urgent item they asked for; another approver reviews the use."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    who = _signed_in(settings, token)
+    pool = db.app_pool(settings)
+    try:
+        outcome = actions.break_glass(
+            ScopedDB(pool, ctx), settings, approval_id, who, reason, seen_sha256=seen
+        )
+    except REFUSED as exc:
+        _refuse(str(exc))
+    finally:
+        pool.close()
+    _report(approval_id, who.label, outcome)
+
+
+@exceptions_app.command("request")
+def exception_request(
+    test: str = typer.Option(..., "--test"),
+    subject: str = typer.Option(..., "--subject"),
+    until: str = typer.Option(..., "--until", help="ISO date the exception ends"),
+    reason: str = typer.Option(..., "--reason"),
+    owner: str = typer.Option(..., "--owner", help="who answers for it"),
+    token: str = TOKEN,
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Ask for an exception for one failing subject; another member, an approver, decides."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    who = _signed_in(settings, token)
+    ends = datetime.fromisoformat(until)
+    pool = db.app_pool(settings)
+    try:
+        item = exceptions.request(
+            ScopedDB(pool, ctx),
+            who,
+            test_id=test,
+            subject=subject,
+            until=ends if ends.tzinfo else ends.replace(tzinfo=UTC),
+            reason=reason,
+            owner=owner,
+        )
+    except REFUSED as exc:
+        _refuse(str(exc))
+    finally:
+        pool.close()
+    typer.echo(f"exception requested: approval {item} waits for an approver")
+
+
+@exceptions_app.command("list")
+def exception_list(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        found = stored_exceptions.all_exceptions(ScopedDB(pool, ctx))
+    finally:
+        pool.close()
+    if not found:
+        typer.echo("no exceptions")
+    now = datetime.now(UTC)
+    for e in found:
+        state = "holds" if e.holds(now) else ("revoked" if e.revoked_at else "lapsed")
+        typer.echo(
+            f"{e.exception_id}  {state:<8} {e.subject_key}  until {e.valid_until:%Y-%m-%d}"
+            f"  owner={e.owner}  {e.reason}"
+        )
+
+
+@exceptions_app.command("revoke")
+def exception_revoke(
+    exception_id: str,
+    reason: str = typer.Option(..., "--reason"),
+    token: str = TOKEN,
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """End an exception early (an approver)."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    who = _signed_in(settings, token)
+    pool = db.app_pool(settings)
+    try:
+        exceptions.revoke(ScopedDB(pool, ctx), who, exception_id, reason)
+    except REFUSED as exc:
+        _refuse(str(exc))
+    finally:
+        pool.close()
+    typer.echo(f"{exception_id}: revoked by {who.label}")

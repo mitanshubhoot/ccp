@@ -7,6 +7,9 @@ from collections.abc import Iterator
 import psycopg
 import pytest
 
+from ccp.approvals import actions as approval_actions
+from ccp.approvals import store as approvals
+from ccp.auth import members
 from ccp.config import Settings
 from ccp.identity import resolver
 from ccp.ingest.landing import ingest_tenant
@@ -14,6 +17,7 @@ from ccp.normalize.consumer import normalize_all
 from ccp.storage.db import app_pool, scratch_database
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
+from tests.support.members import member
 
 pytestmark = pytest.mark.db
 
@@ -66,27 +70,45 @@ def test_links_point_both_sides_at_the_hris_person(dbs: dict[str, ScopedDB]) -> 
     )
 
 
-def test_review_queue_round_trip(dbs: dict[str, ScopedDB]) -> None:
+def test_review_queue_round_trip(db_settings: Settings, dbs: dict[str, ScopedDB]) -> None:
     acme = dbs["acme"]
     items = resolver.open_reviews(acme)
     dana = next(i for i in items if i.right_entity_id == "hris:person:E1017")
     assert dana.left_entity_id == "github:person:U_kgDOAcme1017"
     assert "hris:person:E1017" in resolver.pending_review_entities(acme)
-    with pytest.raises(ValueError):
-        resolver.resolve_review(acme, dana.decision_id, "merge", "")
-    resolver.resolve_review(
-        acme, dana.decision_id, "merge", "dana.reviewer", "same person, confirmed"
+    item = approvals.for_ref(acme, "identity_merge", dana.decision_id)  # opened with it (A-132)
+    assert item is not None and item.is_open and item.requested_by == resolver.IDENTITY_RESOLVER
+    assert item.payload["right"]["entity_id"] == "hris:person:E1017"
+    with pytest.raises(members.NotPermitted):  # a typed name decides nothing
+        approvals.record_event(acme, item.approval_id, "approved", "dana.reviewer")
+    with pytest.raises(members.NotPermitted):  # a reviewer may not link two people
+        approval_actions.approve(
+            acme, db_settings, item.approval_id, member(acme, "rui", "reviewer")
+        )
+    approval_actions.approve(
+        acme,
+        db_settings,
+        item.approval_id,
+        member(acme, "dana.reviewer"),
+        "same person, confirmed",
     )
     assert dana.decision_id not in {i.decision_id for i in resolver.open_reviews(acme)}
     assert resolver.canonical_id(acme, "github:person:U_kgDOAcme1017") == "hris:person:E1017"
     assert "hris:person:E1017" not in resolver.pending_review_entities(acme)
-    with pytest.raises(LookupError):
-        resolver.resolve_review(acme, dana.decision_id, "distinct", "again")
+    with pytest.raises(ValueError):  # decided once
+        approval_actions.reject(
+            acme, db_settings, item.approval_id, member(acme, "dana.reviewer"), "again"
+        )
     row = acme.fetch_one(
         "SELECT decided_by FROM current_person_links WHERE person_entity_id = %s",
         ("github:person:U_kgDOAcme1017",),
     )
     assert row == ("human",)
+    resolution = acme.fetch_one(
+        "SELECT outcome, reviewer, approval_id FROM review_resolutions WHERE decision_id = %s",
+        (dana.decision_id,),
+    )
+    assert resolution == ("merge", "dana.reviewer", item.approval_id)
 
 
 def test_blocked_pairs_are_logged_with_no_score(dbs: dict[str, ScopedDB]) -> None:

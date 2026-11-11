@@ -70,6 +70,8 @@ INSERT_ONLY: frozenset[str] = frozenset(
         "execution_grants",
         "grant_uses",
         "execution_journal",
+        "control_exceptions",
+        "exception_revocations",
     }
 )
 # Operational state that is updated in place by design.

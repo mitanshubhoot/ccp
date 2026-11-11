@@ -7,7 +7,8 @@ tenant holding the role it needs, never by the item's requester, and never after
 expires; and an item takes one approve or reject, whatever races, because a unique index
 holds the second one back (A-130). An agent or the system may open and close items; only a
 person decides them. Approving a remediation or a rollback also mints its one execution
-grant, in the same transaction (A-131)."""
+grant, in the same transaction (A-131). An admin may break the glass on an urgent item they
+asked for, with a reason, a few times a day, and another approver reviews each use (A-132)."""
 
 from __future__ import annotations
 
@@ -28,7 +29,14 @@ from ccp.auth.tokens import Principal
 from ccp.storage.scoped import ScopedDB
 
 Kind = Literal[
-    "tier3_interrupt", "remediation", "remediation_rollback", "policy_draft", "evidence_request"
+    "tier3_interrupt",
+    "remediation",
+    "remediation_rollback",
+    "policy_draft",
+    "evidence_request",
+    "exception",
+    "identity_merge",
+    "break_glass_review",
 ]
 Event = Literal["opened", "approved", "rejected", "changes_requested", "closed"]
 KINDS: tuple[Kind, ...] = (
@@ -37,6 +45,9 @@ KINDS: tuple[Kind, ...] = (
     "remediation_rollback",
     "policy_draft",
     "evidence_request",
+    "exception",
+    "identity_merge",
+    "break_glass_review",
 )
 OPEN_STATES = ("opened", "changes_requested")
 DECIDED_STATES = ("approved", "rejected")
@@ -47,7 +58,14 @@ EXPIRES: dict[str, timedelta] = {
     "remediation_rollback": timedelta(days=3),
     "policy_draft": timedelta(days=30),
     "evidence_request": timedelta(days=30),
+    "exception": timedelta(days=14),
+    "identity_merge": timedelta(days=30),
+    "break_glass_review": timedelta(days=7),  # a break-glass use is reviewed within a week
 }
+# Break-glass (A-132): an admin may approve an urgent item they asked for, with a reason,
+# a few times a day per tenant; each use opens a review that another approver decides.
+BREAK_GLASS_KINDS = frozenset({"remediation", "remediation_rollback"})
+BREAK_GLASS_PER_DAY = 2
 # The role each decision needs (A-130).
 DECISIVE: dict[str, members.Role] = {
     "approved": "approver",
@@ -86,6 +104,7 @@ class Approval:
     requested_by: str | None = None
     expires_at: datetime | None = None
     principal_id: str | None = None  # the signed-in member behind the latest event
+    break_glass: bool = False  # the latest event was a break-glass approval (A-132)
 
     def expired(self, now: datetime | None = None) -> bool:
         return self.expires_at is not None and (now or datetime.now(UTC)) >= self.expires_at
@@ -101,7 +120,7 @@ class Approval:
 
 _COLUMNS = (
     "approval_id, tenant_id, kind, ref_id, payload, payload_sha256, opened_at, state, reviewer,"
-    " note, decided_at, decision, requested_by, expires_at, principal_id"
+    " note, decided_at, decision, requested_by, expires_at, principal_id, break_glass"
 )
 
 
@@ -128,6 +147,7 @@ def _row(r: tuple[Any, ...]) -> Approval:
         requested_by=str(r[12]) if r[12] is not None else None,
         expires_at=r[13],
         principal_id=str(r[14]) if r[14] is not None else None,
+        break_glass=bool(r[15]),
     )
 
 
@@ -147,36 +167,90 @@ def open_item(
     existing = for_ref(db, kind, ref_id)
     if existing is not None and existing.is_open and not existing.expired():
         return existing.approval_id
+    with db.transaction() as cur:
+        return open_item_in(
+            cur,
+            db.tenant.tenant_id,
+            kind,
+            ref_id,
+            payload,
+            opened_by,
+            requested_by=requested_by,
+            expires_in=expires_in,
+        )
+
+
+def open_item_in(
+    cur: psycopg.Cursor[Any],
+    tenant_id: str,
+    kind: Kind,
+    ref_id: str,
+    payload: dict[str, Any],
+    opened_by: str = "system",
+    *,
+    requested_by: str | None = None,
+    expires_in: timedelta | None = None,
+) -> str:
+    """Open a new item inside the caller's transaction, so it exists exactly when what it
+    asks about does (an identity review, a break-glass use)."""
     approval_id = str(ULID())
     expires_at = datetime.now(UTC) + (expires_in or EXPIRES.get(kind, timedelta(days=7)))
-    with db.transaction() as cur:
-        cur.execute(
-            "INSERT INTO approvals (approval_id, tenant_id, kind, ref_id, payload, payload_sha256,"
-            " requested_by, expires_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-            (
-                approval_id,
-                db.tenant.tenant_id,
-                kind,
-                ref_id,
-                json.dumps(payload, default=str),
-                payload_hash(payload),
-                requested_by or opened_by,
-                expires_at,
-            ),
-        )
-        cur.execute(
-            "INSERT INTO approval_events (event_id, approval_id, tenant_id, event, reviewer)"
-            " VALUES (%s, %s, %s, 'opened', %s)",
-            (str(ULID()), approval_id, db.tenant.tenant_id, opened_by),
-        )
+    cur.execute(
+        "INSERT INTO approvals (approval_id, tenant_id, kind, ref_id, payload, payload_sha256,"
+        " requested_by, expires_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            approval_id,
+            tenant_id,
+            kind,
+            ref_id,
+            json.dumps(payload, default=str),
+            payload_hash(payload),
+            requested_by or opened_by,
+            expires_at,
+        ),
+    )
+    cur.execute(
+        "INSERT INTO approval_events (event_id, approval_id, tenant_id, event, reviewer)"
+        " VALUES (%s, %s, %s, 'opened', %s)",
+        (str(ULID()), approval_id, tenant_id, opened_by),
+    )
     return approval_id
 
 
+def _break_glass(db: ScopedDB, current: Approval, event: Event, by: Principal | str) -> str:
+    """The checks a break-glass approval passes in place of separation of duties (A-132)."""
+    if event != "approved":
+        raise ValueError("break-glass approves; it records nothing else")
+    if current.kind not in BREAK_GLASS_KINDS:
+        raise members.NotPermitted(f"a {current.kind} item is not urgent enough for break-glass")
+    if not isinstance(by, Principal):
+        raise members.NotPermitted("a decision is made by a signed-in member, never a typed name")
+    role = members.require(db, by, "admin")
+    if current.expired():
+        raise Expired(
+            f"approval {current.approval_id!r} expired at {current.expires_at}; open it again"
+        )
+    used = db.fetch_one(
+        "SELECT count(*) FROM approval_events WHERE break_glass"
+        " AND recorded_at > now() - interval '1 day'"
+    )
+    if used is not None and int(used[0]) >= BREAK_GLASS_PER_DAY:
+        raise members.NotPermitted(
+            f"break-glass was used {used[0]} times in the last day here; that is the limit"
+        )
+    return role
+
+
 def _authorize(
-    db: ScopedDB, current: Approval, event: Event, by: Principal | str
+    db: ScopedDB, current: Approval, event: Event, by: Principal | str, break_glass: bool = False
 ) -> tuple[str | None, str | None]:
     """(principal id, role) behind an event; a decision needs a signed-in member with the
-    role, who did not ask for it, on an item that has not expired (A-130)."""
+    role, who did not ask for it, on an item that has not expired (A-130), unless an admin
+    breaks the glass (A-132)."""
+    if break_glass:
+        role = _break_glass(db, current, event, by)
+        assert isinstance(by, Principal)
+        return by.principal_id, role
     needed = DECISIVE.get(event)
     if needed is None and event == "closed" and isinstance(by, Principal):
         needed = "reviewer"  # a person closes as a reviewer; the system closes as itself
@@ -204,6 +278,7 @@ def record_event(
     *,
     decision: dict[str, Any] | None = None,
     within: Callable[[psycopg.Cursor[Any]], None] | None = None,
+    break_glass: str | None = None,
 ) -> Approval:
     """Append one event, by a signed-in member or, for opening and closing, by the system.
     `within` runs in the same transaction, so whatever it writes (the apply job of a
@@ -216,10 +291,19 @@ def record_event(
         raise LookupError(f"no approval item {approval_id!r}")
     if event in DECIDED_STATES and not current.is_open:
         raise ValueError(f"approval {approval_id!r} is already {current.state}")
-    principal_id, role = _authorize(db, current, event, by)
+    principal_id, role = _authorize(db, current, event, by, break_glass is not None)
     try:
         _append_event(
-            db, current, event, reviewer.strip(), note, decision, principal_id, role, within
+            db,
+            current,
+            event,
+            reviewer.strip(),
+            note,
+            decision,
+            principal_id,
+            role,
+            within,
+            break_glass,
         )
     except pg_errors.UniqueViolation as exc:
         raise AlreadyDecided(f"approval {approval_id!r} was decided by someone else first") from exc
@@ -238,12 +322,14 @@ def _append_event(
     principal_id: str | None,
     role: str | None,
     within: Callable[[psycopg.Cursor[Any]], None] | None,
+    break_glass: str | None = None,
 ) -> None:
     approval_id = current.approval_id
     with db.transaction() as cur:
         cur.execute(
             "INSERT INTO approval_events (event_id, approval_id, tenant_id, event, reviewer,"
-            " note, decision, principal_id, role) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            " note, decision, principal_id, role, break_glass)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 str(ULID()),
                 approval_id,
@@ -254,8 +340,26 @@ def _append_event(
                 json.dumps(decision, default=str) if decision is not None else None,
                 principal_id,
                 role,
+                break_glass is not None,
             ),
         )
+        if break_glass is not None:  # another approver reviews the use, never this one
+            open_item_in(
+                cur,
+                db.tenant.tenant_id,
+                "break_glass_review",
+                approval_id,
+                {
+                    "approval_id": approval_id,
+                    "kind": current.kind,
+                    "ref_id": current.ref_id,
+                    "payload_sha256": current.payload_sha256,
+                    "reason": break_glass,
+                    "by": principal_id,
+                },
+                reviewer,
+                requested_by=principal_id,
+            )
         if event in DECIDED_STATES:  # every decision is also a label (A-100)
             cur.execute(
                 "INSERT INTO review_labels (label_id, tenant_id, approval_id, kind, ref_id,"
@@ -379,3 +483,18 @@ def history(db: ScopedDB, approval_id: str) -> list[dict[str, Any]]:
         }
         for r in rows
     ]
+
+
+def break_glass_problems(db: ScopedDB, now: datetime | None = None) -> list[str]:
+    """Break-glass uses a second approver judged unjustified, or left unreviewed past the
+    review's expiry (A-132)."""
+    moment = now or datetime.now(UTC)
+    problems: list[str] = []
+    for review in list_items(db, "break_glass_review"):
+        if review.state == "rejected":
+            problems.append(
+                f"break-glass approval {review.ref_id} was judged unjustified by {review.reviewer}"
+            )
+        elif review.is_open and review.expired(moment):
+            problems.append(f"break-glass approval {review.ref_id} was not reviewed in time")
+    return problems
