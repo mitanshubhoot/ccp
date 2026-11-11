@@ -178,7 +178,26 @@ def advance(
     items = store.items_of(db, task_id)
     summary.added = store.add_items(db, task_id, planner.followups(task, items), "followup")
     items = store.items_of(db, task_id) if summary.added else items
-    reads = [i for i in items if i.kind == "read" and i.status == "open"]
+    reads: list[Item] = []
+    for it in items:  # code first: the facts may settle a read with no model (A-154)
+        if it.kind != "read" or it.status != "open":
+            continue
+        rechecked = planner.recheck(facts, it)
+        if rechecked is None:
+            reads.append(it)
+            continue
+        store.set_item(
+            db,
+            task_id,
+            it.item_id,
+            status="final",
+            why=rechecked.why,
+            outcome=rechecked.outcome,
+            result=rechecked.result,
+            evidence_ids=rechecked.evidence_ids,
+            open_question=None,
+        )
+        summary.changed += 1
     summary.reads_waiting = len(reads)
     if reads and reader is not None:
         current = store.get(db, task_id)
@@ -253,6 +272,26 @@ def resolve(db: ScopedDB, task_id: str, item_id: str, *, outcome: str, note: str
         outcome=outcome,
         result={**(found.result or {}), "resolved_by": by, "note": note},
     )
+    after = store.item(db, task_id, item_id)
+    assert after is not None
+    return after
+
+
+def answer(db: ScopedDB, task_id: str, item_id: str, *, text: str, by: str) -> Item:
+    """A person answers a waiting item's open question (A-154). The answer is kept as given;
+    the item reopens, and the next pass runs the rule first and only then a fresh run, which
+    reads the answer as quoted, untrusted text beside the evidence cited before."""
+    found = store.item(db, task_id, item_id)
+    if found is None:
+        raise ValueError(f"no item {item_id!r} in task {task_id!r}")
+    if found.status != "waiting":
+        raise ValueError(f"item {item_id!r} is {found.status}; only a waiting item is answered")
+    if not text.strip():
+        raise ValueError("an answer needs text")
+    answer_id = store.answer(
+        db, task_id, item_id, question=found.open_question or found.question, text=text, by=by
+    )
+    store.set_item(db, task_id, item_id, status="open", why=f"answered by {by} ({answer_id})")
     after = store.item(db, task_id, item_id)
     assert after is not None
     return after

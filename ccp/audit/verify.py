@@ -50,6 +50,7 @@ CHAINED = (
     "run_stops",
     "index_activations",
     "task_events",
+    "task_answers",
 )
 
 

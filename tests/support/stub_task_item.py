@@ -9,6 +9,7 @@ once per item question, and a reader that answers from the fenced chunks it was 
                                                     sentence on the correction turn (A-152)
     "repeat" in the question                        the gatherer makes the same search twice
     a stored result in the newest message           the gatherer reads it by handle (A-153)
+    a person's answer in the brief                  yes, citing the answer alone (A-154)
     anything else                                   insufficient_evidence, naming what is missing
 """
 
@@ -73,6 +74,23 @@ def _reading(item_id: str, question: str, user: str) -> KeyedReading:
     lowered = question.lower()
     if "explode" in lowered:
         raise RuntimeError("the model call failed")
+    if "<<PERSON-ANSWER>>" in user:  # a reader that takes a person's word for it
+        for block in blocks(user):
+            if block.evidence_type == "human_answer":
+                return KeyedReading(
+                    item_id=item_id,
+                    answer="yes",
+                    reason="a person says so",
+                    findings=[
+                        ItemFinding(
+                            statement="the person's answer",
+                            citation=Cited(
+                                chunk_id=block.chunk_id,
+                                quote=block.body.strip().splitlines()[0][:200],
+                            ),
+                        )
+                    ],
+                )
     if "repairable" in lowered and "failed these code checks" not in user:
         lowered = lowered.replace("multi-factor", "fabricate")  # the first answer makes one up
     for block in blocks(user):

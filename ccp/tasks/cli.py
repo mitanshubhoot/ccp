@@ -268,3 +268,21 @@ def measure(
     finally:
         pool.close()
     typer.echo(json.dumps(record, indent=2, sort_keys=True))
+
+
+@app.command("answer")
+def answer(
+    task: str = typer.Option(..., "--task"),
+    item: str = typer.Option(..., "--item"),
+    text: str = typer.Option(..., "--text", help="the answer, as given"),
+    by: str = typer.Option(..., "--by"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Answer a waiting item's open question; the next pass picks it up (A-154)."""
+    settings = _settings()
+    scoped, pool = _scoped(settings, tenant)
+    try:
+        after = runner.answer(scoped, task, item, text=text, by=by)
+    finally:
+        pool.close()
+    typer.echo(f"{after.item_id}: {after.status}")

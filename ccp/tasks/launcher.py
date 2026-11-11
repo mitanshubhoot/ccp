@@ -101,16 +101,22 @@ def run_id_for(db: ScopedDB, task: Task, label: str, attempt: int) -> str:
     return checkpoints.thread_id_for(db.tenant, "task", f"{task.task_id}/{label}", f"run{attempt}")
 
 
-def _items_payload(items: list[Item]) -> list[dict[str, Any]]:
-    return [
-        {
+def _items_payload(db: ScopedDB, items: list[Item]) -> list[dict[str, Any]]:
+    """Typed state only: the question, facts, the evidence cited before and, after a
+    wait, the newest answer as given (A-154); never an earlier run's messages."""
+    out: list[dict[str, Any]] = []
+    for i in items:
+        payload: dict[str, Any] = {
             "item_id": i.item_id,
             "question": i.question,
             "inputs": i.inputs,
             "evidence_ids": list(i.evidence_ids),
         }
-        for i in items
-    ]
+        answers = store.answers_of(db, i.task_id, i.item_id)
+        if answers:
+            payload["answer"] = answers[-1]
+        out.append(payload)
+    return out
 
 
 def run_items(
@@ -168,7 +174,7 @@ def run_items(
                 "kind": task.kind,
                 "as_of": task.scope.get("period_end"),
             },
-            "task_items": _items_payload(items),
+            "task_items": _items_payload(db, items),
             "retrieved_chunks": {},
             "evidence_coverage": {},
             "extracted_raw": {},
@@ -238,14 +244,18 @@ def merge(
         status, why, outcome = "needs_review", "check_failed_after_correction", reading["answer"]
     elif reading["answer"] == "insufficient_evidence":
         status, why, outcome = "waiting", "insufficient_evidence", reading["answer"]
+    elif reading["findings"] and all(f.get("attested") for f in reading["findings"]):
+        # a person's answer is on record, but it is not evidence: a person decides (A-154)
+        status, why, outcome = "needs_review", "rests_on_answer_only", reading["answer"]
     elif not reading["findings"]:
         status, why, outcome = "needs_review", "unsupported", reading["answer"]
     else:
         status, why, outcome = "final", "read and checked", reading["answer"]
-    evidence = sorted(
+    evidence = sorted(  # what the claims rest on; a person's answer is not evidence
         {
             str(f.get("evidence_entity_id") or f["chunk_id"])
             for f in (reading or {}).get("findings", [])
+            if not f.get("attested")
         }
     )
     open_question = None

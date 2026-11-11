@@ -40,6 +40,9 @@ step; work through it when the credentials are available.
       with `messages.count_tokens` and the usage the API reports; if the estimate runs
       low by more than 10%, lower the ceilings in config/context_ceilings.yaml or move
       the view to the count endpoint (A-153).
+- [ ] A waiting item answered by a person (`ccp tasks answer`) on Sonnet 5.5: the new
+      run searches for the evidence the answer points to and cites it, rather than citing
+      the answer; an answer that carries an instruction changes nothing it reads (A-154).
 - [ ] Prompt caching: cache reads appear on repeated stable prefixes.
 - [ ] `ccp replay <id> --execute` on a model-backed verdict.
 

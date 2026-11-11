@@ -444,3 +444,26 @@ def run_costs(db: ScopedDB, kind: str, limit: int = 200) -> list[float]:
         (kind, limit),
     )
     return [float(r[0]) for r in rows]
+
+
+def answer(db: ScopedDB, task_id: str, item_id: str, *, question: str, text: str, by: str) -> str:
+    """A person's answer to an item's open question, kept as given (A-154)."""
+    answer_id = str(ULID())
+    db.execute(
+        "INSERT INTO task_answers (tenant_id, answer_id, task_id, item_id, question, answer,"
+        " answered_by) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        (db.tenant.tenant_id, answer_id, task_id, item_id, question, text, by),
+    )
+    return answer_id
+
+
+def answers_of(db: ScopedDB, task_id: str, item_id: str) -> list[dict[str, Any]]:
+    rows = db.fetch_all(
+        "SELECT answer_id, question, answer, answered_by, answered_at FROM task_answers"
+        " WHERE task_id = %s AND item_id = %s ORDER BY answered_at, answer_id",
+        (task_id, item_id),
+    )
+    return [
+        {"answer_id": r[0], "question": r[1], "text": r[2], "by": r[3], "at": r[4].isoformat()}
+        for r in rows
+    ]

@@ -75,6 +75,8 @@ class Planner(Protocol):
 
     def followups(self, task: Task, items: list[Item]) -> list[NewItem]: ...
 
+    def recheck(self, facts: Facts, item: Item) -> Settlement | None: ...
+
 
 def family_of(requirement_id: str) -> str:
     """A requirement's control family: CC6.1 -> CC6, A.5.15 -> A.5."""
@@ -198,6 +200,22 @@ class AuditPrep:
             )
         return out
 
+    def recheck(self, facts: Facts, item: Item) -> Settlement | None:
+        """A family read whose gaps have all closed since it was written needs no model:
+        every test it names now passes for every subject."""
+        tests = [str(t) for t in item.inputs.get("tests", [])]
+        states = [s for t in tests for s in facts.states(t)]
+        if states and all(s.state == "pass" for s in states):
+            verdicts = tuple(sorted({str(s.verdict_id) for s in states if s.verdict_id}))
+            return Settlement(
+                "final",
+                "resolved",
+                {"tests": tests, "counts": _counts(states)},
+                verdicts,
+                "the gaps closed before the read ran",
+            )
+        return None
+
 
 @dataclass
 class Questionnaire:
@@ -261,6 +279,15 @@ class Questionnaire:
             for it in items
             if it.kind == "check" and it.status == "final" and it.outcome == "undecided"
         ]
+
+    def recheck(self, facts: Facts, item: Item) -> Settlement | None:
+        """A read of a question mapped to a control: the verdicts may answer it now."""
+        if not item.inputs.get("tests"):
+            return None
+        settled = self.settle(facts, item)
+        if settled.status == "final" and settled.outcome in ("yes", "no"):
+            return settled
+        return None
 
 
 PLANNERS: dict[str, Planner] = {"audit_prep": AuditPrep(), "questionnaire": Questionnaire()}
