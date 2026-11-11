@@ -32,9 +32,66 @@ def admin_connection(admin_url: str) -> psycopg.Connection[tuple[object, ...]]:
     return psycopg.connect(admin_url, autocommit=True)
 
 
+def _session_kwargs(settings: Settings) -> dict[str, Any]:
+    """Behind PgBouncer in transaction mode (A-172) a session is not one server connection,
+    so psycopg's server-side prepared statements are switched off. The tenant is set per
+    transaction (`set_config(..., true)`), which a transaction pooler keeps."""
+    return {"prepare_threshold": None} if settings.database_pooler else {}
+
+
 def app_pool(settings: Settings, *, max_size: int = 8) -> ConnectionPool:
     """Pooled connections as the application role: the only route from app code to Postgres."""
-    return ConnectionPool(settings.database_url, min_size=1, max_size=max_size, open=True)
+    return ConnectionPool(
+        settings.database_url,
+        min_size=1,
+        max_size=max_size,
+        open=True,
+        kwargs=_session_kwargs(settings),
+    )
+
+
+def listen_url(settings: Settings) -> str:
+    """LISTEN holds a session, which a transaction pooler cannot give: the direct URL."""
+    return settings.database_direct_url or settings.database_url
+
+
+def replica_pool(settings: Settings, *, max_size: int = 4) -> ConnectionPool | None:
+    """Read-only connections to the replica, when one is configured (A-172)."""
+    if not settings.database_replica_url:
+        return None
+    return ConnectionPool(
+        settings.database_replica_url,
+        min_size=1,
+        max_size=max_size,
+        open=True,
+        kwargs={**_session_kwargs(settings), "options": "-c default_transaction_read_only=on"},
+    )
+
+
+def replica_lag(pool: ConnectionPool) -> float | None:
+    """Seconds the replica is behind; 0 for a server that is not replaying; None when it
+    cannot be asked."""
+    try:
+        with pool.connection() as conn:
+            row = conn.execute(
+                "SELECT CASE WHEN pg_is_in_recovery()"
+                " THEN EXTRACT(EPOCH FROM clock_timestamp() - pg_last_xact_replay_timestamp())"
+                " ELSE 0 END"
+            ).fetchone()
+    except psycopg.Error:
+        return None
+    return float(row[0]) if row and row[0] is not None else None
+
+
+def read_pool(
+    settings: Settings, primary: ConnectionPool, replica: ConnectionPool | None
+) -> ConnectionPool:
+    """The replica for a read that may be a little behind, while its lag is within the
+    bound; otherwise the primary, so a report is never older than the bound allows."""
+    if replica is None:
+        return primary
+    lag = replica_lag(replica)
+    return replica if lag is not None and lag <= settings.ccp_replica_max_lag_seconds else primary
 
 
 AGENT_ROLE = "ccp_agent"
@@ -53,7 +110,9 @@ def agent_pool(settings: Settings, *, max_size: int = 4) -> ConnectionPool:
     conninfo = make_conninfo(
         agent_url(settings), options=f"-c statement_timeout={AGENT_STATEMENT_TIMEOUT_MS}"
     )
-    return ConnectionPool(conninfo, min_size=1, max_size=max_size, open=True)
+    return ConnectionPool(
+        conninfo, min_size=1, max_size=max_size, open=True, kwargs=_session_kwargs(settings)
+    )
 
 
 class Pools:

@@ -154,7 +154,8 @@ def _tenant_tables(cur: psycopg.Cursor[Any]) -> list[tuple[str, str, bool, bool]
         "       a.attname, c.relrowsecurity, c.relforcerowsecurity"
         " FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
         " JOIN pg_attribute a ON a.attrelid = c.oid AND NOT a.attisdropped"
-        " WHERE c.relkind IN ('r', 'p')"
+        # a partition is covered by its parent (A-172)
+        " WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition"
         "   AND ((n.nspname = 'public' AND a.attname = 'tenant_id')"
         "     OR (n.nspname = 'checkpoints' AND a.attname = 'thread_id'))"
         " ORDER BY 1"

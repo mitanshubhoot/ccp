@@ -73,6 +73,7 @@ from ccp.tenants import onboarding, scope, versions
 class Pools:
     app: ConnectionPool
     agent: ConnectionPool | None = None
+    replica: ConnectionPool | None = None  # reports read here while it keeps up (A-172)
 
 
 @dataclass(frozen=True)
@@ -349,7 +350,8 @@ def findings(s: Member) -> dict[str, Any]:
 def report(framework_id: str, s: Member) -> dict[str, Any]:
     if framework_id not in knowledge.load().frameworks:
         raise HTTPException(404, f"no framework {framework_id!r}")
-    result = reader.framework_rollup(s.db, framework_id)
+    source = storage.read_pool(s.settings, s.pools.app, s.pools.replica)
+    result = reader.framework_rollup(ScopedDB(source, s.db.tenant), framework_id)
     rows = [
         {
             "requirement_id": r.requirement_id,

@@ -108,7 +108,13 @@ class TenantContext:
 
     @classmethod
     def for_id(cls, settings: Settings, tenant_id: str) -> TenantContext:
-        return cls(TenantId(tenant_id), lookup(settings, tenant_id))
+        found = lookup(settings, tenant_id)
+        if found.cell != settings.ccp_cell:  # residency (A-172): another cell's tenant
+            raise TenantUnavailable(
+                f"tenant {tenant_id!r} lives in cell {found.cell}; this process serves"
+                f" {settings.ccp_cell}"
+            )
+        return cls(TenantId(tenant_id), found)
 
     @classmethod
     def all(cls, settings: Settings) -> list[TenantContext]:

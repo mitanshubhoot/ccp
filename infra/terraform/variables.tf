@@ -68,3 +68,15 @@ variable "certificate_arn" {
   type        = string
   description = "ACM certificate for the api's load balancer."
 }
+
+variable "read_replica" {
+  description = "A read replica the reports read while it keeps up (A-172)"
+  type        = bool
+  default     = true
+}
+
+variable "pgbouncer_image" {
+  description = "The PgBouncer image, run in transaction mode; pin it by digest before deploying (A-172)"
+  type        = string
+  default     = "edoburu/pgbouncer:v1.23.1-p2"
+}

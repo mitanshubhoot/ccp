@@ -318,7 +318,9 @@ def build_client(settings: Settings, stub: StubLLMClient | None = None) -> LLMCl
     """Provider selection: an explicit stub, else the Anthropic client when a key is set."""
     if stub is not None:
         return stub
-    if settings.anthropic_api_key is None:
+    from ccp import cells
+
+    if settings.anthropic_api_key is None and cells.current(settings).provider != "bedrock":
         raise RuntimeError("ANTHROPIC_API_KEY is not set; AI-tier evaluation is unavailable")
     from ccp.llm.anthropic_client import AnthropicClient
 
@@ -326,7 +328,10 @@ def build_client(settings: Settings, stub: StubLLMClient | None = None) -> LLMCl
 
 
 def try_build_client(settings: Settings) -> LLMClient | None:
-    """None when no provider is configured; callers park AI-tier work instead of failing."""
-    if settings.anthropic_api_key is None:
+    """None when no provider is configured; callers park AI-tier work instead of failing.
+    A Bedrock cell needs no Anthropic key: the task role reaches its regional profiles."""
+    from ccp import cells
+
+    if settings.anthropic_api_key is None and cells.current(settings).provider != "bedrock":
         return None
     return build_client(settings)

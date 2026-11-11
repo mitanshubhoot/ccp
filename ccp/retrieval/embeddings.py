@@ -26,7 +26,7 @@ from typing import Any, Literal, Protocol
 
 import httpx
 
-from ccp import credentials
+from ccp import cells, credentials
 from ccp.config import Settings
 from ccp.llm.errors import RetryableModelError, TerminalModelError, classify_status
 from ccp.observability import cost
@@ -120,8 +120,11 @@ class VoyageEmbeddingClient:
         model: str = "voyage-3-large",
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        url: str | None = None,
     ) -> None:
         self.model_id = model
+        if url:
+            self.url = url  # the cell's endpoint: Voyage's EU endpoint in an EU cell (A-172)
         self._headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         self._http = httpx.Client(timeout=60.0, transport=transport)
         self._sleep = sleep
@@ -198,7 +201,9 @@ def build_embedding_client(settings: Settings) -> EmbeddingClient:
     voyage_key = credentials.secret(settings, "embed:voyage")
     if settings.ccp_embed_provider == "voyage" and voyage_key is not None:
         require_voyage_terms(settings)
-        return VoyageEmbeddingClient(voyage_key, settings.ccp_embed_model)
+        return VoyageEmbeddingClient(
+            voyage_key, settings.ccp_embed_model, url=cells.current(settings).voyage_url
+        )
     return HashingEmbeddingClient()
 
 

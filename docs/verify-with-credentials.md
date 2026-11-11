@@ -161,6 +161,15 @@ step; work through it when the credentials are available.
 - [ ] `deploy.yml` from main finishes in under 30 minutes; a rollback run with
       `rollback_to` finishes in under 10; a deliberately unhealthy image is rolled back by the
       circuit breaker (A-138).
+- [ ] With `scale.tf` applied: the API and workers run through PgBouncer in transaction
+      mode (`DATABASE_POOLER=true`) while workers LISTEN on `DATABASE_DIRECT_URL`; a
+      report reads the replica, and falls back to the primary when replica lag passes
+      `CCP_REPLICA_MAX_LAG_SECONDS`; `ccp.storage.partitions.own_partition` on a copy of
+      production gives the largest tenant its own tool_results partition (A-172).
+- [ ] An EU cell (`CCP_CELL=eu-1`, eu-central-1): the Bedrock EU inference profile ids
+      and Voyage's EU endpoint in config/cells.yaml are confirmed against the providers'
+      catalogues, a model call and an embedding run from the cell, and a US tenant is
+      refused by it (A-172).
 
 - [ ] `ccp aws onboard` then the quick-create stack in a sandbox account; `ccp aws verify`
       passes, and fails when the stack is changed to drop the external ID condition or to

@@ -35,7 +35,7 @@ from typing import Any, TypeVar, cast
 import anthropic
 from pydantic import BaseModel
 
-from ccp import credentials
+from ccp import cells, credentials
 from ccp.config import Settings
 from ccp.llm.budget import BudgetTracker
 from ccp.llm.client import (
@@ -205,15 +205,22 @@ class AnthropicClient:
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         if client is None:
-            key = credentials.secret(settings, "model:anthropic")
-            if key is None:
-                raise RuntimeError("ANTHROPIC_API_KEY is not set")
-            client = anthropic.Anthropic(
-                api_key=key,
-                max_retries=0,
-                default_headers={"anthropic-version": ANTHROPIC_API_VERSION},
-            )
-        self._client = client
+            cell = cells.current(settings)
+            if cell.provider == "bedrock":  # the cell's own region, the cell's profiles (A-172)
+                make: Any = anthropic.AnthropicBedrock
+                client = cells.ModelRouted(
+                    make(aws_region=cell.model_region or cell.region, max_retries=0), cell
+                )
+            else:
+                key = credentials.secret(settings, "model:anthropic")
+                if key is None:
+                    raise RuntimeError("ANTHROPIC_API_KEY is not set")
+                client = anthropic.Anthropic(
+                    api_key=key,
+                    max_retries=0,
+                    default_headers={"anthropic-version": ANTHROPIC_API_VERSION},
+                )
+        self._client: Any = client
         self._sleep = sleep
 
     # -- retry ------------------------------------------------------------------------

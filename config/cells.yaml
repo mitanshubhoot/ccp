@@ -1,0 +1,32 @@
+# Cells (LT9, spec.md A-172): one deployment of the same code and migrations per cell, each
+# with its own database, raw bucket and audit trail. A tenant lives in exactly one cell
+# (`cell` in its settings, us-1 by default) and a process serves only its own cell's
+# tenants (CCP_CELL), so an EU tenant's data and model calls never leave the EU cell.
+#
+#   region          the AWS region of the cell's database, buckets and services
+#   residency       us or eu: what the cell promises about where data is processed
+#   models          anthropic (the first-party API) or bedrock with inference profiles in
+#                   the cell's region; `profiles` maps CCP's pinned model ids to the
+#                   provider's ids. The EU profile ids are to be confirmed against
+#                   Bedrock's model catalogue before an EU cell takes a tenant
+#   voyage_url      the embeddings endpoint; an EU cell uses Voyage's EU endpoint, to be
+#                   confirmed with Voyage before an EU cell takes a tenant
+#   dedicated       a cell for one regulated or very large tenant
+
+cells:
+  us-1:
+    region: us-east-1
+    residency: us
+    models: {provider: anthropic}
+    voyage_url: https://api.voyageai.com/v1/embeddings
+  eu-1:
+    region: eu-central-1
+    residency: eu
+    models:
+      provider: bedrock
+      region: eu-central-1
+      profiles:
+        claude-haiku-5-5: eu.anthropic.claude-haiku-5-5
+        claude-sonnet-5-5: eu.anthropic.claude-sonnet-5-5
+        claude-opus-5-5: eu.anthropic.claude-opus-5-5
+    voyage_url: https://api.eu.voyageai.com/v1/embeddings

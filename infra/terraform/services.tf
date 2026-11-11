@@ -129,9 +129,11 @@ locals {
     { name = "CCP_AUDIT_KMS_KEY_ID", value = aws_kms_key.audit_signing.arn },
     { name = "CCP_AUTH_MODE", value = "oidc" },
     { name = "AWS_REGION", value = var.region },
+    { name = "CCP_CELL", value = var.cell },
+    { name = "DATABASE_POOLER", value = "true" },
   ]
   secrets = [
-    for name in ["DATABASE_URL", "DATABASE_ADMIN_URL", "DATABASE_AGENT_URL", "ANTHROPIC_API_KEY", "VOYAGE_API_KEY", "CCP_OIDC_CLIENT_SECRET"] : {
+    for name in ["DATABASE_URL", "DATABASE_ADMIN_URL", "DATABASE_AGENT_URL", "DATABASE_DIRECT_URL", "DATABASE_REPLICA_URL", "ANTHROPIC_API_KEY", "VOYAGE_API_KEY", "CCP_OIDC_CLIENT_SECRET"] : {
       name      = name
       valueFrom = "arn:aws:secretsmanager:${var.region}:${var.app_account_id}:secret:ccp/${var.cell}/${name}"
     }

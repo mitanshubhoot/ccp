@@ -26,7 +26,7 @@ from ccp.ingest import dispatch
 from ccp.ingest.consumers import OrderedConsumer, ParallelConsumer
 from ccp.ingest.event_log import CHANNEL, LogRecord
 from ccp.observability import steps
-from ccp.storage.db import app_pool
+from ccp.storage.db import app_pool, listen_url
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
 
@@ -112,7 +112,7 @@ class Dispatcher:
             sample = self.factory(ScopedDB(self.pool, tenants[0]), settings)
             self.topic = sample.topic
             if isinstance(sample, OrderedConsumer | ParallelConsumer):  # producers: sweeps only
-                self.listener = psycopg.connect(settings.database_url, autocommit=True)
+                self.listener = psycopg.connect(listen_url(settings), autocommit=True)
                 self.listener.execute(f"LISTEN {CHANNEL}")
         except BaseException:
             self.close()

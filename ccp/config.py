@@ -137,6 +137,8 @@ class TenantSettings(BaseModel):
     label_consent: Literal["none", "eval", "training"] = "none"
     # The tenant's wall clock for its schedules (A-108), an IANA name.
     time_zone: str = "UTC"
+    # The cell the tenant lives in (A-172): only that cell's processes serve it.
+    cell: str = "us-1"
     schedules: tuple[ScheduleSpec, ...] = DEFAULT_SCHEDULES
     # The provider accounts it reads (A-121); one per connector and source.
     connections: tuple[ConnectionSpec, ...] = DEFAULT_CONNECTIONS
@@ -182,6 +184,13 @@ class Settings(BaseSettings):
     # Agent tools read through their own read-only role (A-115). Unset: the application URL
     # with the user `ccp_agent` (same host, database and password).
     database_agent_url: str | None = None
+    # Scale and residency (A-172): DATABASE_URL may point at PgBouncer in transaction mode;
+    # LISTEN then needs the direct URL, and reports may read a replica within a lag bound
+    database_pooler: bool = False
+    database_direct_url: str | None = None
+    database_replica_url: str | None = None
+    ccp_replica_max_lag_seconds: float = Field(default=30.0, gt=0)
+    ccp_cell: str = "us-1"  # the cell this process serves (config/cells.yaml)
     ccp_data_dir: Path = Path("data")
     ccp_tenants_file: Path = REPO_ROOT / "config" / "tenants.yaml"
     ccp_fixtures_dir: Path = REPO_ROOT / "fixtures"

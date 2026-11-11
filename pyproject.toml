@@ -117,6 +117,7 @@ layers = [
     "ccp.observability",
     "ccp.credentials",
     "ccp.tenancy",
+    "ccp.cells",
     "ccp.config",
     "ccp.types",
 ]
