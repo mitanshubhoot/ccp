@@ -1,0 +1,26 @@
+# Retrieval gates per evidence type (spec.md A-148), over the golden queries of every
+# tenant together (evals/golden/retrieval.yaml). `ccp index gate` and `ccp index reembed`
+# apply them; a parser, chunker, embedding model or reranker change ships only when they
+# hold (Decision 10).
+#
+#   recall_at_5_min       mean Recall@5 over the type's queries
+#   mrr_min               mean reciprocal rank of the first relevant chunk
+#   distractor_at_1_max   share of queries whose top hit is a distractor (distractors in)
+#   min_queries           below this a type is reported as ungated, never as passing
+#
+# The defaults are for a hosted embedding model and reranker. They are a starting point
+# set by the owner, not a measurement; raise them as the measured numbers rise.
+default:
+  min_queries: 3
+  recall_at_5_min: 0.75
+  mrr_min: 0.6
+  distractor_at_1_max: 0.10
+types: {}
+# Per embedding model overrides ("*" is every type). The keyless stand-in exercises every
+# path but is lexical: against 300 distractors it finds access reviews poorly (Recall@5
+# 0.42, MRR 0.50, a distractor first in a third of the queries, measured 2026-11-11), so
+# its floors record what it holds, and the defaults above would block it.
+models:
+  local-hashing-v1:
+    "*": {distractor_at_1_max: 0.15}
+    access_review_report: {recall_at_5_min: 0.4, mrr_min: 0.5, distractor_at_1_max: 0.34}

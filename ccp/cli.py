@@ -357,9 +357,59 @@ def index_calibrate(
     for key, value in report.summary().items():
         typer.echo(f"{key}: {value}")
     typer.echo(f"noise floor {cal.key} over {cal.samples} queries: {cal.thresholds.percentiles}")
+    curves = calibration.reliability_curves(report)
+    for key, curve in sorted(curves.items()):
+        typer.echo(f"reliability {key} over {curve.samples} queries: {len(curve.bins)} bins")
     if write:
-        retrieval_cfg.save(calibration.record(providers.retrieval, cal))
+        updated = calibration.record(providers.retrieval, cal)
+        retrieval_cfg.save(calibration.record_reliability(updated, curves))
         typer.echo(f"wrote {retrieval_cfg.CONFIG_PATH}")
+
+
+@index_app.command("gate")
+def index_gate(
+    distractor_count: int = typer.Option(300, "--distractors", help="installed where none are"),
+) -> None:
+    """Per evidence type retrieval gates over every tenant's golden queries (A-148)."""
+    from ccp.retrieval import gates as retrieval_gates
+
+    settings = _settings()
+    providers = tier2.Providers.from_settings(settings)
+    queries = retrieval_metrics.load_queries()
+    pool = db.app_pool(settings)
+    runs = []
+    try:
+        for tenant_id in sorted({q.tenant for q in queries}):
+            scoped = ScopedDB(pool, _tenant(settings, tenant_id))
+            if retrieval_index.stats(scoped)["distractors"] == 0:
+                distractors.install(scoped, providers.embedder, distractor_count)
+            runs.append(
+                retrieval_metrics.evaluate_queries(
+                    scoped,
+                    providers.embedder,
+                    queries,
+                    reranker=providers.reranker,
+                    config=providers.retrieval,
+                )
+            )
+    finally:
+        pool.close()
+    report = retrieval_metrics.merge(runs)
+    outcomes = retrieval_gates.check(report)
+    for o in outcomes:
+        m = o.metrics
+        state = (
+            ("FAIL " + "; ".join(o.breaches)) if o.breaches else ("ok" if o.gated else "ungated")
+        )
+        typer.echo(
+            f"{o.evidence_type:<24} n={m.queries:<3} recall@5={m.recall_at_5:.3f}"
+            f" mrr={m.mrr:.3f} distractor@1={m.distractor_at_1:.3f}  {state}"
+        )
+    reasons = retrieval_gates.blocking(report, outcomes)
+    for reason in reasons:
+        typer.echo(f"blocked: {reason}", err=True)
+    if reasons:
+        raise typer.Exit(1)
 
 
 @index_app.command("generations")

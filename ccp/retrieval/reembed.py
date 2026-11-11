@@ -58,6 +58,16 @@ def gate(
             now, then = getattr(candidate, name), getattr(serving, name)
             if now < then - tolerance:
                 reasons.append(f"{name} {now:.3f} < serving {then:.3f} - {tolerance}")
+        # no evidence type may get worse either: an overall gain can hide one (A-148)
+        before = serving.by_type()
+        for etype, now_m in candidate.by_type().items():
+            then_m = before.get(etype)
+            if then_m is None:
+                continue
+            for name in ("recall_at_5", "mrr"):
+                now, then = getattr(now_m, name), getattr(then_m, name)
+                if now < then - tolerance:
+                    reasons.append(f"{etype}: {name} {now:.3f} < serving {then:.3f} - {tolerance}")
     return GateResult(
         passed=not reasons,
         reasons=reasons,

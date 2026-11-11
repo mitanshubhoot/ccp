@@ -198,3 +198,40 @@ queries:
     evidence_type: repo_settings
     relevant:
       - {evidence: "github:evidence:R_kgDOGlobexM002:protection", contains: "protected=False"}
+  # -- added with the per-type gates (A-148): every type holds at least three queries ----
+  - id: ret-acme-branch-protection-website
+    tenant: acme
+    query: website repository branch protection one approving review
+    evidence_type: repo_settings
+    relevant:
+      - {evidence: "github:evidence:R_kgDOAcmeW002:protection", contains: "required approving reviews=1"}
+  - id: ret-globex-branch-protection-platform
+    tenant: globex
+    query: platform branch protection enforce admins
+    evidence_type: repo_settings
+    relevant:
+      - {evidence: "github:evidence:R_kgDOGlobexP001:protection", contains: "enforce_admins=True"}
+  - id: ret-acme-file-listing-contributing
+    tenant: acme
+    query: CONTRIBUTING review process pull requests two approvals
+    evidence_type: repo_file_listing
+    relevant:
+      - {evidence: "github:evidence:R_kgDOAcmeP001:files", contains: "CONTRIBUTING.md"}
+  - id: ret-globex-file-listing-secrets-manager
+    tenant: globex
+    query: credentials injected from the secrets manager at deploy time
+    evidence_type: repo_file_listing
+    relevant:
+      - {evidence: "github:evidence:R_kgDOGlobexP001:files", contains: "secrets manager"}
+  - id: ret-acme-critical-systems-okta
+    tenant: acme
+    query: Okta identity provider tier0 critical system owner
+    evidence_type: critical_systems_list
+    relevant:
+      - {evidence: "hris:evidence:doc:critical-systems-list.md", contains: "tier0"}
+  - id: ret-globex-critical-systems-payroll
+    tenant: globex
+    query: Payroll-GX employee financial data critical
+    evidence_type: critical_systems_list
+    relevant:
+      - {evidence: "hris:evidence:doc:critical-systems-list.md", contains: "Payroll-GX"}

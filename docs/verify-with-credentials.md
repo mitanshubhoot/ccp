@@ -33,6 +33,10 @@ step; work through it when the credentials are available.
 ## Voyage API key (`VOYAGE_API_KEY`)
 
 - [ ] Embeddings and reranking: `ccp index refresh`, then the retrieval golden set.
+- [ ] `ccp index gate` with the hosted pair: every evidence type clears the default
+      floors in config/retrieval_gates.yaml (the keyless overrides do not apply); then
+      `ccp index calibrate` writes the noise floor and the reliability curves, and a
+      tier 2 verdict's events show `retrieval_reliability_type` or `_pooled` (A-148).
 - [ ] A real re-embedding: `ccp index reembed --model voyage-4-large --no-switch` writes a
       candidate generation beside the serving one and prints both measurements; without
       `--no-switch` it serves only if the gate passes, and `ccp index generations` shows

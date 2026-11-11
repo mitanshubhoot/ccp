@@ -31,7 +31,7 @@ from ccp.evaluators.thresholds import interrupt_threshold
 from ccp.evaluators.verdict import Verdict, evaluation_key
 from ccp.knowledge.graph import TestSpec
 from ccp.retrieval.chunker import CHUNKER_VERSION
-from ccp.retrieval.config import RetrievalConfig, quality_from_thresholds
+from ccp.retrieval.config import RetrievalConfig, retrieval_confidence
 from ccp.tenancy import TenantContext
 from ccp.types import VerdictStatus
 
@@ -165,12 +165,17 @@ def measured_retrieval(state: AgentState, retrieval: RetrievalConfig | None) -> 
             qualities.append(1.0)
         else:
             first = searched[0]
-            thresholds = (
-                retrieval.thresholds_for(str(first.get("embed_model")), first.get("rerank_model"))
+            quality = (
+                retrieval_confidence(
+                    max(_top_score(c) for c in searched),
+                    retrieval,
+                    str(first.get("embed_model")),
+                    first.get("rerank_model"),
+                    evidence_type,
+                )[0]
                 if retrieval is not None
                 else None
             )
-            quality = quality_from_thresholds(max(_top_score(c) for c in searched), thresholds)
             if quality is None:
                 return None
             qualities.append(quality)

@@ -332,9 +332,11 @@ def evaluate(
     params.setdefault("evidence_max_age_days", spec.evidence_max_age_days)
     decision = rules.decide(spec.rule, verified.values, params, ctx.now)
     top = result.chunks[0]
-    quality = retrieval_config.quality_from_thresholds(
-        top.top_score, providers.retrieval.thresholds_for(result.embed_model, result.rerank_model)
+    quality, measured_by = retrieval_config.retrieval_confidence(
+        top.top_score, providers.retrieval, result.embed_model, result.rerank_model, evidence_type
     )
+    if measured_by.startswith("reliability"):  # a fitted curve, not the noise floor (A-148)
+        events.append(f"retrieval_{measured_by.replace(':', '_')}")
     conf = confidence.compute(
         coverage=verified.coverage,
         citation_rate=verified.citation_rate,
