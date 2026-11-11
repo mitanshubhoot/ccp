@@ -1,0 +1,20 @@
+# What a service playbook reads in code for a gap (LT11, spec.md A-167): per resource type
+# and intent, the JSON Pointer into the resource's recorded configuration and the value
+# that meets the intent. A field listed here is decided by code; any other gap gets one
+# tool-less model reading that must cite JSON Pointers, each checked by code. Either way
+# a playbook can raise fail or needs_review, never pass: a pass needs a deterministic test.
+#
+#   pointer   RFC 6901, into {configuration, supplementaryConfiguration}
+#   expect    equals: <value>, truthy: true, or exists: true
+
+AWS::RDS::DBInstance:
+  encrypted: {pointer: /configuration/storageEncrypted, expect: {truthy: true}}
+  not_public: {pointer: /configuration/publiclyAccessible, expect: {equals: false}}
+  backed_up: {pointer: /configuration/backupRetentionPeriod, expect: {truthy: true}}
+AWS::DynamoDB::Table:
+  encrypted: {pointer: /configuration/sseDescription/status, expect: {equals: ENABLED}}
+AWS::S3::Bucket:
+  encrypted: {pointer: /supplementaryConfiguration/ServerSideEncryptionConfiguration, expect: {exists: true}}
+  logged: {pointer: /supplementaryConfiguration/BucketLoggingConfiguration/destinationBucketName, expect: {exists: true}}
+AWS::SQS::Queue:
+  encrypted: {pointer: /configuration/KmsMasterKeyId, expect: {exists: true}}

@@ -53,6 +53,7 @@ class ScheduleSpec(BaseModel):
         "answer_staleness",
         "inventory",
         "registry_diff",
+        "playbooks",
     ]
     every: str = Field(
         pattern=r"^(every [1-9][0-9]* (minutes|hours)|daily ([01][0-9]|2[0-3]):[0-5][0-9])$"
@@ -90,6 +91,8 @@ DEFAULT_SCHEDULES: tuple[ScheduleSpec, ...] = (
     ScheduleSpec(id="inventory", job="inventory", every="daily 01:40"),
     # AWS's resource-type registry, compared on Mondays (A-166)
     ScheduleSpec(id="registry-diff", job="registry_diff", every="daily 06:00"),
+    # the coverage gaps read by their class's playbook, after the inventory (A-167)
+    ScheduleSpec(id="playbooks", job="playbooks", every="daily 02:40"),
 )
 
 
@@ -310,6 +313,10 @@ class Settings(BaseSettings):
     ccp_mapping_model: str = "claude-sonnet-5-5"
     # Declarative checks drafted offline (A-165)
     ccp_drafting_model: str = "claude-sonnet-5-5"
+    # Service playbooks for coverage gaps (A-167): bounded, read-only, never PASS
+    ccp_playbook_model: str = "claude-haiku-5-5"
+    ccp_playbook_daily_cap: int = Field(default=200, ge=0)
+    ccp_playbooks_disabled: list[str] = Field(default_factory=list)  # classes, or all
 
     # Tracing
     langfuse_public_key: SecretStr | None = None

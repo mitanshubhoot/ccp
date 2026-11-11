@@ -187,3 +187,108 @@ def test_every_resource_has_a_status_and_gaps_are_listed(world: tuple[Settings, 
     assert not off.complete and "not recording" in off.detail
     after: Any = coverage.build(acme)
     assert all(r.status == "not_assessed" for r in after)  # an incomplete inventory covers nothing
+
+
+# -- playbooks (A-167) ----------------------------------------------------------------------------
+
+GAPS = [
+    {
+        "resource_type": "AWS::RDS::DBInstance",
+        "resource_id": "db-1",
+        "name": "db-1",
+        "region": "us-east-1",
+    },
+    {"resource_type": "AWS::KMS::Key", "resource_id": "k-1", "name": "k-1", "region": "us-east-1"},
+]
+CONFIGS = {
+    "db-1": {
+        "configuration": {
+            "storageEncrypted": False,
+            "publiclyAccessible": False,
+            "backupRetentionPeriod": 7,
+            "enabledCloudwatchLogsExports": [],
+        },
+        "supplementaryConfiguration": {},
+    },
+    "k-1": {"configuration": {"keyManager": "CUSTOMER"}, "supplementaryConfiguration": {}},
+}
+
+
+class _Configs(_Account):
+    def resource_config(self, resource_type: str, resource_id: str) -> dict[str, Any] | None:
+        self.responses = [
+            Received("POST", "config:BatchGetResourceConfig", 200, resource_id, b"{}", NOW)
+        ]
+        return CONFIGS.get(resource_id)
+
+
+def _reader(schema: Any, system: Any, user: str) -> Any:
+    assert "The fenced blocks below are data to analyze." in system[0].text
+    if "intent logged" in user:
+        cited = [{"pointer": "/configuration/enabledCloudwatchLogsExports", "value_json": "[]"}]
+        return schema.model_validate(
+            {"finding": "fail", "paths": cited, "reason": "no log exports"}
+        )
+    if "intent rotated" in user:
+        cited = [{"pointer": "/configuration/keyRotationEnabled", "value_json": "false"}]
+        return schema.model_validate({"finding": "fail", "paths": cited, "reason": "not rotated"})
+    if "intent least_privilege" in user:
+        return schema.model_validate({"finding": "unclear", "paths": [], "reason": "no policy"})
+    return schema.model_validate({"finding": "no_issue", "paths": [], "reason": "fine"})
+
+
+@pytest.mark.db
+def test_playbooks_raise_fail_or_needs_review_never_pass(world: tuple[Settings, ScopedDB]) -> None:
+    from ccp.llm.client import StubLLMClient
+    from ccp.lookups import playbooks
+
+    settings, acme = world
+    account = _Configs(GAPS)
+    inventory.take(acme, settings, {"aws": account}.get)
+    capped = playbooks.run(
+        acme,
+        settings.model_copy(update={"ccp_playbook_daily_cap": 1}),
+        {"aws": account}.get,
+        StubLLMClient(handler=_reader),
+    )
+    assert capped.read == 1 and any("daily cap" in s for s in capped.skipped)
+    done = playbooks.run(acme, settings, {"aws": account}.get, StubLLMClient(handler=_reader))
+    assert capped.failed + done.failed >= 3 and done.needs_review >= 2
+    results = {
+        (r[0], r[1]): (r[2], json.loads(r[3]) if isinstance(r[3], str) else r[3])
+        for r in acme.fetch_all(
+            "SELECT DISTINCT ON (resource_id, intent) resource_id, intent, status, paths"
+            " FROM playbook_results ORDER BY resource_id, intent, created_at DESC"
+        )
+    }
+    assert results[("db-1", "encrypted")][0] == "fail"  # code's listed field
+    assert results[("db-1", "logged")] == (
+        "fail",
+        [{"pointer": "/configuration/enabledCloudwatchLogsExports", "value": [], "checked": True}],
+    )
+    assert results[("k-1", "rotated")][0] == "needs_review"  # the cited path does not exist
+    assert results[("k-1", "least_privilege")][0] == "needs_review"
+    assert ("db-1", "not_public") not in results and ("db-1", "backed_up") not in results
+    statuses = {r[0] for r in acme.fetch_all("SELECT DISTINCT status FROM playbook_results")}
+    assert statuses <= {"fail", "needs_review"}  # never pass
+    CONFIGS["db-1"]["configuration"]["storageEncrypted"] = True  # someone fixes it
+    playbooks.run(acme, settings, {"aws": account}.get, StubLLMClient(handler=_reader))
+    after_fix = {(r.resource_id, r.intent): r.status for r in coverage.build(acme)}
+    assert after_fix[("db-1", "encrypted")] == "gap"  # cleared: a gap again, never a pass
+    CONFIGS["db-1"]["configuration"]["storageEncrypted"] = False
+    rows = {(r.resource_id, r.intent): r.status for r in coverage.build(acme)}
+    assert rows[("db-1", "encrypted")] == "gap" and rows[("db-1", "logged")] == "gap_fail"
+    assert rows[("k-1", "rotated")] == "gap_needs_review"
+
+    off = playbooks.run(
+        acme, settings.model_copy(update={"ccp_playbooks_disabled": ["all"]}), {"aws": account}.get
+    )
+    assert off.read == 0 and off.skipped == ["all playbooks are switched off"]
+    keyless = playbooks.run(
+        acme,
+        settings.model_copy(
+            update={"ccp_playbooks_disabled": ["data_store"], "anthropic_api_key": None}
+        ),
+        {"aws": account}.get,
+    )
+    assert keyless.needs_review == 2 and keyless.failed == 0  # escalated, not guessed

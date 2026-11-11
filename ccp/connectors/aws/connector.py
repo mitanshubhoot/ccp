@@ -394,3 +394,28 @@ def inventory_of(connector: AwsConnector) -> list[dict[str, str]] | None:
         if not token:
             break
     return out
+
+
+def resource_config(
+    connector: AwsConnector, resource_type: str, resource_id: str
+) -> dict[str, Any] | None:
+    """One resource's current configuration as AWS Config recorded it (A-167): its
+    configuration and supplementary configuration, parsed; None when Config has none."""
+    connector.responses = []
+    config = connector._watch(connector._client(connector._assumed(), "config"))
+    found = config.batch_get_resource_config(
+        resourceKeys=[{"resourceType": resource_type, "resourceId": resource_id}]
+    )
+    items = found.get("baseConfigurationItems") or []
+    if not items:
+        return None
+    item = items[0]
+    raw = item.get("configuration")
+    supplementary = item.get("supplementaryConfiguration") or {}
+    return {
+        "configuration": json.loads(raw) if isinstance(raw, str) else (raw or {}),
+        "supplementaryConfiguration": {
+            k: json.loads(v) if isinstance(v, str) and v[:1] in "[{" else v
+            for k, v in supplementary.items()
+        },
+    }

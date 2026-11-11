@@ -103,7 +103,7 @@ def build(db: ScopedDB) -> list[Row]:
                             name,
                             cls,
                             intent,
-                            f"gap_{read}" if read else "gap",
+                            f"gap_{read}" if read in ("fail", "needs_review") else "gap",
                         )
                     )
                     continue

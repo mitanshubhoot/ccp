@@ -35,6 +35,10 @@ step; work through it when the credentials are available.
       resource a status; with the recorder stopped the snapshot is incomplete and every
       row reads not assessed (A-166). `ccp coverage registry` twice a week apart, with
       CCP's own credentials, queues the types AWS added.
+- [ ] `ccp coverage playbooks` on that account with Haiku 5.5: an unencrypted RDS
+      instance reads gap_fail from code's listed field, an unknown intent's reading
+      cites JSON Pointers that check, nothing is ever recorded as a pass, and the daily
+      cap holds under AWS's shared rate limits (A-167).
 - [ ] The Investigator on a failing GH-1 or HR-1 verdict chooses
       `github_remove_collaborator` with the right repository and login from the
       context's fix list (prompt `investigator_diagnose_v2`); a choice outside the list

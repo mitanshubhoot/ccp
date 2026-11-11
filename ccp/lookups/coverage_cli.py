@@ -10,7 +10,7 @@ import typer
 
 from ccp.config import Settings
 from ccp.knowledge import service_classes
-from ccp.lookups import coverage, inventory
+from ccp.lookups import coverage, inventory, playbooks
 from ccp.observability import steps
 from ccp.storage import db
 from ccp.storage.scoped import ScopedDB
@@ -80,3 +80,14 @@ def classify(
 def registry() -> None:
     """Compare AWS's resource-type registry with the last list kept."""
     typer.echo(json.dumps(inventory.registry_diff(_settings())))
+
+
+@app.command("playbooks")
+def run_playbooks(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """Read today's gaps with their class's playbook: fail or needs_review, never pass."""
+    settings = _settings()
+    scoped, pool = _scoped(settings, tenant)
+    try:
+        typer.echo(json.dumps(playbooks.run(scoped, settings).__dict__, indent=2))
+    finally:
+        pool.close()
