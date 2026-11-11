@@ -70,6 +70,14 @@ def gather(
     ]
 
 
+KEY_LINES = {  # a phrase in the question -> the policy line that answers it
+    "multi-factor": "Multi-factor authentication is required",
+    "contractors": "contractors",
+    "second engineer": "second engineer",
+    "scanned for secrets": "scanned for secrets",
+}
+
+
 def _reading(item_id: str, question: str, user: str) -> KeyedReading:
     lowered = question.lower()
     if "explode" in lowered:
@@ -93,20 +101,25 @@ def _reading(item_id: str, question: str, user: str) -> KeyedReading:
                 )
     if "repairable" in lowered and "failed these code checks" not in user:
         lowered = lowered.replace("multi-factor", "fabricate")  # the first answer makes one up
-    for block in blocks(user):
-        for line in block.body.splitlines():
-            if "multi-factor" in lowered and "Multi-factor authentication is required" in line:
-                return KeyedReading(
-                    item_id=item_id,
-                    answer="yes",
-                    reason="the policy requires MFA for every human identity",
-                    findings=[
-                        ItemFinding(
-                            statement="MFA is required for human identities",
-                            citation=Cited(chunk_id=block.chunk_id, quote=line.strip()),
-                        )
-                    ],
-                )
+    planted = re.search(r"PROBE-\d+", question)  # a context probe's code comes back (A-156)
+    for key, phrase in KEY_LINES.items():
+        if key not in lowered:
+            continue
+        for block in blocks(user):
+            for line in block.body.splitlines():
+                if phrase in line:
+                    return KeyedReading(
+                        item_id=item_id,
+                        answer="yes",
+                        reason=(f"{planted.group(0)}: " if planted else "")
+                        + f"the policy says so ({key})",
+                        findings=[
+                            ItemFinding(
+                                statement=f"the policy addresses {key}",
+                                citation=Cited(chunk_id=block.chunk_id, quote=line.strip()),
+                            )
+                        ],
+                    )
     if "fabricate" in lowered:
         first = blocks(user)[0].chunk_id if blocks(user) else "none"
         return KeyedReading(

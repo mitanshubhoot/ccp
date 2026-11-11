@@ -21,6 +21,8 @@ document             200,000            whole-document reads on Sonnet 5.5 (6.5,
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -57,13 +59,37 @@ class Ceilings:
 
 
 @lru_cache(maxsize=4)
-def load(path: Path = CEILINGS_FILE) -> Ceilings:
+def _from_file(path: Path) -> Ceilings:
     loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return Ceilings(
         by_call={str(k): int(v) for k, v in (loaded.get("ceilings") or {}).items()},
         swap_tokens=int(loaded.get("tool_result_swap_tokens", 5000)),
         preview_tokens=int(loaded.get("preview_tokens", 500)),
     )
+
+
+_OVERRIDE: list[Ceilings] = []  # the context probes squeeze a run's context (A-156)
+
+
+def load(path: Path = CEILINGS_FILE) -> Ceilings:
+    return _OVERRIDE[-1] if _OVERRIDE else _from_file(path)
+
+
+@contextmanager
+def squeezed(fraction: float, *, swap_tokens: int, preview_tokens: int) -> Iterator[Ceilings]:
+    """Every ceiling at a fraction of its value, for the length of a probe: the stress
+    LangChain applies by compressing at 10 to 20% of the window (report 6.7)."""
+    base = _from_file(CEILINGS_FILE)
+    limits = Ceilings(
+        {k: max(1, int(v * fraction)) for k, v in base.by_call.items()},
+        swap_tokens,
+        preview_tokens,
+    )
+    _OVERRIDE.append(limits)
+    try:
+        yield limits
+    finally:
+        _OVERRIDE.pop()
 
 
 @dataclass(frozen=True)

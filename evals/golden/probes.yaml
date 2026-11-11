@@ -1,0 +1,51 @@
+# Context probes (spec.md A-156, report 6.7): each squeezes a task item run's context to a
+# fifth of its ceilings and checks, in code, that the run still holds what it must. The
+# stub model runs the same probes in tests/component/test_context_probes.py; here they run
+# on the real model and skip without a key.
+- id: cmp-probe-planted-fact
+  level: component
+  difficulty: hard
+  source: manual
+  tenant: acme
+  target: context_probe
+  requires: [anthropic]
+  input: {probe: planted_fact}
+  expected: {$subset: {passed: true, kept_in_last_call: true}}
+  notes: A code planted in the question comes back in the reading after results were swapped out.
+  tags: [harness, probe, keyed]
+
+- id: cmp-probe-reread-by-handle
+  level: component
+  difficulty: hard
+  source: manual
+  tenant: acme
+  target: context_probe
+  requires: [anthropic]
+  input: {probe: reread_by_handle}
+  expected: {$subset: {passed: true, intact: true}}
+  notes: A swapped-out result reads back whole by its handle, and the reading rests on it.
+  tags: [harness, probe, keyed]
+
+- id: cmp-probe-resume-without-redo
+  level: component
+  difficulty: edge
+  source: manual
+  tenant: acme
+  target: context_probe
+  requires: [anthropic]
+  input: {probe: resume_without_redo}
+  expected: {$subset: {passed: true, new_model_calls: 0}}
+  notes: Advancing a task again redoes no finished item, and a finished run restarted makes no call.
+  tags: [harness, probe, keyed]
+
+- id: cmp-probe-cited-span-positions
+  level: component
+  difficulty: hard
+  source: manual
+  tenant: acme
+  target: context_probe
+  requires: [anthropic]
+  input: {probe: cited_span_positions}
+  expected: {$subset: {passed: true}}
+  notes: Facts early, in the middle and late in the policy are each cited inside their section.
+  tags: [harness, probe, keyed]

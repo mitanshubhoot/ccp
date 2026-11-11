@@ -48,6 +48,9 @@ step; work through it when the credentials are available.
       correction success, tokens and dollars per accepted result); before the next
       bundle ships, `ccp agent harness-gate --baseline <prod> --candidate <new>` on the
       eval organization's runs exits 0 (A-155).
+- [ ] The four context probes on Sonnet 5.5: `ccp evals run --tag probe --runs 5`; each
+      passes in all five runs, and `reread_by_model` says whether the model chose to read
+      a swapped-out result back (A-156).
 - [ ] Prompt caching: cache reads appear on repeated stable prefixes.
 - [ ] `ccp replay <id> --execute` on a model-backed verdict.
 

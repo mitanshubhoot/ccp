@@ -71,6 +71,7 @@ DB_TARGETS = {
     "copilot_answer",
     "adversarial_tier2",
     "pipeline",
+    "context_probe",  # A-156
 }
 # Targets whose expectations describe a fresh database (first landing, no prior rows) get a
 # scratch database of their own; every other database case shares the run's database.

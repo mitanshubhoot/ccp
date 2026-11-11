@@ -396,6 +396,17 @@ def _indexed_db(
     return db
 
 
+@target("context_probe")
+def context_probe(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
+    """One context probe over a task item run, graded in code (A-156; requires: anthropic)."""
+    from ccp.evals import probes
+
+    providers = _providers(ctx)
+    db = _indexed_db(ctx, tenant_id, providers, 0)
+    result = probes.run(str(inp["probe"]), db, _run_settings(ctx), providers)
+    return {"probe": result.name, "passed": result.passed, **result.detail}
+
+
 @target("chunker_pages")
 def chunker_pages(ctx: EvalContext, tenant_id: str | None, inp: dict[str, Any]) -> dict[str, Any]:
     """Chunks of one evidence row (by entity id prefix): page per chunk and where snippets land."""
