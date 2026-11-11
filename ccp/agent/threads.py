@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from ccp.config import Settings
+from ccp.llm import release
 from ccp.storage.scoped import ScopedDB
 
 _COLUMNS = (
@@ -61,12 +63,22 @@ def create(
     test_id: str,
     subject_key: str,
     evaluation_key: str | None = None,
+    bundle_id: str | None = None,
 ) -> None:
+    """A run starts under a release bundle (A-142): the one given, else the process's."""
     db.execute(
         "INSERT INTO agent_threads"
-        " (thread_id, tenant_id, graph, test_id, subject_key, status, evaluation_key)"
-        " VALUES (%s, %s, %s, %s, %s, 'running', %s)",
-        (thread_id, db.tenant.tenant_id, graph, test_id, subject_key, evaluation_key),
+        " (thread_id, tenant_id, graph, test_id, subject_key, status, evaluation_key, bundle_id)"
+        " VALUES (%s, %s, %s, %s, %s, 'running', %s, %s)",
+        (
+            thread_id,
+            db.tenant.tenant_id,
+            graph,
+            test_id,
+            subject_key,
+            evaluation_key,
+            bundle_id or release.bundle_id(Settings()),
+        ),
     )
 
 

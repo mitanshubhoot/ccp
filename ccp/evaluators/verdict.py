@@ -15,6 +15,8 @@ import psycopg
 from pydantic import BaseModel, ConfigDict, Field
 from ulid import ULID
 
+from ccp.config import Settings
+from ccp.llm import release
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantId
 from ccp.types import VerdictStatus
@@ -71,6 +73,7 @@ class Verdict(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     rule_version: str | None = None  # "<rule version>:<parameters hash>" (A-101)
     manifest: dict[str, Any] | None = None  # what a tier-1 evaluation read (A-125)
+    bundle_id: str | None = None  # the release bundle it ran under (A-142)
 
     @property
     def subject(self) -> str:
@@ -112,7 +115,7 @@ _COLUMNS = (
     " evidence_refs, confidence, confidence_cap, model_confidence, tier, model, prompt_version,"
     " retrieved_chunk_ids, guardrail_events, extracted_fields, chunker_version, schema_version,"
     " fence_nonce, trigger_observed_at, trigger_reason, valid_from, request_json, response_json,"
-    " created_at, rule_version, manifest"
+    " created_at, rule_version, manifest, bundle_id"
 )
 _PLACEHOLDERS = ",".join(["%s"] * (_COLUMNS.count(",") + 1))
 
@@ -125,7 +128,10 @@ def persist(db: ScopedDB, verdict: Verdict) -> bool:
 
 def insert(cur: psycopg.Cursor[Any], verdict: Verdict) -> bool:
     """`persist` inside the caller's transaction, so the verdict and its announcement on the
-    verdicts topic commit together or not at all (A-97)."""
+    verdicts topic commit together or not at all (A-97). A verdict that names no bundle is
+    stamped with the process's own (A-142), and the bundle's manifest is kept."""
+    bundle = verdict.bundle_id or release.bundle_id(Settings())
+    release.register(cur, bundle)
     row = cur.execute(
         f"INSERT INTO verdicts ({_COLUMNS}) VALUES ({_PLACEHOLDERS})"
         " ON CONFLICT (evaluation_key) DO NOTHING RETURNING verdict_id",
@@ -159,6 +165,7 @@ def insert(cur: psycopg.Cursor[Any], verdict: Verdict) -> bool:
             verdict.created_at,
             verdict.rule_version,
             json.dumps(verdict.manifest, default=str) if verdict.manifest is not None else None,
+            bundle,
         ),
     ).fetchone()
     return row is not None
@@ -199,6 +206,7 @@ def _from_row(r: tuple[Any, ...]) -> Verdict:
         created_at=r[26],
         rule_version=r[27],
         manifest=_load(r[28]) if r[28] is not None else None,
+        bundle_id=r[29],
     )
 
 

@@ -223,7 +223,9 @@ class Settings(BaseSettings):
     anthropic_api_key: SecretStr | None = None
     ccp_llm_provider: Literal["anthropic"] = "anthropic"
     ccp_tier2_model: str = "claude-haiku-5-5"  # thinking off (A-100)
-    ccp_tier3_model: str = "claude-sonnet-5"
+    ccp_tier3_model: str = "claude-sonnet-5-5"  # tier 3 and the agents (A-142)
+    # an independent second read of every AI-derived PASS (A-143)
+    ccp_second_reader_model: str = "claude-sonnet-5-5"
     # The judge is a different model from every generating tier, and never grades its own
     # output; it runs ccp_judge_runs times and passes a case only when the runs agree.
     ccp_judge_model: str = "claude-opus-5"

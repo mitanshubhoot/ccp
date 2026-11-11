@@ -30,6 +30,7 @@ from ccp.ingest.event_log import LogRecord
 from ccp.ingest.worker import register
 from ccp.knowledge import graph as knowledge
 from ccp.knowledge.graph import KnowledgeGraph
+from ccp.llm import release
 from ccp.normalize import repository
 from ccp.observability import steps
 from ccp.retrieval.hybrid import EmbeddingModelMismatch
@@ -78,8 +79,10 @@ def evaluate_request(
     ctx = load_context(
         db, settings, spec, request.trigger_observed_at, now, reason=_reason(request.reason)
     )
+    bundle = {"bundle_id": release.bundle_id(settings)}  # what produced it (A-142)
     if spec.tier == 1:  # no PASS over a partial or stale population (A-123)
-        return completeness.guard(ctx, deterministic.evaluate(ctx, request.subject))
+        found = completeness.guard(ctx, deterministic.evaluate(ctx, request.subject))
+        return found.model_copy(update=bundle)
     evaluator = registry.evaluator_for(spec.tier)
     if evaluator is None:
         raise ParkedError(
@@ -90,7 +93,7 @@ def evaluate_request(
         verdict = evaluator(
             db, settings, ctx, spec, request.subject, active, reason=_reason(request.reason)
         )
-        return completeness.guard(ctx, verdict)
+        return completeness.guard(ctx, verdict).model_copy(update=bundle)
     except tier2.AITierUnavailable as exc:
         raise ParkedError(str(exc)) from exc
     except EmbeddingModelMismatch as exc:

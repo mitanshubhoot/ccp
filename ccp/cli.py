@@ -43,6 +43,7 @@ from ccp.ingest.landing import ingest_tenant
 from ccp.investigation import cli as investigate_cli
 from ccp.knowledge import graph as knowledge_graph
 from ccp.knowledge import rollup as knowledge_rollup
+from ccp.llm import release
 from ccp.llm.budget import BudgetTracker, RunBudget
 from ccp.llm.client import try_build_client
 from ccp.normalize import consumer as normalize_consumer
@@ -82,6 +83,7 @@ connections_app = typer.Typer(no_args_is_help=True, help="Connections and their 
 auth_app = typer.Typer(no_args_is_help=True, help="Sign-in tokens (A-129)")
 members_app = typer.Typer(no_args_is_help=True, help="Roles per tenant (A-129)")
 audit_app = typer.Typer(no_args_is_help=True, help="Check the record against itself (MT5)")
+bundles_app = typer.Typer(no_args_is_help=True, help="Release bundles (A-142)")
 aws_app = typer.Typer(no_args_is_help=True, help="Onboard AWS accounts to a read-only role (A-139)")
 rules_app = typer.Typer(
     no_args_is_help=True, help="Rule changes: amendments by default, corrections by decision"
@@ -485,6 +487,7 @@ app.add_typer(auth_app, name="auth")
 app.add_typer(members_app, name="members")
 app.add_typer(audit_app, name="audit")
 app.add_typer(aws_app, name="aws")
+app.add_typer(bundles_app, name="bundles")
 app.add_typer(worker_app, name="worker")
 app.add_typer(evals_app, name="evals")
 app.add_typer(normalize_app, name="normalize")
@@ -1229,6 +1232,63 @@ def serve(
     settings = _settings()
     typer.echo(f"serving on http://{host}:{port} (sign-in: {settings.ccp_auth_mode})")
     uvicorn.run(create_app(settings), host=host, port=port, log_level="info")
+
+
+@bundles_app.command("show")
+def bundles_show() -> None:
+    """The bundle this process runs under, and its manifest."""
+    settings = _settings()
+    identifier = release.bundle_id(settings)
+    typer.echo(f"bundle {identifier}")
+    typer.echo(json.dumps(release.manifest_of(identifier), indent=2, sort_keys=True))
+
+
+@bundles_app.command("diff")
+def bundles_diff(
+    before: str, after: str, tenant: str | None = typer.Option(None, "--tenant")
+) -> None:
+    """What changed between two recorded bundles."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        rows = dict(
+            ScopedDB(pool, ctx).fetch_all(
+                "SELECT bundle_id, manifest FROM release_bundles WHERE bundle_id = ANY(%s)",
+                ([before, after],),
+            )
+        )
+    finally:
+        pool.close()
+    missing = [b for b in (before, after) if b not in rows]
+    if missing:
+        raise typer.BadParameter(f"no recorded bundle {', '.join(missing)}")
+    for line in release.differences(rows[before], rows[after]) or ["no differences"]:
+        typer.echo(line)
+
+
+@bundles_app.command("coverage")
+def bundles_coverage(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """Verdicts and agent runs per bundle; any that names none is listed (A-142)."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        scoped = ScopedDB(pool, ctx)
+        verdict_rows = scoped.fetch_all(
+            "SELECT coalesce(bundle_id, '(none)'), count(*) FROM verdicts GROUP BY 1 ORDER BY 1"
+        )
+        run_rows = scoped.fetch_all(
+            "SELECT coalesce(bundle_id, '(none)'), count(*) FROM agent_threads GROUP BY 1"
+            " ORDER BY 1"
+        )
+    finally:
+        pool.close()
+    for label, rows in (("verdicts", verdict_rows), ("agent runs", run_rows)):
+        for bundle, n in rows:
+            typer.echo(f"{label:<11} {bundle:<17} {n}")
+    if any(b == "(none)" for b, _ in [*verdict_rows, *run_rows]):
+        raise typer.Exit(1)
 
 
 @aws_app.command("onboard")
