@@ -51,6 +51,11 @@ step; work through it when the credentials are available.
 - [ ] The four context probes on Sonnet 5.5: `ccp evals run --tag probe --runs 5`; each
       passes in all five runs, and `reread_by_model` says whether the model chose to read
       a swapped-out result back (A-156).
+- [ ] The stratified nightly judged sample on a real judge: a week of `judged_sample`
+      checks shows every stratum drawn, near-threshold PASS results most often; on the
+      1st, `ccp evals relabel --month YYYY-MM` lists 20 items, an expert labels them
+      (`--item ID --pass|--fail --by NAME`), and `--check` compares the agreement with the
+      newest `ccp evals calibrate` interval (A-157). Labelling is people's work.
 - [ ] Prompt caching: cache reads appear on repeated stable prefixes.
 - [ ] `ccp replay <id> --execute` on a model-backed verdict.
 

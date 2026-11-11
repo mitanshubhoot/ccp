@@ -29,6 +29,7 @@ from ccp.evals import calibration as judge_calibration
 from ccp.evals import capture, regress, shadow, sizing
 from ccp.evals import labels as eval_labels
 from ccp.evals import production as _production  # noqa: F401 - registers the quality jobs
+from ccp.evals import relabel as eval_relabel
 from ccp.evals import runner as eval_runner
 from ccp.evals.schema import GoldenCase
 from ccp.evaluators import clock as clock_producer
@@ -1183,6 +1184,41 @@ def evals_labels(
     typer.echo(f"{written} labelled case(s) -> {out}")
     for why, count in sorted(skipped.items()):
         typer.echo(f"  skipped {count}: {why}")
+
+
+@evals_app.command("relabel")
+def evals_relabel(
+    month: str = typer.Option(..., "--month", help="YYYY-MM: the batch to show or check"),
+    item: str | None = typer.Option(None, "--item", help="a judged item to label"),
+    passed: bool | None = typer.Option(None, "--pass/--fail", help="the expert's label"),
+    by: str | None = typer.Option(None, "--by"),
+    note: str = typer.Option("", "--note"),
+    check: bool = typer.Option(False, "--check", help="agreement against the calibration"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """The monthly expert relabel (A-157): list the month's 20 judged items, label one, or
+    check the month's expert-judge agreement against the judge's calibrated interval."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        scoped = ScopedDB(pool, ctx)
+        if item is not None:
+            if passed is None or not by:
+                raise typer.BadParameter("labelling needs --pass or --fail, and --by")
+            eval_relabel.label(scoped, item, passed=passed, by=by, note=note)
+        if check:
+            out = eval_relabel.check(
+                scoped, month, settings.ccp_eval_runs_dir, release.bundle_id(settings)
+            )
+            typer.echo(json.dumps(out, indent=2, sort_keys=True, default=str))
+            if out.get("recalibrate"):
+                raise typer.Exit(code=1)
+            return
+        for row in eval_relabel.batch(scoped, month):
+            typer.echo(json.dumps(row, sort_keys=True, default=str))
+    finally:
+        pool.close()
 
 
 @evals_app.command("capture")

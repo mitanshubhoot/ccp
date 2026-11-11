@@ -49,6 +49,7 @@ class ScheduleSpec(BaseModel):
         "judged_sample",
         "transcribe",
         "tasks",
+        "relabel",
     ]
     every: str = Field(
         pattern=r"^(every [1-9][0-9]* (minutes|hours)|daily ([01][0-9]|2[0-3]):[0-5][0-9])$"
@@ -78,6 +79,8 @@ DEFAULT_SCHEDULES: tuple[ScheduleSpec, ...] = (
     ScheduleSpec(id="transcribe", job="transcribe", every="daily 01:45"),
     # every open long task advanced one pass (A-150): checks settled, reads launched
     ScheduleSpec(id="tasks", job="tasks", every="every 1 hours"),
+    # on the 1st, last month's 20 judged items for an expert to relabel (A-157)
+    ScheduleSpec(id="relabel", job="relabel", every="daily 05:00"),
 )
 
 

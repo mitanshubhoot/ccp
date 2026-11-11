@@ -71,6 +71,7 @@ def test_the_defaults_sync_on_the_tenants_wall_clock(own: tuple[Settings, Scoped
         "judged-sample",
         "transcribe",  # A-147
         "tasks",  # A-150
+        "relabel",  # A-157
     }
     zone, full_run_at, enabled = rows["full-run"]
     assert zone == "America/New_York" and enabled
@@ -209,4 +210,5 @@ def test_the_worker_loop_drives_the_scheduler_until_the_next_slot(
         "judged-sample",
         "transcribe",  # A-147
         "tasks",  # A-150
+        "relabel",  # A-157
     }

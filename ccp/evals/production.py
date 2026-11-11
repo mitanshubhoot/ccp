@@ -3,7 +3,8 @@
     canary          daily: the canary cases (config/canary.yaml), golden cases that call the
                     real model, run against the bundle in production; a pass rate below the
                     floor fails the job, so a provider-side change shows within a day
-    judged_sample   nightly: up to 20 AI verdicts from the last day, judged against the
+    judged_sample   nightly: up to 20 AI verdicts from the last day, drawn by strata of
+                    status, confidence band and evidence type (A-157), judged against the
                     verdict_reasoning rubric (does the reasoning follow from the checked
                     quotes); recorded only as advisory unless the judge is calibrated (A-144)
 
@@ -23,10 +24,12 @@ from ulid import ULID
 
 from ccp.config import REPO_ROOT, Settings
 from ccp.evals import judge as judging
-from ccp.evals import regress
+from ccp.evals import regress, relabel
 from ccp.evals import runner as eval_runner
 from ccp.evaluators import jobs
 from ccp.evaluators import verdict as verdicts
+from ccp.evaluators.thresholds import interrupt_threshold
+from ccp.knowledge import graph as knowledge
 from ccp.llm import release
 from ccp.llm.budget import BudgetTracker, RunBudget
 from ccp.llm.client import try_build_client
@@ -37,14 +40,19 @@ SAMPLE = 20
 
 
 def _record(
-    db: ScopedDB, settings: Settings, kind: str, passed: bool, measured: dict[str, Any]
+    db: ScopedDB,
+    settings: Settings,
+    kind: str,
+    passed: bool,
+    measured: dict[str, Any],
+    check_id: str | None = None,
 ) -> None:
     db.execute(
         "INSERT INTO quality_checks (tenant_id, check_id, kind, bundle_id, passed, measured)"
         " VALUES (%s, %s, %s, %s, %s, %s)",
         (
             db.tenant.tenant_id,
-            str(ULID()),
+            check_id or str(ULID()),
             kind,
             release.bundle_id(settings),
             passed,
@@ -86,20 +94,45 @@ def canary(db: ScopedDB, settings: Settings, slot: datetime) -> int:
     return len(ran)
 
 
+def _evidence_type(graph: knowledge.KnowledgeGraph, test_id: str) -> str:
+    spec = graph.tests.get(test_id)
+    return spec.evidence_types[0].value if spec is not None else "unknown"
+
+
 def judged_sample(db: ScopedDB, settings: Settings, slot: datetime) -> int:
+    """The nightly sample, stratified (A-157): status, confidence band and evidence type,
+    with AI-derived PASS results and near-threshold ones drawn more often."""
     llm = try_build_client(settings)
     if llm is None:
         return 0
     since = slot - timedelta(days=1)
-    ids = db.fetch_all(
-        "SELECT verdict_id FROM verdicts WHERE tier > 1 AND created_at >= %s"
-        " ORDER BY verdict_id DESC LIMIT %s",
-        (since, SAMPLE),
+    rows = db.fetch_all(
+        "SELECT verdict_id, test_id, status, confidence FROM verdicts"
+        " WHERE tier > 1 AND created_at >= %s",
+        (since,),
     )
+    graph = knowledge.load()
+    candidates = [
+        relabel.Candidate(
+            str(r[0]),
+            str(r[1]),
+            str(r[2]),
+            float(r[3]) if r[3] is not None else None,
+            _evidence_type(graph, str(r[1])),
+        )
+        for r in rows
+    ]
+    chosen = relabel.stratify(
+        candidates,
+        SAMPLE,
+        threshold=interrupt_threshold(),
+        seed=f"{db.tenant.tenant_id}:{slot.date().isoformat()}",
+    )
+    check_id = str(ULID())
     rubric = judging.load_rubric("verdict_reasoning")
     scores: list[dict[str, Any]] = []
-    for (verdict_id,) in ids:
-        found = verdicts.load(db, str(verdict_id))
+    for key, candidate in chosen:
+        found = verdicts.load(db, candidate.verdict_id)
         if found is None:
             continue
         result = judging.judge(
@@ -114,10 +147,20 @@ def judged_sample(db: ScopedDB, settings: Settings, slot: datetime) -> int:
             model=settings.ccp_judge_model,
             tracker=BudgetTracker(RunBudget.from_settings(settings)),
         )
-        scores.append({"verdict_id": found.verdict_id, "passed": result.overall_pass})
+        relabel.record_judged(
+            db, check_id, key, candidate, result.overall_pass, settings.ccp_judge_model
+        )
+        scores.append(
+            {"verdict_id": found.verdict_id, "stratum": key, "passed": result.overall_pass}
+        )
     agreement = regress.latest_judge_agreement(settings.ccp_eval_runs_dir)
     trusted = agreement is not None and agreement >= regress.load_gates().judge_min_agreement
     rate = sum(1 for s in scores if s["passed"]) / len(scores) if scores else 1.0
+    strata: dict[str, dict[str, Any]] = {}
+    for score in scores:
+        entry = strata.setdefault(score["stratum"], {"judged": 0, "passed": 0})
+        entry["judged"] += 1
+        entry["passed"] += int(score["passed"])
     _record(
         db,
         settings,
@@ -125,11 +168,14 @@ def judged_sample(db: ScopedDB, settings: Settings, slot: datetime) -> int:
         rate >= 0.9 or not trusted,  # an uncalibrated judge reports, never fails the job
         {
             "judged": len(scores),
+            "candidates": len(candidates),
             "pass_rate": rate,
             "judge_trusted": trusted,
             "judge_agreement": agreement,
+            "strata": dict(sorted(strata.items())),
             "scores": scores,
         },
+        check_id=check_id,
     )
     return len(scores)
 
