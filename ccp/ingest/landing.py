@@ -18,6 +18,8 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from ulid import ULID
+
 from ccp.config import Settings
 from ccp.connectors.base import (
     Connection,
@@ -25,6 +27,7 @@ from ccp.connectors.base import (
     ConnectorName,
     PullError,
     PullErrorKind,
+    Received,
     SourceEvent,
     SourceKind,
     SyncReport,
@@ -32,7 +35,7 @@ from ccp.connectors.base import (
 from ccp.connectors.registry import CONNECTOR_NAMES, build_connector
 from ccp.ingest import connections, event_log, sync_runs
 from ccp.ingest.partition import partition_key
-from ccp.ingest.raw_zone import RawZone
+from ccp.ingest.raw_zone import RawStore, open_zone
 from ccp.ingest.sync_runs import SyncRun
 from ccp.observability import steps
 from ccp.storage.scoped import ScopedDB
@@ -65,7 +68,7 @@ class LandingSummary:
 
 def land_events(
     db: ScopedDB,
-    zone: RawZone,
+    zone: RawStore,
     events: Iterable[SourceEvent],
     step: steps.StepRecord | None = None,
     tally: Tally | None = None,
@@ -82,15 +85,20 @@ def land_events(
         with db.transaction() as cur:
             inserted = cur.execute(
                 "INSERT INTO raw_events"
-                " (tenant_id, connector, source_event_id, source_ts, raw_path, payload_sha256)"
-                " VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING RETURNING source_event_id",
+                " (tenant_id, connector, source_event_id, source_ts, raw_path, payload_sha256,"
+                " stored_sha256, version_id, store)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                " ON CONFLICT DO NOTHING RETURNING source_event_id",
                 (
                     event.tenant_id,
                     event.connector,
                     event.source_event_id,
                     event.source_ts,
-                    str(written.path),
+                    written.ref,
                     written.payload_sha256,
+                    written.stored_sha256,
+                    written.version_id,
+                    written.store,
                 ),
             ).fetchone()
             if inserted is None:
@@ -104,7 +112,7 @@ def land_events(
                 topic=f"raw.{event.connector}",
                 partition_key=partition_key(event),
                 source_ts=event.source_ts,
-                ref=str(written.path),
+                ref=written.ref,
             )
             count.landed += 1
     return count.landed, count.duplicates
@@ -116,7 +124,7 @@ def sync_connector(
     tenant: TenantContext,
     connector: Connector,
     *,
-    zone: RawZone | None = None,
+    zone: RawStore | None = None,
     connection_id: str | None = None,
 ) -> SyncRun:
     """One connector's pull, landed and recorded as a sync run (A-118). Never raises for the
@@ -134,7 +142,7 @@ def sync_connector(
         try:
             land_events(
                 db,
-                zone or RawZone(settings.raw_dir),
+                zone or open_zone(settings),
                 connector.pull(tenant, None, report),
                 s,
                 tally,
@@ -157,6 +165,9 @@ def sync_connector(
             error_kind=kind,
         )
         sync_runs.record(db, run, connection_id)
+        kept = land_responses(db, zone or open_zone(settings), connector, run.run_id)
+        if kept:
+            s.event(f"responses_kept:{kept}")
         s.set_output(
             {
                 "status": run.status,
@@ -166,6 +177,35 @@ def sync_connector(
             }
         )
     return run
+
+
+def land_responses(db: ScopedDB, zone: RawStore, connector: Connector, run_id: str) -> int:
+    """Keep every response the pull received, as the provider sent it (A-136): its bytes in
+    the raw zone, content-addressed, and a row naming the request id and the bytes' digest."""
+    received: list[Received] = list(getattr(connector, "responses", ()))
+    for item in received:
+        landed = zone.put_response(db.tenant.tenant_id, connector.name, item)
+        db.execute(
+            "INSERT INTO raw_responses (tenant_id, response_id, connector, sync_run_id, method,"
+            " path, status, request_id, body_sha256, ref, version_id, store, received_at)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                db.tenant.tenant_id,
+                str(ULID()),
+                connector.name,
+                run_id,
+                item.method,
+                item.path,
+                item.status,
+                item.request_id,
+                item.sha256,
+                landed.ref,
+                landed.version_id,
+                landed.store,
+                item.received_at,
+            ),
+        )
+    return len(received)
 
 
 def _kind(exc: Exception) -> PullErrorKind:
@@ -206,7 +246,7 @@ def ingest_tenant(
     """Pull every requested connector for one tenant, each its own recorded sync run, under
     its declared connection when there is one (A-121); a pull with none is recorded too."""
     connections.sync(db)
-    zone = RawZone(settings.raw_dir)
+    zone = open_zone(settings)
     summary = LandingSummary()
     for name in connectors:
         connection = connections.for_pull(db, name, source)
@@ -217,7 +257,7 @@ def ingest_tenant(
 def sync_connections(settings: Settings, db: ScopedDB, tenant: TenantContext) -> LandingSummary:
     """The scheduled sync (A-121): every enabled connection pulled, each its own run."""
     connections.sync(db)
-    zone = RawZone(settings.raw_dir)
+    zone = open_zone(settings)
     summary = LandingSummary()
     for connection in connections.enabled(db):
         summary.add(
@@ -233,7 +273,7 @@ def _pull(
     name: ConnectorName,
     source: SourceKind,
     connection: Connection | None,
-    zone: RawZone,
+    zone: RawStore,
 ) -> SyncRun:
     cid = connection.connection_id if connection else None
     try:

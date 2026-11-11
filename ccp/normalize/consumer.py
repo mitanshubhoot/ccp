@@ -16,10 +16,9 @@ import psycopg
 
 from ccp.config import Settings
 from ccp.connectors.base import SourceEvent
-from ccp.ingest import event_log
+from ccp.ingest import event_log, raw_zone
 from ccp.ingest.consumers import OrderedConsumer
 from ccp.ingest.event_log import LogRecord
-from ccp.ingest.raw_zone import RawZone
 from ccp.ingest.worker import register
 from ccp.normalize import repository, revocations
 from ccp.normalize.entities import MappingResult
@@ -48,11 +47,10 @@ class NormalizeConsumer(OrderedConsumer):
         self.topic = f"raw.{connector}"
         self.connector = connector
         super().__init__(db)
-        self.zone = RawZone(Path("."))  # refs are absolute paths; the root is unused for reads
 
     def handle(self, cur: psycopg.Cursor[Any], record: LogRecord) -> None:
-        path = Path(record.ref)
-        if not path.is_file():
+        # a ref is a local path or an S3 version (A-136); a local one may have gone missing
+        if not record.ref.startswith("s3://") and not Path(record.ref).is_file():
             # An ordered consumer must never be wedged by one bad record: log and move on.
             with steps.step(
                 "normalize.map",
@@ -63,7 +61,7 @@ class NormalizeConsumer(OrderedConsumer):
                 s.event(f"raw_file_missing:{record.offset}")
                 s.set_output({"entities": 0, "inserted": 0})
             return
-        event = self.zone.read(path)
+        event = raw_zone.read_ref(record.ref)
         with steps.step(
             "normalize.map",
             layer="normalize",

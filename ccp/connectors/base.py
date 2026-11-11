@@ -96,6 +96,23 @@ class SyncReport:
         return "partial"
 
 
+@dataclass(frozen=True)
+class Received:
+    """One response a connector received, as bytes, with the provider's request id (A-136):
+    landing keeps it in the raw zone as sent, beside the events made from it."""
+
+    method: str
+    path: str
+    status: int
+    request_id: str | None
+    body: bytes
+    received_at: datetime
+
+    @property
+    def sha256(self) -> str:
+        return hashlib.sha256(self.body).hexdigest()
+
+
 class SourceEvent(BaseModel):
     model_config = ConfigDict(frozen=True)
 

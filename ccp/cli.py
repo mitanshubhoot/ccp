@@ -34,7 +34,7 @@ from ccp.evaluators import runner as evaluations
 from ccp.evaluators import verdict as verdicts
 from ccp.identity import resolver
 from ccp.ingest import ops as queue_ops
-from ccp.ingest import worker
+from ccp.ingest import raw_audit, worker
 from ccp.ingest.landing import ingest_tenant
 from ccp.investigation import cli as investigate_cli
 from ccp.knowledge import graph as knowledge_graph
@@ -77,6 +77,7 @@ index_app = typer.Typer(no_args_is_help=True, help="The retrieval index over cur
 connections_app = typer.Typer(no_args_is_help=True, help="Connections and their health (A-121)")
 auth_app = typer.Typer(no_args_is_help=True, help="Sign-in tokens (A-129)")
 members_app = typer.Typer(no_args_is_help=True, help="Roles per tenant (A-129)")
+audit_app = typer.Typer(no_args_is_help=True, help="Check the record against itself (MT5)")
 rules_app = typer.Typer(
     no_args_is_help=True, help="Rule changes: amendments by default, corrections by decision"
 )
@@ -477,6 +478,7 @@ app.add_typer(connections_app, name="connections")
 app.add_typer(rules_app, name="rules")
 app.add_typer(auth_app, name="auth")
 app.add_typer(members_app, name="members")
+app.add_typer(audit_app, name="audit")
 app.add_typer(worker_app, name="worker")
 app.add_typer(evals_app, name="evals")
 app.add_typer(normalize_app, name="normalize")
@@ -1221,6 +1223,28 @@ def serve(
     settings = _settings()
     typer.echo(f"serving on http://{host}:{port} (sign-in: {settings.ccp_auth_mode})")
     uvicorn.run(create_app(settings), host=host, port=port, log_level="info")
+
+
+@audit_app.command("raw")
+def audit_raw(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """Re-read every raw object by its pointer and hash it (A-136). Exits 1 on any object
+    missing or altered."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        found = raw_audit.verify(ScopedDB(pool, ctx), settings)
+    finally:
+        pool.close()
+    for problem in found.missing:
+        typer.echo(f"missing: {problem}")
+    for problem in found.altered:
+        typer.echo(f"altered: {problem}")
+    typer.echo(
+        f"checked {found.checked}; {found.unversioned} rows from before A-136 name no version"
+    )
+    if not found.clean:
+        raise typer.Exit(1)
 
 
 @tenants_app.command("list")

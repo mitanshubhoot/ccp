@@ -39,6 +39,12 @@ step; work through it when the credentials are available.
       then `ccp remediate rollback --live` restores the recorded permission through its own
       proposal, approval and grant (A-131).
 
+## AWS (MT5)
+
+- [ ] `CCP_RAW_STORE=s3` against the Terraform raw bucket: an object lands locked in
+      governance mode with the tenant's KMS key, its version id on the row; a delete of that
+      version is refused without the governance bypass; `ccp audit raw` is clean (A-136).
+
 ## Langfuse keys
 
 - [ ] Traces arrive with metadata only, and cost per run.

@@ -145,6 +145,13 @@ class Settings(BaseSettings):
     ccp_tenants_file: Path = REPO_ROOT / "config" / "tenants.yaml"
     ccp_fixtures_dir: Path = REPO_ROOT / "fixtures"
     ccp_tenant: str | None = None
+    # The raw zone (A-136): local disk, or an S3 bucket with versioning and Object Lock,
+    # each object locked in governance mode for this many days and encrypted with the
+    # tenant's own KMS key.
+    ccp_raw_store: Literal["local", "s3"] = "local"
+    ccp_raw_bucket: str | None = None
+    ccp_raw_retain_days: int = Field(default=400, gt=0)
+    aws_region: str = "us-east-1"
 
     # Queue (spec.md Layer 2, A-48, A-105): a parallel-topic claim is a lease of this many
     # seconds, renewed by the holder's heartbeat every third of it, so a live run of any

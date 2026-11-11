@@ -45,6 +45,7 @@ from ccp.connectors.base import (
     ConnectorName,
     PullError,
     PullErrorKind,
+    Received,
     SourceEvent,
     SourceKind,
     SyncReport,
@@ -138,6 +139,7 @@ class GitHubLiveConnector:
         self._org = org  # the connection's account; else the tenant's organization
         self._connection_id = connection_id
         self.incomplete: list[str] = []  # what this pull could not see: path and reason
+        self.responses: list[Received] = []  # every final response, as bytes (A-136)
 
     def pull(
         self,
@@ -155,6 +157,7 @@ class GitHubLiveConnector:
         it spends from, one per (tenant, connection) (A-120, A-121)."""
         org = self._org or tenant.settings.github_org
         self.incomplete = []  # this pull's gaps only, whatever an earlier pull saw
+        self.responses = []  # and this pull's responses only
         self._bucket = self._given_bucket or rate.bucket_for(
             tenant.tenant_id,
             self._connection_id or f"github:{org}",
@@ -200,6 +203,16 @@ class GitHubLiveConnector:
                 elif meaning == "retry":
                     last = why
                 else:
+                    self.responses.append(
+                        Received(
+                            method,
+                            path,
+                            response.status_code,
+                            response.headers.get("x-github-request-id"),
+                            response.content,
+                            self._clock(),
+                        )
+                    )
                     return response, meaning, why
             if attempt < MAX_ATTEMPTS:
                 self._sleep(min(wait, MAX_WAIT_SECONDS))
