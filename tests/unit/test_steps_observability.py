@@ -104,7 +104,8 @@ def test_unreachable_langfuse_warns_once_and_keeps_logging(tmp_path: Path, capsy
 
 
 def test_no_keys_means_no_sink_and_no_warning(tmp_path: Path) -> None:
-    assert steps.configure(Settings(ccp_data_dir=tmp_path)) is None
+    keyless = Settings(ccp_data_dir=tmp_path, langfuse_public_key=None, langfuse_secret_key=None)
+    assert steps.configure(keyless) is None  # whatever keys the developer's .env holds
     assert not steps.sink_active()
 
 
@@ -118,7 +119,8 @@ def test_a_failing_sink_is_disabled_without_losing_the_step(log: Path, capsys) -
 
 
 def test_build_sink_without_keys() -> None:
-    assert tracing.build_sink(Settings()) == (None, None)
+    keyless = Settings(langfuse_public_key=None, langfuse_secret_key=None)
+    assert tracing.build_sink(keyless) == (None, None)
 
 
 def test_langfuse_sink_uses_the_sdk_keywords_and_nests_by_trace_context() -> None:

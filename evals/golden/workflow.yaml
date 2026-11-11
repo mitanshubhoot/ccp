@@ -40,12 +40,12 @@
   target: evaluate_tier1
   input: {}
   expected:
-    enqueued: 11
-    evaluated: 11
-    by_status: {fail: 6, needs_review: 1, partial: 1, pass: 3}
-    verdict_rows: 11
-    second_run: {enqueued: 11, duplicates: 11, new_rows: 0}
-  notes: Every tier 1 (test, subject) pair once; the second full run hits the same evaluation keys and writes nothing.
+    enqueued: 15
+    evaluated: 15
+    by_status: {fail: 6, needs_review: 5, partial: 1, pass: 3}
+    verdict_rows: 15
+    second_run: {enqueued: 15, duplicates: 15, new_rows: 0}
+  notes: Every tier 1 (test, subject) pair once; the second full run hits the same evaluation keys and writes nothing. AWS-1, AWS-2, AWS-3 and IDP-1 (A-140, A-141) abstain as needs_review, since the fixture holds no AWS or identity-provider data.
   tags: [evaluators, tier1, idempotency]
 
 - id: wf-evaluate-tier1-globex-twice
@@ -56,9 +56,10 @@
   target: evaluate_tier1
   input: {}
   expected:
-    enqueued: 9
-    evaluated: 9
-    by_status: {fail: 3, pass: 6}
-    verdict_rows: 9
-    second_run: {enqueued: 9, duplicates: 9, new_rows: 0}
+    enqueued: 13
+    evaluated: 13
+    by_status: {fail: 3, needs_review: 4, pass: 6}
+    verdict_rows: 13
+    second_run: {enqueued: 13, duplicates: 13, new_rows: 0}
+  notes: AWS-1, AWS-2, AWS-3 and IDP-1 abstain as needs_review with no AWS or identity-provider data.
   tags: [evaluators, tier1, idempotency]

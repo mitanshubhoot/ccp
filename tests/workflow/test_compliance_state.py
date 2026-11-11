@@ -54,9 +54,14 @@ def world(base_settings: Settings) -> Iterator[tuple[Settings, dict[str, ScopedD
 def test_run_populates_state_and_jane_hr1_is_fail(world) -> None:  # type: ignore[no-untyped-def]
     _, dbs, report = world
     acme = dbs["acme"]
-    assert report.landed == 75 and report.evaluated == 11 and report.state_written == 11
+    assert report.landed == 75 and report.evaluated == 15 and report.state_written == 15
     assert report.parked >= 9 and not report.ai_tiers_available  # tier 2 and 3 wait for a key
-    assert report.heads == {"fail": 6, "needs_review": 1, "partial": 1, "pass": 3}
+    assert report.heads == {
+        "fail": 6,
+        "needs_review": 5,
+        "partial": 1,
+        "pass": 3,
+    }  # AWS-1..3, IDP-1 abstain
     row = reader.current_state(acme, JANE)
     assert row is not None and row.status is VerdictStatus.failed
     assert row.valid_from.isoformat() == "2026-08-21T17:00:00+00:00" and row.reason == "evaluation"
@@ -71,7 +76,7 @@ def test_rerun_writes_nothing_new(world) -> None:  # type: ignore[no-untyped-def
     heads_before = {r.subject_key: r.row_id for r in reader.heads(acme)}
     again = run.run(acme, settings, providers=KEYLESS, now=NOW)
     assert again.landed == 0 and again.duplicates == 75
-    assert again.evaluated == 11 and again.verdict_duplicates == 11 and again.state_written == 0
+    assert again.evaluated == 15 and again.verdict_duplicates == 15 and again.state_written == 0
     assert {r.subject_key: r.row_id for r in reader.heads(acme)} == heads_before
     assert writer.drain(acme).written == 0  # re-consuming the topic writes nothing
 
@@ -191,9 +196,14 @@ def test_state_is_tenant_scoped_and_globex_has_its_own_heads(world) -> None:  # 
     _, dbs, _ = world
     globex = dbs["globex"]
     counts = reader.status_counts(globex)
-    assert counts.by_status == {"fail": 3, "pass": 6} and not counts.no_evaluations_yet
+    assert (
+        counts.by_status == {"fail": 3, "needs_review": 4, "pass": 6}
+        and not counts.no_evaluations_yet
+    )
     assert reader.current_state(globex, JANE) is None
-    assert all(r.subject_key.startswith(("GH-", "HR-")) for r in reader.heads(globex))
+    assert all(
+        r.subject_key.startswith(("GH-", "HR-", "AWS-", "IDP-")) for r in reader.heads(globex)
+    )
     yuki = reader.current_state(globex, "HR-1|person:hris:person:G2005")
     assert yuki is not None and yuki.status is VerdictStatus.passed
-    assert len(latest_per_subject(globex)) == 9
+    assert len(latest_per_subject(globex)) == 13  # with AWS-1..3 and IDP-1
