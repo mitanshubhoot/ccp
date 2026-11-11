@@ -1,0 +1,19 @@
+# HR-2 as a declarative check (spec.md A-127): all active human identities have MFA.
+# Read by ccp/evaluators/deterministic/declarative.py; see its docstring for the format.
+test_id: HR-2
+subject: tenant
+read:
+  from: grants
+  where:
+    - {field: asset_entity_id, equals: "hris:asset:identity_provider"}
+    - {field: state, equals: active}
+abstain:
+  reason: no identity observations
+population:
+  where:
+    - {field: attributes.kind, equals: human}
+require:
+  - {field: attributes.mfa_enabled, truthy: true}
+fail: "{failing} of {population} active human identities lack MFA: {failing_list}"
+failing_list: attributes.email
+pass: "all {population} active human identities have MFA enabled"

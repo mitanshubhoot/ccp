@@ -88,7 +88,7 @@ tests:
     evidence_types: [identity_mfa_status]
     subject_kind: tenant
     controls: [CTL-MFA]
-    rule: hr2_mfa_everywhere
+    rule: hr2_mfa_everywhere  # a declarative check: knowledge/checks/hr2.yaml (A-127)
     requires_complete: [hris:identities]
     valid_from_strategy: evidence_observed
     revalidate_every_days: 30

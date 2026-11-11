@@ -34,7 +34,14 @@ RULE_SETTINGS = (
 
 
 def rule_files(test_id: str) -> tuple[Path, ...]:
-    """The source files that decide ``test_id``: its module and the helpers it shares."""
+    """The source files that decide ``test_id``: its module and the helpers it shares, or
+    its declarative check and the interpreter that reads it (A-127)."""
+    check = (
+        _EVALUATORS.parent / "knowledge" / "checks" / (test_id.lower().replace("-", "") + ".yaml")
+    )
+    if check.is_file():
+        interpreter = _EVALUATORS / "deterministic"
+        return (check, interpreter / "declarative.py", interpreter / "common.py")
     module = test_id.lower().replace("-", "") + ".py"
     for package in ("deterministic", "rules"):
         path = _EVALUATORS / package / module
