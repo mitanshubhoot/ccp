@@ -41,6 +41,7 @@ _REASONS: tuple[TriggerReason, ...] = (
     "stale_evidence",
     "reevaluate",
     "human_decision",
+    "correction",
 )
 
 

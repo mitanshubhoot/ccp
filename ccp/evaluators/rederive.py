@@ -19,7 +19,7 @@ each outcome to `replay_checks`; any mismatch is a defect to chase.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -54,16 +54,23 @@ class Rederivation:
     subject_key: str
     outcome: Outcome
     diff: tuple[str, ...] = ()
+    derived: Verdict | None = field(default=None, compare=False, repr=False)
 
 
-def rederive(db: ScopedDB, settings: Settings, verdict: Verdict) -> Rederivation:
+def rederive(
+    db: ScopedDB,
+    settings: Settings,
+    verdict: Verdict,
+    parameters: Literal["recorded", "current"] = "recorded",
+) -> Rederivation:
+    """The verdict re-decided from what it read. With the recorded parameters it should be
+    exact; with the tenant's current ones it is what a correction would record (A-128)."""
     if verdict.tier != 1 or not verdict.manifest:
         raise LookupError(f"{verdict.verdict_id} is not a tier-1 verdict with an input manifest")
     spec = knowledge.load().tests[verdict.test_id]
     manifest = verdict.manifest
-    parameters = TenantSettings.model_validate(
-        {**db.tenant.settings.model_dump(), **manifest.get("settings", {})}
-    )
+    recorded = manifest.get("settings", {}) if parameters == "recorded" else {}
+    tenant_settings = TenantSettings.model_validate({**db.tenant.settings.model_dump(), **recorded})
     ctx = load_context(
         db,
         settings,
@@ -74,7 +81,7 @@ def rederive(db: ScopedDB, settings: Settings, verdict: Verdict) -> Rederivation
         as_of=int(manifest["watermark"]),
         sources=sync_runs.scopes_at(db, manifest.get("sources", {})),
     )
-    ctx = replace(ctx, tenant=TenantContext(db.tenant.tenant_id, parameters))
+    ctx = replace(ctx, tenant=TenantContext(db.tenant.tenant_id, tenant_settings))
     derived = completeness.guard(ctx, deterministic.evaluate(ctx, verdict.subject))
     diff = tuple(
         f"{name}: {getattr(verdict, name)!r} -> {getattr(derived, name)!r}"
@@ -84,7 +91,9 @@ def rederive(db: ScopedDB, settings: Settings, verdict: Verdict) -> Rederivation
     outcome: Outcome = "exact"
     if diff:
         outcome = "rule_changed" if verdict.rule_version != derived.rule_version else "mismatch"
-    return Rederivation(verdict.verdict_id, verdict.test_id, verdict.subject_key, outcome, diff)
+    return Rederivation(
+        verdict.verdict_id, verdict.test_id, verdict.subject_key, outcome, diff, derived
+    )
 
 
 def record(db: ScopedDB, result: Rederivation, at: datetime | None = None) -> None:

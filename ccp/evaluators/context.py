@@ -14,6 +14,7 @@ from ccp.evaluators.verdict import TriggerReason, Verdict, evaluation_key
 from ccp.identity import resolver
 from ccp.ingest import sync_runs
 from ccp.ingest.sync_runs import ScopeState
+from ccp.knowledge import catalogue
 from ccp.knowledge.graph import TestSpec
 from ccp.normalize import repository
 from ccp.normalize.entities import AccessGrant, Asset, Evidence, Person
@@ -77,6 +78,7 @@ class EvaluationContext:
                 if ref in self.sources
             },
             "settings": {name: getattr(self.tenant.settings, name) for name in RULE_SETTINGS},
+            "catalogue": catalogue.version(),  # what was tested and why (A-128)
         }
 
     @property

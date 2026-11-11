@@ -24,7 +24,7 @@ from ccp.evals import runner as eval_runner
 from ccp.evals.schema import GoldenCase
 from ccp.evaluators import clock as clock_producer
 from ccp.evaluators import impact as impact_step
-from ccp.evaluators import inventory, rederive, thresholds, tier2
+from ccp.evaluators import inventory, rederive, rule_changes, thresholds, tier2
 from ccp.evaluators import jobs as _jobs  # noqa: F401 - registers jobs and the scheduler
 from ccp.evaluators import runner as evaluations
 from ccp.evaluators import verdict as verdicts
@@ -67,6 +67,9 @@ knowledge_app = typer.Typer(no_args_is_help=True, help="Frameworks, controls, te
 evaluate_app = typer.Typer(no_args_is_help=True, help="Trigger and run evaluations")
 index_app = typer.Typer(no_args_is_help=True, help="The retrieval index over current evidence")
 connections_app = typer.Typer(no_args_is_help=True, help="Connections and their health (A-121)")
+rules_app = typer.Typer(
+    no_args_is_help=True, help="Rule changes: amendments by default, corrections by decision"
+)
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(tenants_app, name="tenants")
 app.add_typer(evaluate_app, name="evaluate")
@@ -458,6 +461,7 @@ app.add_typer(db_app, name="db")
 app.add_typer(connectors_app, name="connectors")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(connections_app, name="connections")
+app.add_typer(rules_app, name="rules")
 app.add_typer(worker_app, name="worker")
 app.add_typer(evals_app, name="evals")
 app.add_typer(normalize_app, name="normalize")
@@ -876,6 +880,70 @@ def evals_threshold(
             raise typer.Exit(code=1)
         path = eval_runner.write_threshold(thresholds.CONFIG_PATH, suggested)
         typer.echo(f"written to {path}")
+
+
+@rules_app.command("preview")
+def rules_preview(
+    test_id: str = typer.Argument(..., help="a test id, such as GH-2"),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Each subject's last verdict under an older rule, and what the current rule decides
+    from the same inputs (A-128). A * marks a subject whose status would change."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        shown = rule_changes.preview(ScopedDB(pool, ctx), settings, test_id)
+    finally:
+        pool.close()
+    typer.echo(f"{test_id}: rule {', '.join(shown.from_stamps) or 'none'} -> {shown.to_stamp}")
+    for flip in shown.subjects:
+        mark = "*" if flip.before != flip.after else " "
+        typer.echo(f"{mark} {flip.subject_key}: {flip.before} -> {flip.after}")
+
+
+@rules_app.command("correct")
+def rules_correct(
+    test_id: str = typer.Argument(..., help="a test id, such as GH-2"),
+    by: str = typer.Option(..., "--by", help="who decides the old rule was wrong"),
+    signed_off_by: str | None = typer.Option(
+        None, "--signed-off-by", help="needed when a FAIL would become a PASS"
+    ),
+    tenant: str | None = typer.Option(None, "--tenant"),
+) -> None:
+    """Re-decide the test's past under its current rule, from the inputs each verdict read,
+    and record the notice (A-128)."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        scoped = ScopedDB(pool, ctx)
+        try:
+            done = rule_changes.correct(scoped, settings, test_id, by, signed_off_by)
+        except (rule_changes.SignOffRequired, LookupError, ValueError) as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2) from exc
+        state_writer.drain(scoped)
+    finally:
+        pool.close()
+    typer.echo(done.notice)
+
+
+@rules_app.command("notices")
+def rules_notices(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """Every rule change recorded for the tenant, oldest first (A-128)."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        rows = ScopedDB(pool, ctx).fetch_all(
+            "SELECT decided_at, kind, test_id, notice FROM rule_changes ORDER BY decided_at"
+        )
+    finally:
+        pool.close()
+    for decided_at, kind, test_id, notice in rows:
+        typer.echo(f"{decided_at.isoformat()} {kind:<10} {test_id}")
+        typer.echo(f"    {notice}")
 
 
 @evaluate_app.command("sentinel")

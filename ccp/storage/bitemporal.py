@@ -43,11 +43,13 @@ from ulid import ULID
 from ccp.storage.scoped import ScopedDB
 from ccp.types import VerdictStatus
 
-Reason = Literal["evaluation", "correction", "human_override", "late_event", "stale_evidence"]
+Reason = Literal[
+    "evaluation", "correction", "human_override", "late_event", "stale_evidence", "rule_change"
+]
 
 _COLUMNS = (
     "row_id, tenant_id, subject_key, test_id, control_ids, status, verdict_id, valid_from,"
-    " valid_to, recorded_seq, recorded_at, supersedes_row_id, reason, history"
+    " valid_to, recorded_seq, recorded_at, supersedes_row_id, reason, history, catalogue_version"
 )
 
 
@@ -67,6 +69,7 @@ class StateRow:
     supersedes_row_id: str | None
     reason: str
     history: bool = False  # a late fact filed into history: never a head (A-107)
+    catalogue_version: str | None = None  # the catalogue in force when written (A-128)
 
     @classmethod
     def from_row(cls, r: tuple[Any, ...]) -> StateRow:
@@ -86,6 +89,7 @@ class StateRow:
             supersedes_row_id=r[11],
             reason=r[12],
             history=bool(r[13]),
+            catalogue_version=r[14] if len(r) > 14 else None,
         )
 
 
@@ -138,6 +142,7 @@ def record(
     valid_to: datetime | None = None,
     reason: Reason = "evaluation",
     late_into_history: bool = False,
+    catalogue_version: str | None = None,
 ) -> StateRow:
     """Append one row for the subject, superseding the chain head if there is one.
 
@@ -165,8 +170,8 @@ def record(
         inserted = cur.execute(
             "INSERT INTO compliance_state (row_id, tenant_id, subject_key, test_id, control_ids,"
             " status, verdict_id, valid_from, valid_to, recorded_seq, recorded_at,"
-            " supersedes_row_id, reason, history)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            " supersedes_row_id, reason, history, catalogue_version)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             f" RETURNING {_COLUMNS}",
             (
                 row_id,
@@ -183,6 +188,7 @@ def record(
                 supersedes,
                 reason,
                 history,
+                catalogue_version,
             ),
         ).fetchone()
         assert inserted is not None
