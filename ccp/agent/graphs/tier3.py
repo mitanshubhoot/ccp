@@ -3,6 +3,8 @@
     START -> fetch_critical_list -> extract_systems -> fetch_latest_review -> extract_scope
           -> verify_citations -> compare -> gate -> finalize -> END
     fetch_* -> gather_fallback (only when the direct fetch found nothing) -> extract_*
+    verify_citations -> correct -> verify_citations, once, when a code check failed
+               (A-152); a check that fails again holds the draft as needs_review
     gate    -> fetch_latest_review on a "regather" decision; interrupt() when the draft
                needs a human (status needs_review or confidence below the threshold); a
                missing or malformed decision holds the draft as needs_review (A-95)
@@ -45,6 +47,18 @@ TRAJECTORY_HAPPY = (
     "extract_systems",
     "fetch_latest_review",
     "extract_scope",
+    "verify_citations",
+    "compare",
+    "gate",
+    "finalize",
+)
+TRAJECTORY_CORRECTED = (  # one correction round after a failed check (A-152)
+    "fetch_critical_list",
+    "extract_systems",
+    "fetch_latest_review",
+    "extract_scope",
+    "verify_citations",
+    "correct",
     "verify_citations",
     "compare",
     "gate",
@@ -264,6 +278,27 @@ def build_spec(
         },
     )
 
+    correct = core.make_correction_node(
+        "correct",
+        deps=deps,
+        targets={
+            "extract_systems": core.Correction(
+                SYSTEMS_PROMPT,
+                systems_meta,
+                lambda s: _chunks_of(s, CRITICAL),
+                describe,
+                core.owned_by_fields("extract_systems", systems_meta),
+            ),
+            "extract_scope": core.Correction(
+                spec.prompt_version,
+                scope_meta,
+                lambda s: _chunks_of(s, REVIEW),
+                describe,
+                core.owned_by_fields("extract_scope", scope_meta),
+            ),
+        },
+    )
+
     def compare(state: AgentState) -> dict[str, Any]:
         extracted = state.get("extracted", {})
         decision = rules.decide(spec.rule, extracted, dict(spec.parameters), now)
@@ -290,6 +325,12 @@ def build_spec(
         if stopped:  # a search that stopped for any reason but a normal end (A-100)
             status = VerdictStatus.needs_review
             reasons.append(f"the evidence search stopped early ({', '.join(stopped)})")
+        if core.correction_failed(state):  # failed again after one round (A-152)
+            status = VerdictStatus.needs_review
+            failed = list(state.get("check_failures") or [])
+            reasons.append(
+                f"a code check still failed after one correction round ({', '.join(failed[:3])})"
+            )
         return {
             "draft_verdict": {
                 "status": status.value,
@@ -422,6 +463,7 @@ def build_spec(
             node("fetch_latest_review", _fetch_newest(tools, REVIEW, "fetch_latest_review")),
             node("extract_scope", extract_scope),
             node("verify_citations", verify),
+            node("correct", correct),
             node("compare", compare),
             node("gate", gate),
             node("finalize", finalize),
@@ -430,11 +472,16 @@ def build_spec(
             (START, "fetch_critical_list"),
             ("extract_systems", "fetch_latest_review"),
             ("extract_scope", "verify_citations"),
-            ("verify_citations", "compare"),
+            ("correct", "verify_citations"),
             ("compare", "gate"),
             ("finalize", END),
         ),
         conditional_edges=(
+            ConditionalEdge(
+                "verify_citations",
+                core.correction_route,
+                {"correct": "correct", "next": "compare"},
+            ),
             ConditionalEdge(
                 "fetch_critical_list",
                 after_fetch,

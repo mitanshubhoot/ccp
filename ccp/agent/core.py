@@ -31,7 +31,7 @@ from pydantic import ValidationError
 
 from ccp.agent.allowlists import check_allowlist
 from ccp.agent.authz import DENIALS_STOP, Decision
-from ccp.agent.bundle import bundle_sha256
+from ccp.agent.bundle import TOOL_ERRORS, bundle_sha256
 from ccp.agent.runlog import RunLog
 from ccp.agent.state import AgentState
 from ccp.agent.tools import BoundTool
@@ -294,12 +294,16 @@ def make_structured_node(
             )
         fields = extraction.parsed.model_dump(mode="json")
         events = list(framed.events)
+        schema_errors = 0
         try:
             meta.model.model_validate(fields)
         except ValidationError as exc:
-            events.append(f"schema_validation_failed:{name}:{exc.error_count()}")
+            schema_errors = exc.error_count()
+            events.append(f"schema_validation_failed:{name}:{schema_errors}")
         return {
-            "extracted_raw": {name: {"fields": fields, "chunk_ids": shown}},
+            "extracted_raw": {
+                name: {"fields": fields, "chunk_ids": shown, "schema_errors": schema_errors}
+            },
             "requests": {
                 name: {
                     "request": extraction.request,
@@ -332,6 +336,9 @@ class StopReason(StrEnum):
 
 
 LOOP_REPEATS = 3  # the same call, or the same result running, this many times is a loop
+# A repeated call is not run again: it gets its stored result and this note (A-152); the
+# third identical call still ends the loop.
+REPEAT_NOTE = TOOL_ERRORS["repeated_call"]
 TOOL_ERROR_RUN = 3  # this many failed tool calls in a row end the loop
 
 
@@ -462,6 +469,7 @@ def make_tool_loop(
         reason: StopReason | None = None
         turn_no = 0
         denied_run = 0  # calls refused by policy.check in a row (A-113)
+        seen_results: dict[tuple[str, str], dict[str, Any]] = {}  # call -> its result (A-152)
         gate = next(
             (g for g in (getattr(t, "gate", None) for t in tools.values()) if g is not None), None
         )
@@ -514,7 +522,11 @@ def make_tool_loop(
             for call in turn.tool_calls:
                 calls_made += 1
                 deps.tracker.tool_call()
-                if call.name not in tools or call.name not in allowed:
+                key = (call.name, json.dumps(call.arguments, sort_keys=True, default=str))
+                if key in seen_results:  # the same call again: its stored result and a note
+                    result = {**seen_results[key], "repeated_call": True, "note": REPEAT_NOTE}
+                    updates["guardrail_events"].append(f"tool_call_repeated:{call.name}")
+                elif call.name not in tools or call.name not in allowed:
                     result = {
                         "is_error": True,
                         "error": "tool not permitted in this graph",
@@ -561,6 +573,7 @@ def make_tool_loop(
                         updates["guardrail_events"].append(
                             f"tool_policy_{result['policy']}:{call.name}:{result.get('denied')}"
                         )
+                    seen_results[key] = result
                     merged = on_result(state, call.name, result)
                     updates["retrieved_chunks"].update(merged.get("retrieved_chunks", {}))
                     updates["context"].update(merged.get("context", {}))
@@ -722,11 +735,153 @@ def make_verify_node(name: str, plan: dict[str, tuple[str, str, SchemaMeta]]) ->
             "coverage": required_covered / required_total if required_total else 1.0,
             "citation_rate": verified_count / given if given else 1.0,
         }
+        failures = failures_in(events) + schema_failures(raw, plan)
         return {
             "extracted": extracted,
             "verified_citations": records,
             "citation_stats": stats,
-            "guardrail_events": events,
+            "guardrail_events": events + after_correction(state, failures),
+            "check_failures": failures,
         }
 
     return node
+
+
+# -- one correction round (A-152) -------------------------------------------------------------
+
+# The code checks whose failure a model can repair from its own evidence: a citation that does
+# not resolve, a value its quote does not carry, an output the schema refuses, an action
+# outside the catalogue, a reading for the wrong item or none. Missing evidence is not here:
+# a second try cannot cite what was never gathered.
+CORRECTABLE = (
+    "citation_unknown_chunk:",
+    "citation_quote_not_found:",
+    "citation_unsupported_value:",
+    "uncited_field:",
+    "empty_item:",
+    "schema_validation_failed:",
+    "action_rejected:",
+    "merge_rejected:",
+    "no_reading:",
+)
+MAX_CORRECTIONS = 1
+CORRECTION_NOTE = TOOL_ERRORS["correction"]  # model-visible, so part of the bundle
+
+
+def failures_in(events: list[str]) -> list[str]:
+    return [e for e in events if e.startswith(CORRECTABLE)]
+
+
+def schema_failures(
+    raw: dict[str, Any], plan: dict[str, tuple[str, str, SchemaMeta]] | None = None
+) -> list[str]:
+    """The schema failures of the latest structured call of each node (A-152)."""
+    names = list(plan) if plan is not None else list(raw)
+    return [
+        f"schema_validation_failed:{n}:{raw[n]['schema_errors']}"
+        for n in names
+        if isinstance(raw.get(n), dict) and raw[n].get("schema_errors")
+    ]
+
+
+def after_correction(state: AgentState, failures: list[str]) -> list[str]:
+    """A check that still fails after the correction round says so; the graph then holds
+    its result for review instead of correcting again."""
+    if int(state.get("corrections") or 0) >= MAX_CORRECTIONS and failures:
+        return [f"correction_failed:{len(failures)}"]
+    if int(state.get("corrections") or 0) >= MAX_CORRECTIONS:
+        return ["correction_succeeded"]
+    return []
+
+
+def correction_failed(state: AgentState) -> bool:
+    return int(state.get("corrections") or 0) >= MAX_CORRECTIONS and bool(
+        state.get("check_failures")
+    )
+
+
+@dataclass(frozen=True)
+class Correction:
+    """How to ask one structured node again: its prompt, schema and evidence, and which of
+    the typed failures are its own."""
+
+    prompt_version: str
+    meta: SchemaMeta
+    select_chunks: Callable[[AgentState], list[dict[str, Any]]]
+    describe: Callable[[AgentState], str]
+    owns: Callable[[str], bool]
+    documents: Callable[[AgentState], list[str]] | None = None
+
+
+def owned_by_fields(node: str, meta: SchemaMeta) -> Callable[[str], bool]:
+    """A failure belongs to a node when it names the node or one of its schema's fields."""
+    fields = set(meta.model.model_fields)
+
+    def owns(failure: str) -> bool:
+        parts = failure.split(":")
+        if parts[0] == "schema_validation_failed":
+            return len(parts) > 1 and parts[1] == node
+        return len(parts) > 1 and parts[1] in fields
+
+    return owns
+
+
+def make_correction_node(name: str, *, deps: ModelDeps, targets: dict[str, Correction]) -> NodeFn:
+    """One more structured turn for each node whose output failed a code check, with the
+    typed failures and its previous answer; the check then runs again (A-152). It replaces
+    that node's raw output, so the check sees only the corrected answer."""
+
+    def with_failures(target: str, correction: Correction) -> Callable[[AgentState], str]:
+        def describe(state: AgentState) -> str:
+            mine = [f for f in state.get("check_failures") or [] if correction.owns(f)]
+            previous = ((state.get("extracted_raw") or {}).get(target) or {}).get("fields")
+            note = CORRECTION_NOTE.format(
+                failures="\n".join(f"- {f}" for f in mine),
+                previous=json.dumps(previous, default=str, sort_keys=True)[:4000],
+            )
+            return f"{correction.describe(state)}\n\n{note}"
+
+        return describe
+
+    inner = {
+        target: make_structured_node(
+            target,
+            deps=deps,
+            prompt_version=c.prompt_version,
+            meta=c.meta,
+            select_chunks=c.select_chunks,
+            describe=with_failures(target, c),
+            require_chunks=False,
+            documents=c.documents,
+        )
+        for target, c in targets.items()
+    }
+
+    def node(state: AgentState) -> dict[str, Any]:
+        failures = list(state.get("check_failures") or [])
+        out: dict[str, Any] = {
+            "corrections": int(state.get("corrections") or 0) + 1,
+            "extracted_raw": {},
+            "requests": {},
+            "guardrail_events": [],
+        }
+        for target, correction in targets.items():
+            mine = [f for f in failures if correction.owns(f)]
+            if not mine:
+                continue
+            result = inner[target](state)
+            out["extracted_raw"][target] = result["extracted_raw"][target]
+            if target in result.get("requests", {}):
+                out["requests"][f"{target}.correction"] = result["requests"][target]
+            out["guardrail_events"].extend(result.get("guardrail_events", []))
+            out["guardrail_events"].append(f"correction_round:{target}:{len(mine)}")
+        return out
+
+    return node
+
+
+def correction_route(state: AgentState) -> str:
+    """After a check: correct once when it failed, else go on."""
+    if state.get("check_failures") and int(state.get("corrections") or 0) < MAX_CORRECTIONS:
+        return "correct"
+    return "next"

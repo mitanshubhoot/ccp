@@ -31,6 +31,10 @@ step; work through it when the credentials are available.
       `--mode fanout`; both land in evals/runs/, the fan-out's accuracy is not below the
       single run's, each item's run in `ccp agent` holds that item alone, and a real
       reading's pointers (evidence, chunk, offsets) open the quoted passage (A-151).
+- [ ] The correction round on a real model: over a week of tier 3, investigator and
+      task runs, count `correction_round` events and how many end
+      `correction_succeeded`; a success rate that climbs while first-pass checks fall
+      means a prompt is leaning on the round and needs fixing (A-152).
 - [ ] Prompt caching: cache reads appear on repeated stable prefixes.
 - [ ] `ccp replay <id> --execute` on a model-backed verdict.
 

@@ -7,6 +7,9 @@
           -> verify_citations   pure: every citation against the gathered chunks
           -> bound_actions  pure: drop anything outside the catalogue or without its target
                             fields; fill reversible and live_capable from the catalogue
+          -> correct        once, when a citation or an action failed its check: the
+                            diagnosis again with the typed failures (A-152), then
+                            verify_citations and bound_actions again
           -> finalize -> END
 
 No interrupt: the runner persists the Investigation and opens the approval items.
@@ -22,7 +25,7 @@ from langgraph.graph import END, START
 
 from ccp.agent import core
 from ccp.agent.allowlists import ALLOWLISTS
-from ccp.agent.core import GraphSpec, ModelDeps, NodePolicies, NodeSpec
+from ccp.agent.core import ConditionalEdge, GraphSpec, ModelDeps, NodePolicies, NodeSpec
 from ccp.agent.state import AgentState
 from ccp.agent.tools import BoundTool
 from ccp.evaluators import citations, confidence
@@ -42,6 +45,17 @@ TRAJECTORY = (
     "load_context",
     "gather",
     "diagnose",
+    "verify_citations",
+    "bound_actions",
+    "finalize",
+)
+TRAJECTORY_CORRECTED = (  # one correction round (A-152)
+    "load_context",
+    "gather",
+    "diagnose",
+    "verify_citations",
+    "bound_actions",
+    "correct",
     "verify_citations",
     "bound_actions",
     "finalize",
@@ -213,7 +227,13 @@ def build_spec(
             "coverage": 1.0 if fields.get("root_cause") else 0.0,
             "citation_rate": verified / given if given else 1.0,
         }
-        return {"verified_citations": records, "citation_stats": stats, "guardrail_events": events}
+        return {
+            "verified_citations": records,
+            "citation_stats": stats,
+            "guardrail_events": events,
+            "check_failures": core.failures_in(events)
+            + core.schema_failures(state.get("extracted_raw") or {}, None),
+        }
 
     def bound_actions(state: AgentState) -> dict[str, Any]:
         raw = (state.get("extracted_raw") or {}).get("diagnose")
@@ -250,7 +270,12 @@ def build_spec(
         }
         if raw is None:
             events.append("diagnosis_missing")
-        return {"draft_verdict": draft, "guardrail_events": events}
+        failures = list(state.get("check_failures") or []) + core.failures_in(events)
+        return {
+            "draft_verdict": draft,
+            "guardrail_events": events + core.after_correction(state, failures),
+            "check_failures": failures,
+        }
 
     def finalize(state: AgentState) -> dict[str, Any]:
         draft = dict(state.get("draft_verdict") or {})
@@ -266,7 +291,8 @@ def build_spec(
             # a gather that stopped early (A-100) leaves the diagnosis unresolved
             unresolved_evidence_type=any(
                 e.startswith("tool_loop_stopped:") for e in state.get("guardrail_events", [])
-            ),
+            )
+            or core.correction_failed(state),  # a check failed twice (A-152)
         )
         requests = state.get("requests", {})
         diagnose_call = requests.get("diagnose", {})
@@ -288,6 +314,20 @@ def build_spec(
         }
         return {"final": final}
 
+    correct = core.make_correction_node(
+        "correct",
+        deps=deps,
+        targets={
+            "diagnose": core.Correction(
+                PROMPT_VERSION,
+                DRAFT_META,
+                lambda s: list(s.get("retrieved_chunks", {}).values()),
+                describe,
+                lambda failure: True,
+            )
+        },
+    )
+
     def node(name: str, fn: core.NodeFn) -> NodeSpec:
         return NodeSpec(
             name,
@@ -304,6 +344,7 @@ def build_spec(
             node("diagnose", diagnose),
             node("verify_citations", verify),
             node("bound_actions", bound_actions),
+            node("correct", correct),
             node("finalize", finalize),
         ),
         edges=(
@@ -312,8 +353,15 @@ def build_spec(
             ("gather", "diagnose"),
             ("diagnose", "verify_citations"),
             ("verify_citations", "bound_actions"),
-            ("bound_actions", "finalize"),
+            ("correct", "verify_citations"),
             ("finalize", END),
+        ),
+        conditional_edges=(
+            ConditionalEdge(
+                "bound_actions",
+                core.correction_route,
+                {"correct": "correct", "next": "finalize"},
+            ),
         ),
         output_schema=InvestigationDraft,
     )

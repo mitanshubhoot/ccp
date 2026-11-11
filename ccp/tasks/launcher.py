@@ -222,6 +222,8 @@ def merge(
         "stopped": stopped,
         "rejections": len(final.get("rejections") or []),
         "items_in_run": len(final.get("readings") or {}) or None,
+        "corrections": int(final.get("corrections") or 0),  # A-152
+        "failed_after_correction": item.item_id in (final.get("failed_items") or []),
         "model": final.get("model"),
         "bundle_sha256": final.get("bundle_sha256"),
     }
@@ -232,6 +234,8 @@ def merge(
         status, why, outcome = "needs_review", "no_reading", None
     elif stopped:
         status, why, outcome = "needs_review", f"stopped:{stopped}", reading["answer"]
+    elif item.item_id in (final.get("failed_items") or []):  # failed again after a round
+        status, why, outcome = "needs_review", "check_failed_after_correction", reading["answer"]
     elif reading["answer"] == "insufficient_evidence":
         status, why, outcome = "waiting", "insufficient_evidence", reading["answer"]
     elif not reading["findings"]:

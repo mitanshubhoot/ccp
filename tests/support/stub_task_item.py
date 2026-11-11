@@ -5,6 +5,9 @@ once per item question, and a reader that answers from the fenced chunks it was 
     "fabricate" in the question                     yes, with a quote that is in no chunk
     "explode" in the question                       the call raises (a failed run)
     "ghost" in the question                         also a reading for an item not in the run
+    "repairable" in the question                    a made-up quote first, the policy's real
+                                                    sentence on the correction turn (A-152)
+    "repeat" in the question                        the gatherer makes the same search twice
     anything else                                   insufficient_evidence, naming what is missing
 """
 
@@ -31,16 +34,18 @@ def items_in(text: str) -> dict[str, str]:
 def gather(
     system: list[SystemBlock], messages: list[dict[str, Any]], tools: list[dict[str, Any]]
 ) -> tuple[str, list[ToolCall]]:
-    if len(messages) > 1:
-        return "Found what the items need.", []
     goal = str(messages[0].get("content", ""))
+    questions = items_in(goal)
+    again = len(messages) == 3 and any("repeat" in q.lower() for q in questions.values())
+    if len(messages) > 1 and not again:
+        return "Found what the items need.", []
     return "", [
         ToolCall(
-            f"call-{n}",
+            f"call-{len(messages)}-{n}",
             "search_evidence",
             {"query": question[:200], "evidence_type": "policy_document"},
         )
-        for n, question in enumerate(items_in(goal).values(), 1)
+        for n, question in enumerate(questions.values(), 1)
     ]
 
 
@@ -48,6 +53,8 @@ def _reading(item_id: str, question: str, user: str) -> KeyedReading:
     lowered = question.lower()
     if "explode" in lowered:
         raise RuntimeError("the model call failed")
+    if "repairable" in lowered and "failed these code checks" not in user:
+        lowered = lowered.replace("multi-factor", "fabricate")  # the first answer makes one up
     for block in blocks(user):
         for line in block.body.splitlines():
             if "multi-factor" in lowered and "Multi-factor authentication is required" in line:

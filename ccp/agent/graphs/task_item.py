@@ -8,6 +8,9 @@ one item (fanned out) or a few (a single-run baseline), never the parent task's 
                             claim's quote is in its chunk, or the claim is dropped; a verified
                             claim becomes a pointer (evidence, chunk, offsets); a reading over
                             RESULT_TOKEN_CAP loses claims from the end until it fits
+          -> correct        once, when a check failed: the answer again with the typed
+                            failures, then verify again; an item that fails again is
+                            held for review (A-152)
           -> finalize -> END
 
 The run returns only the verified readings (ids, offsets, fields, a one-line reason); the
@@ -23,7 +26,7 @@ from langgraph.graph import END, START
 
 from ccp.agent import core
 from ccp.agent.allowlists import ALLOWLISTS
-from ccp.agent.core import GraphSpec, ModelDeps, NodePolicies, NodeSpec
+from ccp.agent.core import ConditionalEdge, GraphSpec, ModelDeps, NodePolicies, NodeSpec
 from ccp.agent.state import AgentState
 from ccp.agent.tools import BoundTool
 from ccp.evaluators import citations
@@ -39,6 +42,15 @@ from ccp.tenancy import TenantContext
 
 GRAPH_NAME = "task_item"
 TRAJECTORY = ("load_context", "gather", "answer", "verify", "finalize")
+TRAJECTORY_CORRECTED = (
+    "load_context",
+    "gather",
+    "answer",
+    "verify",
+    "correct",
+    "verify",
+    "finalize",
+)
 MAX_VERDICTS = 5  # verdict handles read up front, per item
 READINGS_META = SchemaMeta(
     name="ItemReadings",
@@ -245,10 +257,35 @@ def build_spec(tenant: TenantContext, tools: dict[str, BoundTool], deps: ModelDe
         readings, rejections, events = check_readings(
             (raw or {}).get("fields"), ids, state.get("retrieved_chunks", {})
         )
+        schema = core.schema_failures(state.get("extracted_raw") or {}, None)
+        failed = sorted(  # the items a failed check touches, by id, never parsed from text
+            i
+            for i in ids
+            if schema
+            or i not in readings
+            or readings[i]["dropped_claims"] > 0
+            or f"duplicate_reading:{i}" in rejections
+        )
+        failures = core.failures_in(events) + schema + [f"merge_rejected:{r}" for r in rejections]
         return {
-            "extracted": {"readings": readings, "rejections": rejections},
-            "guardrail_events": events,
+            "extracted": {"readings": readings, "rejections": rejections, "failed_items": failed},
+            "guardrail_events": events + core.after_correction(state, failures),
+            "check_failures": failures,
         }
+
+    correct = core.make_correction_node(
+        "correct",
+        deps=deps,
+        targets={
+            "answer": core.Correction(
+                PROMPT_VERSION,
+                READINGS_META,
+                lambda s: list(s.get("retrieved_chunks", {}).values()),
+                describe,
+                lambda failure: True,
+            )
+        },
+    )
 
     def finalize(state: AgentState) -> dict[str, Any]:
         extracted = state.get("extracted") or {}
@@ -261,6 +298,11 @@ def build_spec(tenant: TenantContext, tools: dict[str, BoundTool], deps: ModelDe
             "final": {
                 "readings": extracted.get("readings") or {},
                 "rejections": extracted.get("rejections") or [],
+                # after one correction round, an item a check still fails is held (A-152)
+                "failed_items": (
+                    extracted.get("failed_items") or [] if core.correction_failed(state) else []
+                ),
+                "corrections": int(state.get("corrections") or 0),
                 "stopped": stopped,
                 "guardrail_events": events,
                 "model": call.get("model"),
@@ -285,6 +327,7 @@ def build_spec(tenant: TenantContext, tools: dict[str, BoundTool], deps: ModelDe
             node("gather", gather),
             node("answer", answer),
             node("verify", verify),
+            node("correct", correct),
             node("finalize", finalize),
         ),
         edges=(
@@ -292,8 +335,13 @@ def build_spec(tenant: TenantContext, tools: dict[str, BoundTool], deps: ModelDe
             ("load_context", "gather"),
             ("gather", "answer"),
             ("answer", "verify"),
-            ("verify", "finalize"),
+            ("correct", "verify"),
             ("finalize", END),
+        ),
+        conditional_edges=(
+            ConditionalEdge(
+                "verify", core.correction_route, {"correct": "correct", "next": "finalize"}
+            ),
         ),
         output_schema=ItemReadings,
     )

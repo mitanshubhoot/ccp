@@ -124,7 +124,7 @@ def test_a_recorded_run_replays_from_its_log_with_no_request_diff(world) -> None
     assert report.trajectory[-1] == "interrupt"
     assert report.served == sum(_steps(acme, thread_id).values())
     # another model makes other requests: the replay names the first one the log lacks
-    other = settings.model_copy(update={"ccp_tier3_model": "claude-sonnet-5-5"})
+    other = settings.model_copy(update={"ccp_tier3_model": "claude-opus-5-5"})
     changed = tier3.replay(acme, other, thread_id, providers)
     assert changed.diverged is not None and "not in the recorded run" in changed.diverged
 

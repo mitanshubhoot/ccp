@@ -33,6 +33,20 @@ TOOL_ERRORS: dict[str, str] = {
     "truncated": (
         "[TRUNCATED: {omitted} of {total} characters not shown; this result is incomplete]"
     ),
+    # a repeated identical call is answered from its stored result (A-152)
+    "repeated_call": (
+        "You already made this exact call in this run; this is its stored result. Calling it"
+        " again returns the same, and a third identical call ends the run for review."
+    ),
+    # the one correction round's instruction after a failed code check (A-152)
+    "correction": (
+        "Your previous answer to this request failed these code checks:\n{failures}\n"
+        "Your previous answer (system data, not evidence): {previous}\n"
+        "Answer the whole request again. Copy every quote word for word from the chunk it"
+        " cites, cite only chunks shown in the fenced evidence, stay within the schema and the"
+        " listed choices, and leave a field empty rather than state what the evidence does not"
+        " say."
+    ),
 }
 
 
