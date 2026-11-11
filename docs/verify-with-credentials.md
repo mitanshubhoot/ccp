@@ -44,6 +44,10 @@ step; work through it when the credentials are available.
 - [ ] `CCP_RAW_STORE=s3` against the Terraform raw bucket: an object lands locked in
       governance mode with the tenant's KMS key, its version id on the row; a delete of that
       version is refused without the governance bypass; `ccp audit raw` is clean (A-136).
+- [ ] `CCP_AUDIT_KMS_KEY_ID` (an ECC_NIST_P256 SIGN_VERIFY key) and `CCP_AUDIT_BUCKET` in the
+      separate audit account: an hourly checkpoint signs in KMS and lands locked in
+      compliance mode; `ccp audit verify` is clean; a restore drill on an RDS snapshot with
+      one altered row gives exactly one finding (A-137).
 
 ## Langfuse keys
 

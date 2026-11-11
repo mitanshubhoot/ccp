@@ -36,7 +36,16 @@ class ScheduleSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")
-    job: Literal["clock", "unpark", "full_run", "check_connections", "sync", "replay_sentinel"]
+    job: Literal[
+        "clock",
+        "unpark",
+        "full_run",
+        "check_connections",
+        "sync",
+        "replay_sentinel",
+        "audit_checkpoint",
+        "audit_verify",
+    ]
     every: str = Field(
         pattern=r"^(every [1-9][0-9]* (minutes|hours)|daily ([01][0-9]|2[0-3]):[0-5][0-9])$"
     )
@@ -55,6 +64,9 @@ DEFAULT_SCHEDULES: tuple[ScheduleSpec, ...] = (
     ScheduleSpec(id="full-run", job="full_run", every="daily 02:00"),
     # a sample of tier-1 verdicts re-derived from what each read (A-125)
     ScheduleSpec(id="replay-sentinel", job="replay_sentinel", every="daily 03:30"),
+    # the audit chain checkpointed and verified every hour (A-137)
+    ScheduleSpec(id="audit-checkpoint", job="audit_checkpoint", every="every 1 hours"),
+    ScheduleSpec(id="audit-verify", job="audit_verify", every="every 1 hours"),
 )
 
 
@@ -152,6 +164,12 @@ class Settings(BaseSettings):
     ccp_raw_bucket: str | None = None
     ccp_raw_retain_days: int = Field(default=400, gt=0)
     aws_region: str = "us-east-1"
+    # Checkpoints of the audit chain (A-137): signed with this KMS key (else a local
+    # Ed25519 key in the data directory) and exported to this bucket, in a separate
+    # account reached through this profile (else a local directory).
+    ccp_audit_kms_key_id: str | None = None
+    ccp_audit_bucket: str | None = None
+    ccp_audit_aws_profile: str | None = None
 
     # Queue (spec.md Layer 2, A-48, A-105): a parallel-topic claim is a lease of this many
     # seconds, renewed by the holder's heartbeat every third of it, so a live run of any

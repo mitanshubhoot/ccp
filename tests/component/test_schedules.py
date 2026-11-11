@@ -65,6 +65,8 @@ def test_the_defaults_sync_on_the_tenants_wall_clock(own: tuple[Settings, Scoped
         "sync",
         "full-run",
         "replay-sentinel",
+        "audit-checkpoint",  # A-137
+        "audit-verify",
     }
     zone, full_run_at, enabled = rows["full-run"]
     assert zone == "America/New_York" and enabled
@@ -197,4 +199,6 @@ def test_the_worker_loop_drives_the_scheduler_until_the_next_slot(
         "sync",
         "full-run",
         "replay-sentinel",
+        "audit-checkpoint",  # A-137
+        "audit-verify",
     }

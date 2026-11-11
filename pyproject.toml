@@ -102,6 +102,7 @@ layers = [
     "ccp.knowledge",
     "ccp.identity",
     "ccp.normalize",
+    "ccp.audit",
     "ccp.ingest",
     "ccp.connectors",
     "ccp.approvals.store",

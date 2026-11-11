@@ -13,6 +13,8 @@ from ccp.agent import cli as agent_cli
 from ccp.agent import tier3 as _tier3  # noqa: F401 - registers tier 3
 from ccp.approvals import actions as approval_actions
 from ccp.approvals import cli as approvals_cli
+from ccp.audit import checkpoints as audit_checkpoints
+from ccp.audit import verify as audit_verify
 from ccp.auth import members
 from ccp.compliance_state import reader as state_reader
 from ccp.compliance_state import run as pipeline
@@ -1223,6 +1225,43 @@ def serve(
     settings = _settings()
     typer.echo(f"serving on http://{host}:{port} (sign-in: {settings.ccp_auth_mode})")
     uvicorn.run(create_app(settings), host=host, port=port, log_level="info")
+
+
+@audit_app.command("verify")
+def audit_verify_cmd(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """Walk the tenant's chain, re-hash every chained row, check every checkpoint (A-137).
+    Exits 1 on any finding."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        report = audit_verify.verify(ScopedDB(pool, ctx), settings)
+    finally:
+        pool.close()
+    for finding in report.findings:
+        typer.echo(finding)
+    typer.echo(
+        f"{report.entries} entries, {report.rows} rows, {report.checkpoints} checkpoints;"
+        f" {len(report.findings)} findings"
+    )
+    if not report.clean:
+        raise typer.Exit(1)
+
+
+@audit_app.command("checkpoint")
+def audit_checkpoint_cmd(tenant: str | None = typer.Option(None, "--tenant")) -> None:
+    """Sign and export the tenant's chain head now (the hourly job does it too)."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        made = audit_checkpoints.checkpoint(ScopedDB(pool, ctx), settings)
+    finally:
+        pool.close()
+    if made is None:
+        typer.echo("the chain has not moved since the last checkpoint")
+    else:
+        typer.echo(f"checkpoint at entry {made.seq}, signed by {made.key_id}: {made.exported_to}")
 
 
 @audit_app.command("raw")

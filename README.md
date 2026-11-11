@@ -39,7 +39,7 @@ training in the Voyage organization settings); `LANGFUSE_PUBLIC_KEY` and `LANGFU
 
 | Area | Commands |
 |---|---|
-| Audit | `ccp audit raw` (every raw object re-read by its pointer and hashed, A-136) |
+| Audit | `ccp audit raw` (every raw object re-read by its pointer and hashed, A-136); `ccp audit checkpoint` and `verify` (the tenant's chain, its rows and its signed checkpoints, A-137; both hourly as jobs) |
 | Serve | `ccp serve`: the HTTP API under `/v1` (A-134: every request signed in, per tenant, by role; OpenAPI at `/openapi.json`) and the UI under `/ui` (A-135: inbox, findings with reason codes, reports, verdicts, run pages with Stop) |
 | Tenants | `ccp tenants list`, `create`, `show`, `history`, `set` (a change of scope waits for an approver); `ccp members list`, `grant`, `revoke` |
 | Ingest and normalize | `ccp ingest`, `ccp normalize`, `ccp identity resolve` and `review`, `ccp worker` |

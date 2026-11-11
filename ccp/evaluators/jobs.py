@@ -8,6 +8,9 @@
     check_connections   every enabled connection's credential probed, each check recorded
     sync       every enabled connection pulled, each pull its own sync run (A-121)
     replay_sentinel   a sample of tier-1 verdicts re-derived from their manifests (A-125)
+    audit_checkpoint  the audit chain's head signed and exported (A-137)
+    audit_verify      the chain walked, its rows re-hashed, its checkpoints checked; any
+                      finding fails the job, so it shows (A-137)
 
 Every job is safe to run twice: the clock and the full run enqueue through the evaluation
 key, unparking an unparked topic moves nothing, a second check is another record, and a
@@ -21,6 +24,8 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from ccp.audit import checkpoints as audit_checkpoints
+from ccp.audit import verify as audit_verify
 from ccp.config import Settings
 from ccp.evaluators import clock, rederive
 from ccp.evaluators import runner as evaluations
@@ -42,7 +47,18 @@ JOBS: dict[str, Job] = {
     "check_connections": lambda db, settings, slot: len(connections.check_all(settings, db)),
     "sync": lambda db, settings, slot: len(sync_connections(settings, db, db.tenant).runs),
     "replay_sentinel": lambda db, settings, slot: len(rederive.sentinel(db, settings)),
+    "audit_checkpoint": lambda db, settings, slot: int(
+        audit_checkpoints.checkpoint(db, settings) is not None
+    ),
+    "audit_verify": lambda db, settings, slot: _verified(db, settings),
 }
+
+
+def _verified(db: ScopedDB, settings: Settings) -> int:
+    report = audit_verify.verify(db, settings)
+    if not report.clean:
+        raise RuntimeError("audit findings: " + "; ".join(report.findings[:10]))
+    return report.entries
 
 
 class JobsConsumer(ParallelConsumer):
