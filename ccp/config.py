@@ -289,6 +289,12 @@ class Settings(BaseSettings):
     ccp_lookup_days: int = Field(default=30, ge=1, le=90)
     ccp_lookup_max_resources: int = Field(default=10, ge=1)
 
+    # The adequacy verifier (A-162): shadow until calibrated against auditors' decisions
+    ccp_adequacy_model: str = "claude-haiku-5-5"
+    ccp_adequacy_mode: Literal["off", "shadow", "live"] = "shadow"
+    ccp_adequacy_min_labels: int = Field(default=30, ge=1)
+    ccp_adequacy_false_accept_limit: float = Field(default=0.10, gt=0, lt=1)
+
     # Tracing
     langfuse_public_key: SecretStr | None = None
     langfuse_secret_key: SecretStr | None = None

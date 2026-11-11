@@ -61,6 +61,7 @@ def roles(settings: Settings) -> dict[str, str]:
         "task_item": settings.task_model,
         "judge": settings.ccp_judge_model,
         "second_reader": settings.ccp_second_reader_model,
+        "adequacy": settings.ccp_adequacy_model,  # A-162
         "embed": settings.ccp_embed_model,
     }
 

@@ -109,7 +109,7 @@ def refresh(
             )
         evidence = repository.current_evidence(db)
         moment = datetime.now(UTC)
-        held = [e for e in evidence if not admission.counted(e, settings, moment)]
+        held = [e for e in evidence if not admission.counted(db, e, settings, moment)]
         for e in held:  # a scan or screenshot that failed code's checks (A-161)
             summary.events.append(f"inadmissible:{e.entity_id}")
         evidence = [e for e in evidence if e not in held]

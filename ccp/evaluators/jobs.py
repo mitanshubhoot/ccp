@@ -41,7 +41,7 @@ from ccp.storage.scoped import ScopedDB
 
 Job = Callable[[ScopedDB, Settings, datetime], int]
 # the topics that park for the model budget
-UNPARKED = ("evaluations", "investigations", "task_items")
+UNPARKED = ("evaluations", "investigations", "task_items", "adequacy")
 JOBS: dict[str, Job] = {
     "clock": lambda db, settings, slot: clock.tick(db).enqueued,
     "unpark": lambda db, settings, slot: sum(ops.unpark(db, t) for t in UNPARKED),

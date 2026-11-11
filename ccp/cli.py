@@ -33,9 +33,15 @@ from ccp.evals import relabel as eval_relabel
 from ccp.evals import runner as eval_runner
 from ccp.evals.schema import GoldenCase
 from ccp.evaluators import clock as clock_producer
-from ccp.evaluators import feedback as _feedback  # noqa: F401 - registers upload feedback
+from ccp.evaluators import (
+    evidence_cli,  # registers upload feedback and adequacy jobs
+    inventory,
+    rederive,
+    rule_changes,
+    thresholds,
+    tier2,
+)
 from ccp.evaluators import impact as impact_step
-from ccp.evaluators import inventory, rederive, rule_changes, thresholds, tier2
 from ccp.evaluators import jobs as _jobs  # noqa: F401 - registers jobs and the scheduler
 from ccp.evaluators import quality as eval_quality
 from ccp.evaluators import runner as evaluations
@@ -109,6 +115,7 @@ app.add_typer(policy_cli.app, name="policy")
 app.command("copilot")(copilot_cli.copilot)
 app.add_typer(remediate_cli.app, name="remediate")
 app.add_typer(fix_cli.app, name="fixes")
+app.add_typer(evidence_cli.app, name="evidence")
 app.add_typer(tasks_cli.app, name="tasks")
 app.add_typer(lookups_cli.app, name="lookups")
 state_app = typer.Typer(no_args_is_help=True, help="The bitemporal compliance state")

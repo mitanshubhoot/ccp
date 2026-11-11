@@ -16,6 +16,7 @@ import psycopg
 from ulid import ULID
 
 from ccp.config import Settings
+from ccp.ingest import event_log
 from ccp.ingest.consumers import OrderedConsumer
 from ccp.ingest.event_log import LogRecord
 from ccp.ingest.worker import register
@@ -75,7 +76,7 @@ def give(
         return str(seen[0])
     found = segments.ensure(db, evidence.entity_id, evidence.text, evidence.page_texts)
     now = datetime.now(UTC)
-    result = assess(evidence, settings, now)
+    result = assess(db, evidence, settings, now)
     return record(
         db,
         evidence,
@@ -113,6 +114,24 @@ def latest(db: ScopedDB, evidence_entity_id: str, shown_only: bool = True) -> li
     ]
 
 
+def queue_adequacy(cur: psycopg.Cursor[Any], evidence: Evidence) -> None:
+    """One adequacy job per upload version (A-162)."""
+    key = f"{evidence.tenant_id}:{evidence.entity_id}:{evidence.source_event_id}"
+    seen = cur.execute(
+        "SELECT 1 FROM event_log WHERE topic = 'adequacy' AND partition_key = %s LIMIT 1",
+        (key,),
+    ).fetchone()
+    if seen is None:
+        event_log.append(
+            cur,
+            tenant_id=evidence.tenant_id,
+            topic="adequacy",
+            partition_key=key,
+            source_ts=evidence.observed_at,
+            ref=f"{evidence.entity_id}\x1f{evidence.source_event_id}",
+        )
+
+
 class EvidenceFeedback(OrderedConsumer):
     """A consumer of the entities topic: feedback on every new version of an upload."""
 
@@ -138,6 +157,7 @@ class EvidenceFeedback(OrderedConsumer):
         if evidence.source_connector not in UPLOADS:
             return
         give(self._db, self.settings, evidence, record.produced_at)
+        queue_adequacy(cur, evidence)  # the verifier's own job decides whether to run
         self.given += 1
 
 

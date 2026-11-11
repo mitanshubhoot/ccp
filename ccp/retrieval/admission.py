@@ -16,23 +16,32 @@ from ccp.ingest.raw_zone import read_ref
 from ccp.knowledge import admissibility
 from ccp.knowledge.admissibility import Admissibility
 from ccp.normalize.entities import Evidence
+from ccp.storage.scoped import ScopedDB
 
 UPLOADS = ("manual",)
 
 
 def raw_context(
-    evidence: Evidence, settings: Settings | None
+    db: ScopedDB, evidence: Evidence, settings: Settings | None
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """The manifest entry and front matter the upload landed with, from its raw event."""
+    row = db.fetch_one(
+        "SELECT raw_path FROM raw_events WHERE connector = %s AND source_event_id = %s",
+        (evidence.source_connector, evidence.source_event_id),
+    )
+    if row is None:
+        return {}, {}
     try:
-        payload = read_ref(evidence.raw_ref, settings).payload
+        payload = read_ref(str(row[0]), settings).payload
     except (OSError, ValueError, KeyError):
         return {}, {}
     return dict(payload.get("manifest") or {}), dict(payload.get("front_matter") or {})
 
 
-def assess(evidence: Evidence, settings: Settings | None, now: datetime) -> Admissibility:
-    manifest, front_matter = raw_context(evidence, settings)
+def assess(
+    db: ScopedDB, evidence: Evidence, settings: Settings | None, now: datetime
+) -> Admissibility:
+    manifest, front_matter = raw_context(db, evidence, settings)
     return admissibility.check(
         evidence_type=evidence.evidence_type.value,
         source_connector=evidence.source_connector,
@@ -47,10 +56,10 @@ def assess(evidence: Evidence, settings: Settings | None, now: datetime) -> Admi
     )
 
 
-def counted(evidence: Evidence, settings: Settings | None, now: datetime) -> bool:
+def counted(db: ScopedDB, evidence: Evidence, settings: Settings | None, now: datetime) -> bool:
     """False only for an uploaded, model-transcribed document with a blocking reason."""
     if evidence.source_connector not in UPLOADS:
         return True
     if not admissibility.transcribed(evidence.page_methods):
         return True
-    return assess(evidence, settings, now).admissible
+    return assess(db, evidence, settings, now).admissible

@@ -29,6 +29,7 @@ TOPICS: dict[str, TopicKind] = {
     "applies": TopicKind.parallel,  # recorded decisions to apply (A-110)
     "task_items": TopicKind.parallel,  # a long task's fanned-out reads (A-151)
     "lookups": TopicKind.parallel,  # reads about a failing resource (A-158)
+    "adequacy": TopicKind.parallel,  # the adequacy verifier on an upload (A-162)
     "verdicts": TopicKind.ordered,
 }
 

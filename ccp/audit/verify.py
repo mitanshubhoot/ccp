@@ -55,6 +55,7 @@ CHAINED = (
     "fix_suggestions",
     "fix_suggestion_events",
     "evidence_feedback",
+    "auditor_decisions",
 )
 
 
