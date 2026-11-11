@@ -186,6 +186,10 @@ step; work through it when the credentials are available.
 
 ## Cognito or another OIDC provider (MT4)
 
+- [ ] An auditor signed in through the real identity provider, not a member of the
+      tenant, reads a granted package's files from the compliance-mode bucket for the
+      grant's days and gets 404 after it is revoked; `auditor_access` lists every read
+      (A-169). Interviews with two or three audit firms on the package come first.
 - [ ] `CCP_AUTH_MODE=oidc`, `CCP_OIDC_ISSUER` (the user pool's issuer URL) and
       `CCP_OIDC_AUDIENCE` (the app client id): a token from a real sign-in verifies; an
       expired token, another client's token and a token from another issuer are refused

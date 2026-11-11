@@ -42,7 +42,7 @@ from typing import Annotated, Any, Literal
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
@@ -51,9 +51,10 @@ from ccp.agent import rest
 from ccp.agent.rest import Caller
 from ccp.api import ui
 from ccp.approvals import actions, store
+from ccp.audit import checkpoints as audit_checkpoints
 from ccp.auth import members
+from ccp.compliance_state import auditors, reader
 from ccp.compliance_state import exceptions as exception_requests
-from ccp.compliance_state import reader
 from ccp.config import Settings
 from ccp.evaluators import feedback as upload_feedback
 from ccp.evaluators.tier2 import Providers
@@ -450,6 +451,82 @@ def fix_metrics(s: Member) -> dict[str, Any]:
         "reopened": m.reopened,
         "reopen_rate_30d": m.reopen_rate,
     }
+
+
+# -- the auditor workspace (A-169): time-boxed and read-only ---------------------------------
+
+
+class GrantBody(BaseModel):
+    principal_id: str
+    package_ids: list[str]
+    days: int = 30
+    note: str = ""
+
+
+@router.post("/tenants/{tenant_id}/auditor-grants", status_code=201)
+def auditor_grant(body: GrantBody, s: Member) -> dict[str, Any]:
+    _at_least(s, "admin")
+    try:
+        made, decision = auditors.grant(
+            s.db,
+            body.principal_id,
+            body.package_ids,
+            body.days,
+            s.who.principal_id,
+            audit_checkpoints.store_for(s.settings),
+            body.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if made is None:
+        raise HTTPException(409, {"blocked_by_policy": decision.reasons})
+    return {"grant": jsonable_encoder(asdict(made)), "attestation_id": decision.attestation_id}
+
+
+@router.post("/tenants/{tenant_id}/auditor-grants/{grant_id}/revoke")
+def auditor_revoke(grant_id: str, s: Member, reason: str) -> dict[str, Any]:
+    _at_least(s, "admin")
+    try:
+        auditors.revoke(s.db, grant_id, s.who.principal_id, reason)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"revoked": grant_id}
+
+
+def _workspace(request: Request, tenant_id: str, who: Who) -> ScopedDB:
+    """An auditor need not be a member; what they may see is decided by their grants."""
+    try:
+        ctx = TenantContext.for_id(_settings(request), tenant_id)
+    except (tenancy.UnknownTenant, tenancy.TenantUnavailable) as exc:
+        raise HTTPException(404, f"no tenant {tenant_id!r}") from exc
+    db = ScopedDB(_pools(request).app, ctx)
+    if not auditors.visible(db, who.principal_id):
+        raise HTTPException(404, f"no tenant {tenant_id!r}")  # the same answer as no tenant
+    return db
+
+
+Workspace = Annotated[ScopedDB, Depends(_workspace)]
+
+
+@router.get("/tenants/{tenant_id}/auditor/packages")
+def auditor_packages(db: Workspace, who: Who) -> dict[str, Any]:
+    shown = [
+        auditors.package_summary(db, p) for p in sorted(auditors.visible(db, who.principal_id))
+    ]
+    return {"packages": jsonable_encoder([p for p in shown if p is not None])}
+
+
+@router.get("/tenants/{tenant_id}/auditor/packages/{package_id}/files/{name}")
+def auditor_file(request: Request, package_id: str, name: str, db: Workspace, who: Who) -> Response:
+    try:
+        body = auditors.read_file(
+            db, who.principal_id, package_id, name, audit_checkpoints.store_for(_settings(request))
+        )
+    except PermissionError as exc:
+        raise HTTPException(404, f"no package {package_id!r}") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(404, f"no file {name!r}") from exc
+    return Response(body, media_type="application/json")
 
 
 # -- feedback on uploads (A-161) ------------------------------------------------------------

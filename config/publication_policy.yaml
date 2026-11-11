@@ -1,0 +1,25 @@
+# What CCP may assert outside itself (LT4, spec.md A-169). Every assertion that leaves
+# CCP (an audit package shared with an auditor, a questionnaire a person sends, later a
+# trust page) is judged item by item under this file, and the judgement is recorded with
+# the file's version in `attestations`. A change to this file is a new policy version.
+#
+#   provenance        what an item may rest on: system_observed (read from a provider's
+#                     API), customer_attested (an upload), ai (a model's reading no person
+#                     reviewed), ai_reviewed (a model's draft a person approved)
+#   max_age_days      an item older than this is stale for this kind of assertion
+#   allow_incomplete  whether an item that is not assessed (pending, needs review) may go
+#                     out, marked as such
+
+kinds:
+  package_share:
+    provenance: [system_observed, customer_attested, ai, ai_reviewed]
+    max_age_days: 400
+    allow_incomplete: true
+  questionnaire:
+    provenance: [system_observed, customer_attested, ai_reviewed]
+    max_age_days: 365
+    allow_incomplete: false
+  trust_page:
+    provenance: [system_observed]
+    max_age_days: 31
+    allow_incomplete: false

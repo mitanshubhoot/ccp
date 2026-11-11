@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ccp.compliance_state import attest
 from ccp.config import Settings
 from ccp.evaluators import jobs
 from ccp.questionnaires import store
@@ -64,12 +65,34 @@ def send(db: ScopedDB, settings: Settings, questionnaire_id: str, by: str) -> Pa
     if waiting:
         raise ValueError(f"not approved or no longer current: {waiting}")
     moment = datetime.now(UTC)
+    items = [
+        attest.Item(
+            f"{questionnaire_id}:{a.question_id}",
+            "system_observed" if a.model is None and a.verdict_ids else "ai_reviewed",
+            True,
+            a.created_at,
+        )
+        for a in answers.values()
+    ]
+    decision = attest.attest(
+        db,
+        "questionnaire",
+        f"questionnaire:{questionnaire_id}",
+        items,
+        {a.question_id: a.final_text for a in answers.values()},
+        by,
+        moment,
+    )
+    if not decision.allowed:
+        raise ValueError(f"the publication policy blocks it: {decision.reasons}")
     record = {
         "questionnaire_id": questionnaire_id,
         "title": found["title"],
         "requester": found["requester"],
         "sent_by": by,
         "sent_at": moment.isoformat(),
+        "attestation_id": decision.attestation_id,
+        "policy_version": decision.policy_version,
         "answers": [
             {
                 "question_id": a.question_id,

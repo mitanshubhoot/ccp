@@ -104,6 +104,10 @@ INSERT_ONLY: frozenset[str] = frozenset(
         "resource_inventory",
         "playbook_results",
         "audit_packages",
+        "auditor_grants",
+        "auditor_revocations",
+        "auditor_access",
+        "attestations",
     }
 )
 # Operational state that is updated in place by design.

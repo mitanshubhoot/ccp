@@ -61,6 +61,9 @@ CHAINED = (
     "resource_inventory",
     "playbook_results",
     "audit_packages",
+    "auditor_grants",
+    "auditor_revocations",
+    "attestations",
 )
 
 

@@ -133,6 +133,11 @@ def test_the_pipeline_drafts_a_person_approves_and_sends(world: tuple[Settings, 
     record = json.loads(path.read_text(encoding="utf-8"))
     assert [a["question_id"] for a in record["answers"]] == ["leavers", "mfa", "backups"]
     assert record["answers"][1]["edited"] and record["answers"][1]["approved_by"] == "sam"
+    attested = acme.fetch_one(
+        "SELECT kind, allowed FROM attestations WHERE attestation_id = %s",
+        (record["attestation_id"],),
+    )
+    assert attested == ("questionnaire", True)  # judged under the publication policy (A-169)
     assert all(a.status == "sent" for a in store.answers_of(acme, qid))
     with pytest.raises(ValueError, match="was sent"):
         send.send(acme, settings, qid, "sam")
