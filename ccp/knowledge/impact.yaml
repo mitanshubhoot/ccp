@@ -1,0 +1,63 @@
+# The impact table (spec.md Layer 7, A-126): what a change to an entity re-evaluates.
+#
+# Each rule names the table whose row changed, the conditions on that change (all must
+# hold), the tests it re-evaluates, and how the subject is found. The conditions and the
+# subjects are a closed vocabulary in ccp/evaluators/impact.py; a rule naming anything else,
+# or a test the catalogue does not have, fails at load. Every test must be reachable from
+# some rule (tests/unit/test_impact_reach.py), or no change could ever re-evaluate it.
+#
+# Only terminated people are subjects of HR-1 and GH-1, so a grant observation for an active
+# employee enqueues nothing for them; the termination event is what opens the subject.
+rules:
+  - table: persons
+    when: {hris_person: true, group_terminated: true}
+    tests: [HR-1, GH-1]
+    subject: person
+  - table: person_links
+    when: {group_terminated: true}
+    tests: [HR-1, GH-1]
+    subject: person
+  - table: access_grants
+    when: {grantee_terminated: true}
+    tests: [HR-1, GH-1]
+    subject: grantee
+  - table: access_grants
+    when: {on_org: true}
+    tests: [GH-2]
+    subject: grant_org
+  - table: assets
+    when: {asset_type: [repo]}
+    tests: [GH-3]
+    subject: asset_repo
+  - table: assets
+    when: {asset_type: [org]}
+    tests: [GH-2]
+    subject: asset_org
+  - table: assets
+    when: {tagged: true}
+    tests: [HR-4]
+    subject: tenant
+  - table: evidence
+    when: {evidence_type: [policy_document]}
+    tests: [GH-4]
+    subject: evidence_repo_or_tenant
+  - table: evidence
+    when: {about_repo: true}
+    tests: [GH-5]
+    subject: evidence_repo
+  - table: evidence
+    when: {evidence_type: [identity_mfa_status]}
+    tests: [HR-2]
+    subject: tenant
+  - table: evidence
+    when: {evidence_type: [training_record], has_subject: true}
+    tests: [HR-3]
+    subject: evidence_person
+  - table: evidence
+    when: {evidence_type: [access_review_report, critical_systems_list]}
+    tests: [HR-4]
+    subject: tenant
+  - table: evidence
+    when: {evidence_type: [account_registry]}
+    tests: [HR-5]
+    subject: tenant
