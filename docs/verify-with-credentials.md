@@ -21,6 +21,10 @@ step; work through it when the credentials are available.
       the verdicts, no draft passes its checks with a number missing from its facts, and
       `metrics` gives the edit rate per kind of question (A-163). Reviewing is people's
       work.
+- [ ] `ccp knowledge map propose --framework <a real framework's YAML>` with the
+      Sonnet 5.5 chooser: a compliance reviewer accepts or rejects each proposal with
+      `ccp knowledge map review`, and the days from the file to a reviewed mapping are
+      recorded (A-164). The review is a named person's work.
 - [ ] The Investigator on a failing GH-1 or HR-1 verdict chooses
       `github_remove_collaborator` with the right repository and login from the
       context's fix list (prompt `investigator_diagnose_v2`); a choice outside the list

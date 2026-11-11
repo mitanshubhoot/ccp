@@ -28,6 +28,7 @@ from ccp.copilot import cli as copilot_cli
 from ccp.evals import calibration as judge_calibration
 from ccp.evals import capture, regress, shadow, sizing
 from ccp.evals import labels as eval_labels
+from ccp.evals import mapping as mapping_cli
 from ccp.evals import production as _production  # noqa: F401 - registers the quality jobs
 from ccp.evals import relabel as eval_relabel
 from ccp.evals import runner as eval_runner
@@ -106,6 +107,7 @@ rules_app = typer.Typer(
     no_args_is_help=True, help="Rule changes: amendments by default, corrections by decision"
 )
 app.add_typer(knowledge_app, name="knowledge")
+knowledge_app.add_typer(mapping_cli.map_app, name="map")
 app.add_typer(tenants_app, name="tenants")
 app.add_typer(evaluate_app, name="evaluate")
 app.add_typer(index_app, name="index")

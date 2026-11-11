@@ -300,6 +300,8 @@ class Settings(BaseSettings):
 
     # Questionnaires (A-163): the two tool-less steps of the fixed pipeline
     ccp_questionnaire_model: str = "claude-haiku-5-5"
+    # Framework mapping proposals (A-164): choosing among code's candidates, offline
+    ccp_mapping_model: str = "claude-sonnet-5-5"
 
     # Tracing
     langfuse_public_key: SecretStr | None = None
