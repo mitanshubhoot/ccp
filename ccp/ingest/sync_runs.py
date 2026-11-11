@@ -7,6 +7,7 @@ runs. Only a scope a run marked complete may turn an absence into a fact.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -129,6 +130,22 @@ def latest_scopes(db: ScopedDB) -> dict[str, ScopeState]:
         f"{connector}:{scope}": ScopeState(str(status), finished, str(run_id))
         for connector, scope, status, finished, run_id in rows
     }
+
+
+def scopes_at(db: ScopedDB, recorded: Mapping[str, str]) -> dict[str, ScopeState]:
+    """The scope states a verdict's manifest names, by run id (A-125)."""
+    out: dict[str, ScopeState] = {}
+    for ref, run_id in recorded.items():
+        scope = ref.partition(":")[2]
+        row = db.fetch_one(
+            "SELECT s.status, r.finished_at FROM sync_runs r JOIN sync_run_scopes s"
+            " ON s.tenant_id = r.tenant_id AND s.run_id = r.run_id"
+            " WHERE r.run_id = %s AND s.scope = %s",
+            (run_id, scope),
+        )
+        if row is not None:
+            out[ref] = ScopeState(str(row[0]), row[1], str(run_id))
+    return out
 
 
 def last_complete(db: ScopedDB, connector: str, scope: str) -> datetime | None:

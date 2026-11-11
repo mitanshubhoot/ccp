@@ -5,10 +5,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from ccp.config import Settings
 from ccp.evaluators import completeness
-from ccp.evaluators.rule_versions import rule_stamp
+from ccp.evaluators.rule_versions import RULE_SETTINGS, rule_stamp
 from ccp.evaluators.verdict import TriggerReason, Verdict, evaluation_key
 from ccp.identity import resolver
 from ccp.ingest import sync_runs
@@ -16,6 +17,7 @@ from ccp.ingest.sync_runs import ScopeState
 from ccp.knowledge.graph import TestSpec
 from ccp.normalize import repository
 from ccp.normalize.entities import AccessGrant, Asset, Evidence, Person
+from ccp.storage import sequences
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantContext
 from ccp.types import VerdictStatus
@@ -36,6 +38,7 @@ class EvaluationContext:
     pending_review: set[str]
     reason: TriggerReason = "impact"
     sources: dict[str, ScopeState] = field(default_factory=dict)  # latest pulls (A-123)
+    watermark: int | None = None  # observations and identity read as of this (A-125)
     _groups: dict[str, set[str]] = field(default_factory=dict, repr=False)
 
     def canonical_of(self, entity_id: str) -> str:
@@ -61,6 +64,20 @@ class EvaluationContext:
         """The required sources' states, part of the evaluation key (A-123)."""
         stale_after = timedelta(hours=self.settings.ccp_sync_stale_hours)
         return completeness.digest(self.spec, self.sources, self.now, stale_after)
+
+    def manifest(self) -> dict[str, Any]:
+        """What this evaluation read (A-125): the rows visible at the watermark, its clock,
+        the sync runs behind its required sources, and the tenant parameters rules read."""
+        return {
+            "watermark": self.watermark,
+            "now": self.now.isoformat(),
+            "sources": {
+                ref: self.sources[ref].run_id
+                for ref in sorted(self.spec.requires_complete)
+                if ref in self.sources
+            },
+            "settings": {name: getattr(self.tenant.settings, name) for name in RULE_SETTINGS},
+        }
 
     @property
     def sla(self) -> timedelta:
@@ -115,6 +132,7 @@ class EvaluationContext:
             valid_from=valid_from,
             created_at=self.now,
             rule_version=rule_stamp(self.spec, self.tenant.settings),
+            manifest=self.manifest(),
         )
 
 
@@ -125,19 +143,25 @@ def load_context(
     trigger_observed_at: datetime,
     now: datetime | None = None,
     reason: TriggerReason = "impact",
+    as_of: int | None = None,
+    sources: dict[str, ScopeState] | None = None,
 ) -> EvaluationContext:
+    """Everything as of one watermark (A-125): the tenant's observation counter now, or the
+    one a verdict's manifest names when it is re-derived."""
+    watermark = sequences.current_value(db, sequences.OBSERVATIONS) if as_of is None else as_of
     return EvaluationContext(
         tenant=db.tenant,
         settings=settings,
         spec=spec,
         trigger_observed_at=trigger_observed_at,
         now=now or datetime.now(UTC),
-        persons={p.entity_id: p for p in repository.current_persons(db)},
-        grants=repository.current_grants(db),
-        assets={a.entity_id: a for a in repository.current_assets(db)},
-        evidence=repository.current_evidence(db),
-        canonical=resolver.canonical_map(db),
-        pending_review=resolver.pending_review_entities(db),
+        persons={p.entity_id: p for p in repository.current_persons(db, watermark)},
+        grants=repository.current_grants(db, watermark),
+        assets={a.entity_id: a for a in repository.current_assets(db, watermark)},
+        evidence=repository.current_evidence(db, as_of=watermark),
+        canonical=resolver.canonical_map(db, watermark),
+        pending_review=resolver.pending_review_entities(db, watermark),
         reason=reason,
-        sources=sync_runs.latest_scopes(db),
+        sources=sync_runs.latest_scopes(db) if sources is None else sources,
+        watermark=watermark,
     )

@@ -24,7 +24,7 @@ from ccp.evals import runner as eval_runner
 from ccp.evals.schema import GoldenCase
 from ccp.evaluators import clock as clock_producer
 from ccp.evaluators import impact as impact_step
-from ccp.evaluators import inventory, thresholds, tier2
+from ccp.evaluators import inventory, rederive, thresholds, tier2
 from ccp.evaluators import jobs as _jobs  # noqa: F401 - registers jobs and the scheduler
 from ccp.evaluators import runner as evaluations
 from ccp.evaluators import verdict as verdicts
@@ -878,6 +878,28 @@ def evals_threshold(
         typer.echo(f"written to {path}")
 
 
+@evaluate_app.command("sentinel")
+def evaluate_sentinel(
+    tenant: str | None = typer.Option(None, "--tenant"),
+    sample: int = typer.Option(25, "--sample", help="subjects whose newest verdict is re-derived"),
+) -> None:
+    """Re-derive the newest tier-1 verdict of up to SAMPLE subjects from what each read, as
+    the nightly sentinel does (A-125). Exits 1 on any mismatch."""
+    settings = _settings()
+    ctx = _tenant(settings, tenant)
+    pool = db.app_pool(settings)
+    try:
+        results = rederive.sentinel(ScopedDB(pool, ctx), settings, sample)
+    finally:
+        pool.close()
+    for r in results:
+        typer.echo(f"{r.outcome:<13} {r.subject_key}  {r.verdict_id}")
+        for line in r.diff:
+            typer.echo(f"    {line}")
+    if any(r.outcome == "mismatch" for r in results):
+        raise typer.Exit(1)
+
+
 @app.command("replay")
 def replay_record(
     record_id: str = typer.Argument(
@@ -896,6 +918,21 @@ def replay_record(
     pool = db.app_pool(settings)
     try:
         scoped = ScopedDB(pool, ctx)
+        stored = verdicts.load(scoped, record_id)
+        if stored is not None and stored.tier == 1:  # re-derived from what it read (A-125)
+            try:
+                result = rederive.rederive(scoped, settings, stored)
+            except LookupError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=2) from exc
+            typer.echo(
+                f"verdict {record_id} {result.test_id} {result.subject_key}: {result.outcome}"
+            )
+            for line in result.diff:
+                typer.echo(f"  {line}")
+            if result.outcome == "mismatch":
+                raise typer.Exit(code=1)
+            return
         try:
             report = replay.rebuild(scoped, settings, record_id)
         except LookupError as exc:

@@ -25,6 +25,7 @@ from ccp.normalize.entities import (
     Vendor,
 )
 from ccp.normalize.merge import merge_assets, merge_persons
+from ccp.storage import sequences
 from ccp.storage.scoped import ScopedDB
 from ccp.tenancy import TenantId
 from ccp.types import AccountKind, EmploymentStatus, EvidenceType, GrantState
@@ -48,21 +49,24 @@ def _j(value: Any) -> str:
 
 
 def insert(cur: psycopg.Cursor[Any], entity: Entity) -> bool:
-    """Insert one observation row. Returns False when the row already existed."""
+    """Insert one observation row, stamped with the tenant's observation counter so a read
+    can be pinned to a watermark (A-125). Returns False when the row already existed."""
+    seq = sequences.next_value(cur, entity.tenant_id, sequences.OBSERVATIONS)
     base = (
         entity.tenant_id,
         entity.entity_id,
         entity.observed_at,
         entity.source_connector,
         entity.source_event_id,
+        seq,
     )
     if isinstance(entity, Person):
         row = cur.execute(
             "INSERT INTO persons (tenant_id, entity_id, observed_at, source_connector,"
-            " source_event_id, display_name, emails, handles, employee_id, account_kind,"
-            " employment_status,"
-            " status_effective_at, owner_employee_id)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING 1",
+            " source_event_id, recorded_seq, display_name, emails, handles, employee_id,"
+            " account_kind, employment_status, status_effective_at, owner_employee_id)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+            " ON CONFLICT DO NOTHING RETURNING 1",
             (
                 *base,
                 entity.display_name,
@@ -78,8 +82,8 @@ def insert(cur: psycopg.Cursor[Any], entity: Entity) -> bool:
     elif isinstance(entity, AccessGrant):
         row = cur.execute(
             "INSERT INTO access_grants (tenant_id, entity_id, observed_at, source_connector,"
-            " source_event_id, person_entity_id, asset_entity_id, role, state, state_effective_at,"
-            " attributes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+            " source_event_id, recorded_seq, person_entity_id, asset_entity_id, role, state,"
+            " state_effective_at, attributes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
             " ON CONFLICT DO NOTHING RETURNING 1",
             (
                 *base,
@@ -94,16 +98,16 @@ def insert(cur: psycopg.Cursor[Any], entity: Entity) -> bool:
     elif isinstance(entity, Asset):
         row = cur.execute(
             "INSERT INTO assets (tenant_id, entity_id, observed_at, source_connector,"
-            " source_event_id, name, asset_type, tags, settings)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING 1",
+            " source_event_id, recorded_seq, name, asset_type, tags, settings)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING 1",
             (*base, entity.name, entity.asset_type, _j(list(entity.tags)), _j(entity.settings)),
         ).fetchone()
     elif isinstance(entity, Evidence):
         row = cur.execute(
             "INSERT INTO evidence (tenant_id, entity_id, observed_at, source_connector,"
-            " source_event_id, evidence_type, title, text, subject_entity_id, issued_at, raw_ref,"
-            " page_texts,"
-            " guardrail_events) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+            " source_event_id, recorded_seq, evidence_type, title, text, subject_entity_id,"
+            " issued_at, raw_ref, page_texts, guardrail_events)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
             " ON CONFLICT DO NOTHING RETURNING 1",
             (
                 *base,
@@ -120,15 +124,15 @@ def insert(cur: psycopg.Cursor[Any], entity: Entity) -> bool:
     elif isinstance(entity, Vendor):
         row = cur.execute(
             "INSERT INTO vendors (tenant_id, entity_id, observed_at, source_connector,"
-            " source_event_id, name, vendor_type, data_categories)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING 1",
+            " source_event_id, recorded_seq, name, vendor_type, data_categories)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING 1",
             (*base, entity.name, entity.vendor_type, _j(list(entity.data_categories))),
         ).fetchone()
     elif isinstance(entity, Finding):
         row = cur.execute(
             "INSERT INTO findings (tenant_id, entity_id, observed_at, source_connector,"
-            " source_event_id, test_id, severity, summary, subject_entity_ids)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING 1",
+            " source_event_id, recorded_seq, test_id, severity, summary, subject_entity_ids)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING 1",
             (
                 *base,
                 entity.test_id,
@@ -149,11 +153,20 @@ def _load(value: Any) -> Any:
     return json.loads(value) if isinstance(value, str) else value
 
 
-def person_observations(db: ScopedDB) -> list[Person]:
+def _visible(as_of: int | None) -> tuple[str, tuple[Any, ...]]:
+    """The rows visible at a watermark (A-125): stamped at or below it, or before stamping."""
+    if as_of is None:
+        return "", ()
+    return " WHERE (recorded_seq IS NULL OR recorded_seq <= %s)", (as_of,)
+
+
+def person_observations(db: ScopedDB, as_of: int | None = None) -> list[Person]:
+    where, params = _visible(as_of)
     rows = db.fetch_all(
         "SELECT tenant_id, entity_id, observed_at, source_connector, source_event_id, display_name,"
         " emails, handles, employee_id, account_kind, employment_status, status_effective_at,"
-        " owner_employee_id FROM persons ORDER BY entity_id, observed_at, source_event_id"
+        f" owner_employee_id FROM persons{where} ORDER BY entity_id, observed_at, source_event_id",
+        params,
     )
     return [
         Person(
@@ -175,16 +188,20 @@ def person_observations(db: ScopedDB) -> list[Person]:
     ]
 
 
-def current_persons(db: ScopedDB) -> list[Person]:
+def current_persons(db: ScopedDB, as_of: int | None = None) -> list[Person]:
     """Merged view of every person; see ccp.normalize.merge for the rules."""
-    return merge_persons(person_observations(db))
+    return merge_persons(person_observations(db, as_of))
 
 
-def current_grants(db: ScopedDB) -> list[AccessGrant]:
+def current_grants(db: ScopedDB, as_of: int | None = None) -> list[AccessGrant]:
+    """The newest observation of every grant (as of a watermark when given, A-125)."""
+    where, params = _visible(as_of)
     rows = db.fetch_all(
-        "SELECT tenant_id, entity_id, observed_at, source_connector, source_event_id,"
-        " person_entity_id, asset_entity_id, role, state, state_effective_at, attributes"
-        " FROM current_access_grants ORDER BY entity_id"
+        "SELECT DISTINCT ON (entity_id) tenant_id, entity_id, observed_at, source_connector,"
+        " source_event_id, person_entity_id, asset_entity_id, role, state, state_effective_at,"
+        f" attributes FROM access_grants{where}"
+        " ORDER BY entity_id, observed_at DESC, source_event_id DESC",
+        params,
     )
     return [
         AccessGrant(
@@ -204,11 +221,14 @@ def current_grants(db: ScopedDB) -> list[AccessGrant]:
     ]
 
 
-def current_assets(db: ScopedDB) -> list[Asset]:
+def current_assets(db: ScopedDB, as_of: int | None = None) -> list[Asset]:
     """Latest scalar fields per asset; settings merged across all observations in time order."""
+    where, params = _visible(as_of)
     rows = db.fetch_all(
         "SELECT tenant_id, entity_id, observed_at, source_connector, source_event_id, name,"
-        " asset_type, tags, settings FROM assets ORDER BY entity_id, observed_at, source_event_id"
+        f" asset_type, tags, settings FROM assets{where}"
+        " ORDER BY entity_id, observed_at, source_event_id",
+        params,
     )
     observations = [
         Asset(
@@ -227,16 +247,20 @@ def current_assets(db: ScopedDB) -> list[Asset]:
     return merge_assets(observations)
 
 
-def current_evidence(db: ScopedDB, evidence_type: EvidenceType | None = None) -> list[Evidence]:
+def current_evidence(
+    db: ScopedDB, evidence_type: EvidenceType | None = None, as_of: int | None = None
+) -> list[Evidence]:
+    """The newest observation of every evidence entity (as of a watermark when given)."""
+    where, params = _visible(as_of)
     query = (
-        "SELECT tenant_id, entity_id, observed_at, source_connector, source_event_id,"
-        " evidence_type, title, text, subject_entity_id, issued_at, raw_ref, page_texts,"
-        " guardrail_events FROM current_evidence"
+        "SELECT * FROM (SELECT DISTINCT ON (entity_id) tenant_id, entity_id, observed_at,"
+        " source_connector, source_event_id, evidence_type, title, text, subject_entity_id,"
+        f" issued_at, raw_ref, page_texts, guardrail_events FROM evidence{where}"
+        " ORDER BY entity_id, observed_at DESC, source_event_id DESC) latest"
     )
-    params: tuple[Any, ...] = ()
     if evidence_type is not None:
         query += " WHERE evidence_type = %s"
-        params = (evidence_type.value,)
+        params = (*params, evidence_type.value)
     rows = db.fetch_all(query + " ORDER BY observed_at DESC, entity_id", params)
     return [
         Evidence(

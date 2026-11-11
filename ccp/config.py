@@ -36,7 +36,7 @@ class ScheduleSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")
-    job: Literal["clock", "unpark", "full_run", "check_connections", "sync"]
+    job: Literal["clock", "unpark", "full_run", "check_connections", "sync", "replay_sentinel"]
     every: str = Field(
         pattern=r"^(every [1-9][0-9]* (minutes|hours)|daily ([01][0-9]|2[0-3]):[0-5][0-9])$"
     )
@@ -53,6 +53,8 @@ DEFAULT_SCHEDULES: tuple[ScheduleSpec, ...] = (
     ScheduleSpec(id="check-connections", job="check_connections", every="daily 01:00"),
     ScheduleSpec(id="sync", job="sync", every="daily 01:30"),
     ScheduleSpec(id="full-run", job="full_run", every="daily 02:00"),
+    # a sample of tier-1 verdicts re-derived from what each read (A-125)
+    ScheduleSpec(id="replay-sentinel", job="replay_sentinel", every="daily 03:30"),
 )
 
 

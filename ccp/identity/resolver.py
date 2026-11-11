@@ -20,6 +20,7 @@ from ccp.ingest import event_log
 from ccp.normalize import repository
 from ccp.normalize.entities import Person
 from ccp.observability import steps
+from ccp.storage import sequences
 from ccp.storage.scoped import ScopedDB
 
 
@@ -94,8 +95,8 @@ def record_decision(
             for person in (pair.left, pair.right):
                 cur.execute(
                     "INSERT INTO person_links (link_id, tenant_id, person_entity_id,"
-                    " canonical_person_id, decided_by, decision_id)"
-                    " VALUES (%s, %s, %s, %s, %s, %s)",
+                    " canonical_person_id, decided_by, decision_id, recorded_seq)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s)",
                     (
                         str(ULID()),
                         db.tenant.tenant_id,
@@ -103,13 +104,19 @@ def record_decision(
                         canonical,
                         "auto_merge",
                         decision_id,
+                        sequences.next_value(cur, db.tenant.tenant_id, sequences.OBSERVATIONS),
                     ),
                 )
             _announce_link(cur, db, pair.left.entity_id, decision_id)
         elif scored.route == "review":
             cur.execute(
-                "INSERT INTO review_queue (decision_id, tenant_id) VALUES (%s, %s)",
-                (decision_id, db.tenant.tenant_id),
+                "INSERT INTO review_queue (decision_id, tenant_id, recorded_seq)"
+                " VALUES (%s, %s, %s)",
+                (
+                    decision_id,
+                    db.tenant.tenant_id,
+                    sequences.next_value(cur, db.tenant.tenant_id, sequences.OBSERVATIONS),
+                ),
             )
     return decision_id
 
@@ -152,9 +159,20 @@ def resolve_tenant(db: ScopedDB, config: IdentityConfig | None = None) -> Resolu
 # -- reads used by evaluators and the CLI ---------------------------------------------
 
 
-def canonical_map(db: ScopedDB) -> dict[str, str]:
-    """person_entity_id -> canonical_person_id for every linked person."""
-    rows = db.fetch_all("SELECT person_entity_id, canonical_person_id FROM current_person_links")
+def canonical_map(db: ScopedDB, as_of: int | None = None) -> dict[str, str]:
+    """person_entity_id -> canonical_person_id for every linked person; with `as_of`, the
+    links visible at that watermark (A-125)."""
+    if as_of is None:
+        rows = db.fetch_all(
+            "SELECT person_entity_id, canonical_person_id FROM current_person_links"
+        )
+    else:
+        rows = db.fetch_all(
+            "SELECT DISTINCT ON (person_entity_id) person_entity_id, canonical_person_id"
+            " FROM person_links WHERE (recorded_seq IS NULL OR recorded_seq <= %s)"
+            " ORDER BY person_entity_id, recorded_at DESC, link_id DESC",
+            (as_of,),
+        )
     return {str(r[0]): str(r[1]) for r in rows}
 
 
@@ -162,12 +180,23 @@ def canonical_id(db: ScopedDB, entity_id: str) -> str:
     return _canonical_for(db, entity_id) or entity_id
 
 
-def pending_review_entities(db: ScopedDB) -> set[str]:
-    """Entity ids that appear in an open review item; tests involving them report needs_review."""
-    rows = db.fetch_all(
-        "SELECT d.left_entity_id, d.right_entity_id FROM open_review_queue q"
-        " JOIN resolution_decisions d ON d.decision_id = q.decision_id"
-    )
+def pending_review_entities(db: ScopedDB, as_of: int | None = None) -> set[str]:
+    """Entity ids that appear in an open review item; tests involving them report
+    needs_review. With `as_of`, the items open at that watermark (A-125)."""
+    if as_of is None:
+        rows = db.fetch_all(
+            "SELECT d.left_entity_id, d.right_entity_id FROM open_review_queue q"
+            " JOIN resolution_decisions d ON d.decision_id = q.decision_id"
+        )
+    else:
+        rows = db.fetch_all(
+            "SELECT d.left_entity_id, d.right_entity_id FROM review_queue q"
+            " JOIN resolution_decisions d ON d.decision_id = q.decision_id"
+            " WHERE (q.recorded_seq IS NULL OR q.recorded_seq <= %s) AND NOT EXISTS"
+            " (SELECT 1 FROM review_resolutions r WHERE r.decision_id = q.decision_id"
+            " AND (r.recorded_seq IS NULL OR r.recorded_seq <= %s))",
+            (as_of, as_of),
+        )
     out: set[str] = set()
     for left, right in rows:
         out.add(str(left))
@@ -220,8 +249,16 @@ def resolve_review(
     with db.transaction() as cur:
         cur.execute(
             "INSERT INTO review_resolutions (resolution_id, decision_id, tenant_id, outcome,"
-            " reviewer, note) VALUES (%s, %s, %s, %s, %s, %s)",
-            (str(ULID()), decision_id, db.tenant.tenant_id, outcome, reviewer, note),
+            " reviewer, note, recorded_seq) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (
+                str(ULID()),
+                decision_id,
+                db.tenant.tenant_id,
+                outcome,
+                reviewer,
+                note,
+                sequences.next_value(cur, db.tenant.tenant_id, sequences.OBSERVATIONS),
+            ),
         )
         if outcome == "merge":
             left, right = persons[item.left_entity_id], persons[item.right_entity_id]
@@ -229,8 +266,8 @@ def resolve_review(
             for person in (left, right):
                 cur.execute(
                     "INSERT INTO person_links (link_id, tenant_id, person_entity_id,"
-                    " canonical_person_id, decided_by, decision_id)"
-                    " VALUES (%s, %s, %s, %s, %s, %s)",
+                    " canonical_person_id, decided_by, decision_id, recorded_seq)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s)",
                     (
                         str(ULID()),
                         db.tenant.tenant_id,
@@ -238,6 +275,7 @@ def resolve_review(
                         canonical,
                         "human",
                         decision_id,
+                        sequences.next_value(cur, db.tenant.tenant_id, sequences.OBSERVATIONS),
                     ),
                 )
             _announce_link(cur, db, left.entity_id, decision_id)

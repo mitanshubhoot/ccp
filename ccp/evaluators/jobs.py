@@ -7,6 +7,7 @@
     full_run   every (test, subject) pair, idempotent at the verdict table
     check_connections   every enabled connection's credential probed, each check recorded
     sync       every enabled connection pulled, each pull its own sync run (A-121)
+    replay_sentinel   a sample of tier-1 verdicts re-derived from their manifests (A-125)
 
 Every job is safe to run twice: the clock and the full run enqueue through the evaluation
 key, unparking an unparked topic moves nothing, a second check is another record, and a
@@ -21,7 +22,7 @@ from datetime import datetime
 from typing import Any
 
 from ccp.config import Settings
-from ccp.evaluators import clock
+from ccp.evaluators import clock, rederive
 from ccp.evaluators import runner as evaluations
 from ccp.ingest import connections, ops
 from ccp.ingest.consumers import ParallelConsumer, TerminalError
@@ -40,6 +41,7 @@ JOBS: dict[str, Job] = {
     "full_run": lambda db, settings, slot: evaluations.enqueue_all(db, settings),
     "check_connections": lambda db, settings, slot: len(connections.check_all(settings, db)),
     "sync": lambda db, settings, slot: len(sync_connections(settings, db, db.tenant).runs),
+    "replay_sentinel": lambda db, settings, slot: len(rederive.sentinel(db, settings)),
 }
 
 
