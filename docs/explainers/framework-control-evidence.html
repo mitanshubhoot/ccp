@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One Proof, Two Rulebooks</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+  :root {
+    --bg: #f2f4f6;
+    --paper: #ffffff;
+    --ink: #1b2430;
+    --ink-soft: #5b6674;
+    --line: #cfd6de;
+    --book: #2f5d8a;      /* framework */
+    --rule: #6b8fb5;      /* requirement */
+    --promise: #2e7d5b;   /* control */
+    --check: #b8791e;     /* test */
+    --proof: #a34a9a;     /* evidence */
+    --stamp: #c8322b;     /* verdict */
+    --book-bg: #e4ecf5;
+    --promise-bg: #e1f0e8;
+    --check-bg: #f7ecd7;
+    --proof-bg: #f2e3f0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151a20;
+      --paper: #1e242c;
+      --ink: #eef1f4;
+      --ink-soft: #a3adb8;
+      --line: #384350;
+      --book: #7fb0e0;
+      --rule: #9cbbdb;
+      --promise: #6fc79b;
+      --check: #e6b45c;
+      --proof: #d98ad0;
+      --stamp: #ef6b62;
+      --book-bg: #22344a;
+      --promise-bg: #1f3a2e;
+      --check-bg: #3c2f1a;
+      --proof-bg: #3a2438;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #151a20;
+    --paper: #1e242c;
+    --ink: #eef1f4;
+    --ink-soft: #a3adb8;
+    --line: #384350;
+    --book: #7fb0e0;
+    --rule: #9cbbdb;
+    --promise: #6fc79b;
+    --check: #e6b45c;
+    --proof: #d98ad0;
+    --stamp: #ef6b62;
+    --book-bg: #22344a;
+    --promise-bg: #1f3a2e;
+    --check-bg: #3c2f1a;
+    --proof-bg: #3a2438;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+    font-size: 18px;
+    line-height: 1.5;
+    padding-inline: 20px;
+    padding-block: 40px 80px;
+  }
+  main { max-width: 760px; margin: 0 auto; display: grid; gap: 56px; }
+
+  h1, h2 {
+    font-family: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+    text-wrap: balance;
+    line-height: 1.05;
+    margin: 0;
+  }
+  h1 { font-size: clamp(38px, 7vw, 60px); font-weight: 800; letter-spacing: -0.02em; }
+  h2 { font-size: clamp(26px, 4.5vw, 34px); font-weight: 800; letter-spacing: -0.01em; }
+  p { margin: 0; max-width: 62ch; }
+  .lede { color: var(--ink-soft); font-size: 20px; margin-top: 14px; }
+
+  section { display: grid; gap: 18px; }
+  figure { margin: 0; display: grid; gap: 12px; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { color: var(--ink-soft); font-size: 16px; max-width: 62ch; }
+
+  .eyebrow {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+
+  .five { display: grid; gap: 10px; }
+  .thing {
+    display: grid;
+    grid-template-columns: 84px 1fr;
+    gap: 16px;
+    align-items: center;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    padding: 12px 16px 12px 12px;
+  }
+  .thing svg { width: 84px; height: 84px; display: block; }
+  .thing strong {
+    font-family: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+    font-size: 24px;
+    font-weight: 800;
+    display: block;
+    line-height: 1.1;
+  }
+  .thing span { color: var(--ink-soft); }
+  .thing code {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 13px;
+    color: var(--ink-soft);
+    background: var(--bg);
+    padding: 1px 6px;
+  }
+
+  .big {
+    font-family: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+    font-size: clamp(24px, 4vw, 30px);
+    font-weight: 800;
+    line-height: 1.2;
+    text-wrap: balance;
+  }
+  .big em { font-style: normal; color: var(--promise); }
+
+  .scroll { overflow-x: auto; }
+  .scroll svg { min-width: 640px; }
+
+  .glossary {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    padding: 20px 24px;
+    display: grid;
+    gap: 10px;
+    font-size: 16px;
+  }
+  .glossary div { display: grid; grid-template-columns: 150px 1fr; gap: 14px; }
+  .glossary b { font-weight: 700; }
+  .glossary code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px; }
+  @media (max-width: 480px) {
+    .glossary div { grid-template-columns: 1fr; gap: 2px; }
+    .thing { grid-template-columns: 64px 1fr; }
+    .thing svg { width: 64px; height: 64px; }
+  }
+</style>
+
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">agentic · explained with pictures</div>
+    <h1>One Proof, Two Rulebooks</h1>
+    <p class="lede">How a framework, a control, and a piece of evidence fit together in this project.</p>
+  </header>
+
+  <!-- 1. The kitchen -->
+  <section>
+    <h2>First, a kitchen.</h2>
+    <figure>
+      <svg viewBox="0 0 760 300" role="img" aria-label="A fire inspector and a health inspector each hold a checklist. Both checklists ask for a fire extinguisher. One extinguisher hangs on the kitchen wall with a dated tag. Both inspectors read the same tag.">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g fill="none" stroke="currentColor" stroke-width="2" color="var(--ink)">
+          <!-- inspector 1 -->
+          <g transform="translate(40,40)">
+            <circle cx="40" cy="30" r="22" fill="var(--book-bg)"/>
+            <path d="M10,120 Q40,60 70,120" fill="var(--book-bg)"/>
+            <rect x="72" y="60" width="60" height="78" fill="var(--paper)" stroke="var(--book)"/>
+            <rect x="92" y="52" width="20" height="10" fill="var(--book)" stroke="none"/>
+            <line x1="82" y1="82" x2="122" y2="82" stroke="var(--rule)"/>
+            <line x1="82" y1="98" x2="122" y2="98" stroke="var(--rule)"/>
+            <line x1="82" y1="114" x2="122" y2="114" stroke="var(--rule)" stroke-width="4"/>
+          </g>
+          <text x="80" y="200" font-size="15" fill="currentColor" stroke="none" text-anchor="middle" font-weight="700">Fire inspector</text>
+          <text x="80" y="220" font-size="13" fill="var(--ink-soft)" stroke="none" text-anchor="middle">has a checklist</text>
+
+          <!-- inspector 2 -->
+          <g transform="translate(600,40)">
+            <circle cx="80" cy="30" r="22" fill="var(--book-bg)"/>
+            <path d="M50,120 Q80,60 110,120" fill="var(--book-bg)"/>
+            <rect x="-12" y="60" width="60" height="78" fill="var(--paper)" stroke="var(--book)"/>
+            <rect x="8" y="52" width="20" height="10" fill="var(--book)" stroke="none"/>
+            <line x1="-2" y1="82" x2="38" y2="82" stroke="var(--rule)"/>
+            <line x1="-2" y1="98" x2="38" y2="98" stroke="var(--rule)" stroke-width="4"/>
+            <line x1="-2" y1="114" x2="38" y2="114" stroke="var(--rule)"/>
+          </g>
+          <text x="680" y="200" font-size="15" fill="currentColor" stroke="none" text-anchor="middle" font-weight="700">Health inspector</text>
+          <text x="680" y="220" font-size="13" fill="var(--ink-soft)" stroke="none" text-anchor="middle">has a different checklist</text>
+
+          <!-- extinguisher -->
+          <g transform="translate(340,60)">
+            <rect x="26" y="30" width="28" height="90" rx="8" fill="var(--promise-bg)" stroke="var(--promise)"/>
+            <rect x="34" y="14" width="12" height="18" fill="var(--promise)" stroke="none"/>
+            <path d="M46,20 L70,10" stroke="var(--promise)"/>
+            <!-- tag -->
+            <path d="M54,70 L86,58 L96,68 L64,80 z" fill="var(--proof-bg)" stroke="var(--proof)"/>
+            <circle cx="60" cy="72" r="2" fill="var(--proof)" stroke="none"/>
+          </g>
+          <text x="380" y="200" font-size="15" fill="currentColor" stroke="none" text-anchor="middle" font-weight="700">One extinguisher</text>
+          <text x="380" y="220" font-size="13" fill="var(--ink-soft)" stroke="none" text-anchor="middle">with one dated tag</text>
+
+          <!-- arrows -->
+          <path d="M175,110 L360,110" marker-end="url(#arr)" stroke-dasharray="6 5"/>
+          <path d="M585,110 L400,110" marker-end="url(#arr)" stroke-dasharray="6 5"/>
+          <text x="268" y="100" font-size="12" fill="var(--ink-soft)" stroke="none" text-anchor="middle">reads the tag</text>
+          <text x="492" y="100" font-size="12" fill="var(--ink-soft)" stroke="none" text-anchor="middle">reads the tag</text>
+
+          <text x="380" y="275" font-size="16" fill="currentColor" stroke="none" text-anchor="middle" font-weight="700">Two checklists. One extinguisher. One tag. Same answer.</text>
+        </g>
+      </svg>
+      <figcaption>Two inspectors want proof of the same thing. You don't buy two extinguishers. You show both of them the same tag.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 2. The five things -->
+  <section>
+    <h2>This project has five kinds of things.</h2>
+    <div class="five">
+      <div class="thing">
+        <svg viewBox="0 0 84 84" role="img" aria-label="A rulebook">
+          <rect x="18" y="12" width="48" height="60" rx="3" fill="var(--book-bg)" stroke="var(--book)" stroke-width="2"/>
+          <rect x="18" y="12" width="9" height="60" fill="var(--book)"/>
+          <line x1="34" y1="28" x2="58" y2="28" stroke="var(--book)" stroke-width="2"/>
+          <line x1="34" y1="40" x2="58" y2="40" stroke="var(--book)" stroke-width="2"/>
+          <line x1="34" y1="52" x2="58" y2="52" stroke="var(--book)" stroke-width="2"/>
+        </svg>
+        <div><strong>A rulebook</strong><span>The project calls it a <code>framework</code>. There are two: SOC 2 and ISO 27001.</span></div>
+      </div>
+      <div class="thing">
+        <svg viewBox="0 0 84 84" role="img" aria-label="One rule, a line in a rulebook">
+          <rect x="10" y="30" width="64" height="24" rx="2" fill="var(--paper)" stroke="var(--rule)" stroke-width="2"/>
+          <rect x="16" y="37" width="10" height="10" fill="none" stroke="var(--rule)" stroke-width="2"/>
+          <line x1="32" y1="42" x2="66" y2="42" stroke="var(--rule)" stroke-width="3"/>
+        </svg>
+        <div><strong>One rule in it</strong><span>Called a <code>requirement</code>. Like "remove access when people leave."</span></div>
+      </div>
+      <div class="thing">
+        <svg viewBox="0 0 84 84" role="img" aria-label="A promise, drawn as a shield">
+          <path d="M42,10 L70,20 V44 C70,60 56,70 42,76 C28,70 14,60 14,44 V20 Z" fill="var(--promise-bg)" stroke="var(--promise)" stroke-width="2"/>
+          <path d="M30,44 L39,53 L56,34" fill="none" stroke="var(--promise)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <div><strong>A promise you keep</strong><span>Called a <code>control</code>. The one real thing you do that satisfies rules from <b>both</b> rulebooks.</span></div>
+      </div>
+      <div class="thing">
+        <svg viewBox="0 0 84 84" role="img" aria-label="A check, drawn as a magnifying glass">
+          <circle cx="36" cy="36" r="20" fill="var(--check-bg)" stroke="var(--check)" stroke-width="3"/>
+          <line x1="51" y1="51" x2="70" y2="70" stroke="var(--check)" stroke-width="6" stroke-linecap="round"/>
+        </svg>
+        <div><strong>A check</strong><span>Called a <code>test</code>. The exact way the computer looks to see if the promise is kept.</span></div>
+      </div>
+      <div class="thing">
+        <svg viewBox="0 0 84 84" role="img" aria-label="Proof, drawn as a stamped document">
+          <path d="M22,10 H52 L64,22 V74 H22 Z" fill="var(--proof-bg)" stroke="var(--proof)" stroke-width="2"/>
+          <path d="M52,10 V22 H64" fill="none" stroke="var(--proof)" stroke-width="2"/>
+          <line x1="30" y1="34" x2="56" y2="34" stroke="var(--proof)" stroke-width="2"/>
+          <line x1="30" y1="44" x2="56" y2="44" stroke="var(--proof)" stroke-width="2"/>
+          <circle cx="50" cy="60" r="9" fill="none" stroke="var(--stamp)" stroke-width="2"/>
+        </svg>
+        <div><strong>Proof</strong><span>Called <code>evidence</code>. A roster, a training certificate, a GitHub setting. The tag on the extinguisher.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. The chain, real example -->
+  <section>
+    <h2>Here they are, hooked together.</h2>
+    <p>A real one from the project: the promise that people lose access when they leave.</p>
+    <figure class="scroll">
+      <svg viewBox="0 0 960 440" role="img" aria-label="Two rulebooks, SOC 2 and ISO 27001, each contain rules that point at one control, CTL-ACCESS-REVOKE. That control is checked by two tests, HR-1 and GH-1. Each test reads a piece of evidence: the HR roster and the GitHub member list.">
+        <defs>
+          <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g font-family="Atkinson Hyperlegible, system-ui, sans-serif" font-size="13" fill="var(--ink)">
+          <!-- column labels -->
+          <g font-family="JetBrains Mono, monospace" font-size="11" fill="var(--ink-soft)" letter-spacing="1.5">
+            <text x="100" y="22" text-anchor="middle">RULEBOOKS</text>
+            <text x="450" y="22" text-anchor="middle">ONE PROMISE</text>
+            <text x="690" y="22" text-anchor="middle">CHECKS</text>
+            <text x="870" y="22" text-anchor="middle">PROOF</text>
+          </g>
+
+          <!-- SOC 2 book -->
+          <rect x="20" y="50" width="160" height="150" rx="4" fill="var(--book-bg)" stroke="var(--book)" stroke-width="2"/>
+          <rect x="20" y="50" width="14" height="150" fill="var(--book)"/>
+          <text x="105" y="78" text-anchor="middle" font-weight="700" font-size="17">SOC 2</text>
+          <rect x="46" y="96" width="122" height="30" fill="var(--paper)" stroke="var(--rule)" stroke-width="1.5"/>
+          <text x="58" y="116" font-family="JetBrains Mono, monospace" font-size="12">CC6.2</text>
+          <text x="110" y="116" font-size="11" fill="var(--ink-soft)">remove users</text>
+          <rect x="46" y="136" width="122" height="30" fill="var(--paper)" stroke="var(--rule)" stroke-width="1.5"/>
+          <text x="58" y="156" font-family="JetBrains Mono, monospace" font-size="12">CC6.3</text>
+          <text x="110" y="156" font-size="11" fill="var(--ink-soft)">review access</text>
+
+          <!-- ISO book -->
+          <rect x="20" y="250" width="160" height="120" rx="4" fill="var(--book-bg)" stroke="var(--book)" stroke-width="2"/>
+          <rect x="20" y="250" width="14" height="120" fill="var(--book)"/>
+          <text x="105" y="278" text-anchor="middle" font-weight="700" font-size="17">ISO 27001</text>
+          <rect x="46" y="300" width="122" height="30" fill="var(--paper)" stroke="var(--rule)" stroke-width="1.5"/>
+          <text x="58" y="320" font-family="JetBrains Mono, monospace" font-size="12">A.5.18</text>
+          <text x="112" y="320" font-size="11" fill="var(--ink-soft)">access rights</text>
+
+          <!-- control -->
+          <path d="M450,120 L560,150 V215 C560,270 505,300 450,320 C395,300 340,270 340,215 V150 Z" fill="var(--promise-bg)" stroke="var(--promise)" stroke-width="2.5"/>
+          <text x="450" y="185" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="12" fill="var(--promise)">CTL-ACCESS-REVOKE</text>
+          <text x="450" y="212" text-anchor="middle" font-weight="700" font-size="15">When someone leaves,</text>
+          <text x="450" y="232" text-anchor="middle" font-weight="700" font-size="15">their access is removed</text>
+          <text x="450" y="252" text-anchor="middle" font-weight="700" font-size="15">on time.</text>
+
+          <!-- tests -->
+          <circle cx="690" cy="140" r="34" fill="var(--check-bg)" stroke="var(--check)" stroke-width="2.5"/>
+          <text x="690" y="136" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="13" font-weight="700">HR-1</text>
+          <text x="690" y="152" text-anchor="middle" font-size="10" fill="var(--ink-soft)">HR side</text>
+          <circle cx="690" cy="300" r="34" fill="var(--check-bg)" stroke="var(--check)" stroke-width="2.5"/>
+          <text x="690" y="296" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="13" font-weight="700">GH-1</text>
+          <text x="690" y="312" text-anchor="middle" font-size="10" fill="var(--ink-soft)">GitHub side</text>
+
+          <!-- evidence -->
+          <path d="M820,100 H900 L920,120 V180 H820 Z" fill="var(--proof-bg)" stroke="var(--proof)" stroke-width="2"/>
+          <path d="M900,100 V120 H920" fill="none" stroke="var(--proof)" stroke-width="2"/>
+          <text x="870" y="140" text-anchor="middle" font-weight="700" font-size="13">HR roster</text>
+          <text x="870" y="158" text-anchor="middle" font-size="11" fill="var(--ink-soft)">who left, and when</text>
+          <path d="M820,260 H900 L920,280 V340 H820 Z" fill="var(--proof-bg)" stroke="var(--proof)" stroke-width="2"/>
+          <path d="M900,260 V280 H920" fill="none" stroke="var(--proof)" stroke-width="2"/>
+          <text x="870" y="300" text-anchor="middle" font-weight="700" font-size="13">GitHub members</text>
+          <text x="870" y="318" text-anchor="middle" font-size="11" fill="var(--ink-soft)">who still has access</text>
+
+          <!-- arrows: rules -> control -->
+          <g fill="none" stroke="currentColor" stroke-width="2" color="var(--ink)">
+            <path d="M170,111 C260,111 300,170 338,190" marker-end="url(#arr2)"/>
+            <path d="M170,151 C260,151 300,190 338,205" marker-end="url(#arr2)"/>
+            <path d="M170,315 C260,315 300,260 338,240" marker-end="url(#arr2)"/>
+            <!-- control -> tests -->
+            <path d="M560,190 C610,180 630,160 652,150" marker-end="url(#arr2)"/>
+            <path d="M560,250 C610,260 630,280 652,290" marker-end="url(#arr2)"/>
+            <!-- tests -> evidence -->
+            <path d="M726,140 L812,140" marker-end="url(#arr2)"/>
+            <path d="M726,300 L812,300" marker-end="url(#arr2)"/>
+          </g>
+          <g font-size="11" fill="var(--ink-soft)" font-style="italic">
+            <text x="255" y="100">asks for</text>
+            <text x="255" y="330">asks for</text>
+            <text x="600" y="158">checked by</text>
+            <text x="600" y="292">checked by</text>
+            <text x="769" y="130" text-anchor="middle">reads</text>
+            <text x="769" y="290" text-anchor="middle">reads</text>
+          </g>
+
+          <text x="480" y="420" text-anchor="middle" font-size="15" font-weight="700">Three rules, from two rulebooks, all point at one promise.</text>
+        </g>
+      </svg>
+      <figcaption>Rulebooks ask. The promise answers. Checks look at proof. Read left to right.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 4. The answer travels back up -->
+  <section>
+    <h2>Then the answer goes back up. Once.</h2>
+    <figure>
+      <svg viewBox="0 0 760 330" role="img" aria-label="A single verdict stamp, pass, produced by one test on one piece of evidence, fans out to two report lines: one under SOC 2 and one under ISO 27001. Both lines show the same verdict id.">
+        <defs>
+          <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g font-family="Atkinson Hyperlegible, system-ui, sans-serif" font-size="13" fill="var(--ink)">
+          <!-- proof + check on left -->
+          <path d="M30,120 H100 L118,138 V200 H30 Z" fill="var(--proof-bg)" stroke="var(--proof)" stroke-width="2"/>
+          <path d="M100,120 V138 H118" fill="none" stroke="var(--proof)" stroke-width="2"/>
+          <text x="74" y="170" text-anchor="middle" font-weight="700" font-size="12">HR roster</text>
+
+          <circle cx="200" cy="160" r="28" fill="var(--check-bg)" stroke="var(--check)" stroke-width="2.5"/>
+          <text x="200" y="165" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="12" font-weight="700">HR-1</text>
+
+          <!-- stamp -->
+          <g transform="translate(340,160) rotate(-8)">
+            <circle r="52" fill="none" stroke="var(--stamp)" stroke-width="4"/>
+            <circle r="42" fill="none" stroke="var(--stamp)" stroke-width="1.5"/>
+            <text y="-4" text-anchor="middle" font-family="Bricolage Grotesque, system-ui, sans-serif" font-size="22" font-weight="800" fill="var(--stamp)" letter-spacing="2">PASS</text>
+            <text y="16" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" fill="var(--stamp)">verdict 7f3a</text>
+          </g>
+
+          <!-- reports -->
+          <rect x="500" y="40" width="240" height="90" rx="4" fill="var(--book-bg)" stroke="var(--book)" stroke-width="2"/>
+          <rect x="500" y="40" width="12" height="90" fill="var(--book)"/>
+          <text x="530" y="66" font-weight="700" font-size="15">SOC 2 report</text>
+          <text x="530" y="90" font-family="JetBrains Mono, monospace" font-size="12">CC6.2  ✓  verdict 7f3a</text>
+          <text x="530" y="112" font-family="JetBrains Mono, monospace" font-size="12">CC6.3  ✓  verdict 7f3a</text>
+
+          <rect x="500" y="200" width="240" height="70" rx="4" fill="var(--book-bg)" stroke="var(--book)" stroke-width="2"/>
+          <rect x="500" y="200" width="12" height="70" fill="var(--book)"/>
+          <text x="530" y="226" font-weight="700" font-size="15">ISO 27001 report</text>
+          <text x="530" y="250" font-family="JetBrains Mono, monospace" font-size="12">A.5.18  ✓  verdict 7f3a</text>
+
+          <!-- arrows -->
+          <g fill="none" stroke="currentColor" stroke-width="2" color="var(--ink)">
+            <path d="M126,160 L166,160" marker-end="url(#arr3)"/>
+            <path d="M232,160 L282,160" marker-end="url(#arr3)"/>
+            <path d="M392,140 C440,110 460,95 492,88" marker-end="url(#arr3)"/>
+            <path d="M392,180 C440,210 460,225 492,232" marker-end="url(#arr3)"/>
+          </g>
+          <g font-size="11" fill="var(--ink-soft)" font-style="italic">
+            <text x="146" y="150" text-anchor="middle">read by</text>
+            <text x="257" y="150" text-anchor="middle">gives</text>
+            <text x="442" y="96" text-anchor="middle">shown under</text>
+            <text x="442" y="232" text-anchor="middle">shown under</text>
+          </g>
+
+          <text x="380" y="310" text-anchor="middle" font-size="15" font-weight="700">One stamp. Same number on both reports.</text>
+        </g>
+      </svg>
+      <figcaption>The proof is gathered once and stamped once. Both rulebooks show that same stamp. There is a test in the repo that checks exactly this: one verdict row backs both report lines.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 5. Why -->
+  <section>
+    <h2>Why bother with the middle?</h2>
+    <figure>
+      <svg viewBox="0 0 760 250" role="img" aria-label="Left: without controls, each rulebook has its own check and its own proof, and the two stamps can disagree. Right: with a control in the middle, one check and one stamp serve both rulebooks.">
+        <g font-family="Atkinson Hyperlegible, system-ui, sans-serif" font-size="13" fill="var(--ink)">
+          <g font-family="JetBrains Mono, monospace" font-size="11" fill="var(--ink-soft)" letter-spacing="1.5">
+            <text x="180" y="22" text-anchor="middle">WITHOUT A PROMISE IN THE MIDDLE</text>
+            <text x="580" y="22" text-anchor="middle">WITH ONE</text>
+          </g>
+          <!-- left: duplication -->
+          <rect x="40" y="50" width="70" height="44" rx="3" fill="var(--book-bg)" stroke="var(--book)" stroke-width="2"/>
+          <text x="75" y="77" text-anchor="middle" font-weight="700">SOC 2</text>
+          <rect x="40" y="150" width="70" height="44" rx="3" fill="var(--book-bg)" stroke="var(--book)" stroke-width="2"/>
+          <text x="75" y="177" text-anchor="middle" font-weight="700">ISO</text>
+          <circle cx="180" cy="72" r="22" fill="var(--check-bg)" stroke="var(--check)" stroke-width="2"/>
+          <circle cx="180" cy="172" r="22" fill="var(--check-bg)" stroke="var(--check)" stroke-width="2"/>
+          <g transform="translate(290,72) rotate(-8)">
+            <circle r="26" fill="none" stroke="var(--stamp)" stroke-width="3"/>
+            <text y="5" text-anchor="middle" font-size="12" font-weight="800" fill="var(--stamp)">PASS</text>
+          </g>
+          <g transform="translate(290,172) rotate(6)">
+            <circle r="26" fill="none" stroke="var(--stamp)" stroke-width="3"/>
+            <text y="5" text-anchor="middle" font-size="12" font-weight="800" fill="var(--stamp)">FAIL</text>
+          </g>
+          <g fill="none" stroke="currentColor" stroke-width="2" color="var(--ink)">
+            <path d="M110,72 L156,72"/>
+            <path d="M110,172 L156,172"/>
+            <path d="M204,72 L262,72"/>
+            <path d="M204,172 L262,172"/>
+          </g>
+          <text x="180" y="232" text-anchor="middle" font-size="14" font-weight="700" fill="var(--stamp)">Two checks can disagree.</text>
+
+          <!-- right: shared control -->
+          <rect x="440" y="50" width="70" height="44" rx="3" fill="var(--book-bg)" stroke="var(--book)" stroke-width="2"/>
+          <text x="475" y="77" text-anchor="middle" font-weight="700">SOC 2</text>
+          <rect x="440" y="150" width="70" height="44" rx="3" fill="var(--book-bg)" stroke="var(--book)" stroke-width="2"/>
+          <text x="475" y="177" text-anchor="middle" font-weight="700">ISO</text>
+          <path d="M580,90 L610,100 V122 C610,140 596,150 580,156 C564,150 550,140 550,122 V100 Z" fill="var(--promise-bg)" stroke="var(--promise)" stroke-width="2"/>
+          <circle cx="670" cy="122" r="22" fill="var(--check-bg)" stroke="var(--check)" stroke-width="2"/>
+          <g transform="translate(730,122) rotate(-8)">
+            <circle r="26" fill="none" stroke="var(--stamp)" stroke-width="3"/>
+            <text y="5" text-anchor="middle" font-size="12" font-weight="800" fill="var(--stamp)">PASS</text>
+          </g>
+          <g fill="none" stroke="currentColor" stroke-width="2" color="var(--ink)">
+            <path d="M510,72 C530,72 540,100 548,110"/>
+            <path d="M510,172 C530,172 540,144 548,134"/>
+            <path d="M612,122 L646,122"/>
+            <path d="M694,122 L702,122"/>
+          </g>
+          <text x="600" y="232" text-anchor="middle" font-size="14" font-weight="700" fill="var(--promise)">One check. One answer.</text>
+        </g>
+      </svg>
+      <figcaption>Without the promise in the middle, you'd write "check who left" once for SOC 2 and again for ISO. Two answers that can drift apart. The control makes it one.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 6. One-line summary -->
+  <section>
+    <p class="big">Rulebooks <em>ask</em>. A promise <em>answers</em>. A check <em>looks</em>. Proof is what it <em>looks at</em>.</p>
+  </section>
+
+  <!-- 7. Glossary -->
+  <section>
+    <div class="eyebrow">the real names, in case you meet them in the code</div>
+    <div class="glossary">
+      <div><b>rulebook</b><span><code>framework</code> · <code>frameworks/soc2.yaml</code>, <code>frameworks/iso27001.yaml</code></span></div>
+      <div><b>one rule</b><span><code>requirement</code> · ids like <code>CC6.2</code> or <code>A.5.18</code></span></div>
+      <div><b>promise</b><span><code>control</code> · <code>controls.yaml</code>, ids like <code>CTL-ACCESS-REVOKE</code>. Nine of them.</span></div>
+      <div><b>check</b><span><code>test</code> · <code>tests.yaml</code>, ids like <code>HR-1</code>, <code>GH-1</code>. Ten of them. Each says which proof types it reads.</span></div>
+      <div><b>proof</b><span><code>Evidence</code> row · has an <code>evidence_type</code> such as <code>hr_roster</code>, <code>training_record</code>, <code>repo_settings</code></span></div>
+      <div><b>stamp</b><span><code>verdict</code> in <code>compliance_state</code> · carries <code>control_ids</code>, so one row rolls up under every rulebook</span></div>
+    </div>
+  </section>
+</main>
+</body>
+
+</html>

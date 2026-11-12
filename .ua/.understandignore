@@ -1,0 +1,109 @@
+# .understandignore — patterns for files/dirs to exclude from analysis
+# Syntax: same as .gitignore (globs, # comments, ! negation, trailing / for dirs)
+# Lines below are suggestions — uncomment to activate.
+# Use ! prefix to force-include something excluded by defaults.
+#
+# Built-in defaults (always excluded unless negated):
+#   node_modules/, .git/, dist/, build/, obj/, *.lock, *.min.js, etc.
+#
+
+# --- CCP: active exclusions (11 Nov 2026) ---
+# Generated or binary artefacts: no structure to learn, many tokens.
+docs/diagrams/
+docs/explainers/
+docs/reports/
+*.pdf
+*.png
+uv.lock
+.venv/
+.vscode/
+.playwright-mcp/
+evals/runs/
+data/
+logs/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.import_linter_cache/
+# Secrets: never analyse the real env file (.env.example stays in).
+.env
+# Bulk unit/component tests and their stubs. tests/security, tests/e2e and
+# tests/workflow stay in: they prove the guarantees the platform makes.
+tests/unit/
+tests/component/
+tests/support/
+
+# --- From .gitignore (uncomment to exclude) ---
+
+# data/
+# logs/
+# evals/runs/*
+# !evals/runs/.gitkeep
+# .env
+# .env.*
+# *.pyc
+# .pytest_cache/
+# .mypy_cache/
+# .ruff_cache/
+# .hypothesis/
+# *.egg-info/
+
+# --- Detected directories (uncomment to exclude) ---
+
+# docs/
+# fixtures/
+# scripts/
+# tests/
+
+# --- Test file patterns (uncomment to exclude) ---
+
+# JS / TS
+# *.test.*
+# *.spec.*
+# *.snap
+# C# / .NET
+# **/*Tests.cs
+# **/*Test.cs
+# **/*Fixture.cs
+# **/*.Tests.csproj
+# Java / Kotlin
+# **/src/test/**
+# **/*Test.java
+# **/*IT.java
+# **/*Spec.kt
+# Go
+# **/*_test.go
+# C++
+# **/*_test.cc
+# **/*_test.cpp
+# **/*_test.cxx
+# **/*Test.cc
+# **/*Test.cpp
+# **/*_unittest.cc
+# **/*_unittest.cpp
+# **/*_browsertest.cc
+# **/*_benchmark.cc
+# **/*Benchmark.cpp
+# Python
+# **/test_*.py
+# **/*_test.py
+# **/tests.py
+# **/conftest.py
+# Rust
+# **/tests.rs
+# **/test_*.rs
+# **/*_test.rs
+# **/bench_*.rs
+# **/*_bench.rs
+# Ruby
+# **/*_spec.rb
+# **/*_test.rb
+# **/test_*.rb
+# **/spec_helper.rb
+# **/test_helper.rb
+# **/rails_helper.rb
+# Swift
+# **/Tests/**/*.swift
+# **/Specs/**/*.swift

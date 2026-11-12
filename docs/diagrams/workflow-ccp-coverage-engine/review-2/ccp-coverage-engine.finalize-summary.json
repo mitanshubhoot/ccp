@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "workflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\workflow-ccp-coverage-engine\\candidate.json",
+    "sha256": "b70451190fad7432e392efd70d5660d5b1f19b6dd2ae666e3f090e7a922cd3cc",
+    "bytes": 6206
+  },
+  "artifact": {
+    "path": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\workflow-ccp-coverage-engine\\ccp-coverage-engine.html",
+    "sha256": "5b2a7e8cf0ab4dd719c094de5170f5b7ec076113ee163ebfc420293b2ae41331",
+    "bytes": 837020
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\workflow-ccp-coverage-engine\\review-2\\ccp-coverage-engine.finalize.json",
+    "summaryReceipt": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\workflow-ccp-coverage-engine\\review-2\\ccp-coverage-engine.finalize-summary.json",
+    "browserCheckReceipt": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\workflow-ccp-coverage-engine\\review-2\\ccp-coverage-engine.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-11-10T07:09:27.723Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 7278,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  }
+}

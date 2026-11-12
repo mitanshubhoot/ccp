@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "dataflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\dataflow-ccp-event-to-report\\candidate.json",
+    "sha256": "01a829fc871fc754e4dce7064917b1f33cf5ce4f1db9c417f2543a08582ff50a",
+    "bytes": 5630
+  },
+  "artifact": {
+    "path": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\dataflow-ccp-event-to-report\\ccp-event-to-report.html",
+    "sha256": "9ebecdfc017dc08955e28e8b937112ea2c616a1769bf111aad497dd6e23a89e8",
+    "bytes": 832020
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\dataflow-ccp-event-to-report\\review-3\\ccp-event-to-report.finalize.json",
+    "summaryReceipt": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\dataflow-ccp-event-to-report\\review-3\\ccp-event-to-report.finalize-summary.json",
+    "browserCheckReceipt": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\dataflow-ccp-event-to-report\\review-3\\ccp-event-to-report.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-11-03T18:51:17.507Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 7171,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  }
+}

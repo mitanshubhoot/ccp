@@ -1,0 +1,565 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ccp Compliance Platform Architecture",
+    "locale": "en",
+    "output": "docs/diagrams/architecture-ccp-overview/ccp-overview.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "sources",
+      "type": "external",
+      "label": "Sources",
+      "sublabel": "fixtures · uploads",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        120,
+        60
+      ],
+      "tag": "+ GitHub live"
+    },
+    {
+      "id": "connectors",
+      "type": "backend",
+      "label": "Connectors",
+      "sublabel": "github, hris, manual",
+      "tag": "fixture | live",
+      "pos": [
+        40,
+        140
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "landing",
+      "type": "backend",
+      "label": "Landing",
+      "sublabel": "dedup on event id",
+      "pos": [
+        40,
+        240
+      ],
+      "size": [
+        120,
+        160
+      ]
+    },
+    {
+      "id": "normalize",
+      "type": "backend",
+      "label": "Normalize",
+      "sublabel": "+ identity resolver",
+      "pos": [
+        40,
+        440
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "evaluators",
+      "type": "backend",
+      "label": "Evaluators",
+      "sublabel": "impact → tier 1·2·3",
+      "tag": "tier 2·3 → LLMClient",
+      "pos": [
+        40,
+        540
+      ],
+      "size": [
+        120,
+        160
+      ]
+    },
+    {
+      "id": "statewriter",
+      "type": "backend",
+      "label": "State writer",
+      "sublabel": "verdicts consumer",
+      "pos": [
+        40,
+        740
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "rawzone",
+      "type": "database",
+      "label": "Raw zone",
+      "sublabel": "data/raw/ JSON files",
+      "pos": [
+        260,
+        240
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "eventlog",
+      "type": "messagebus",
+      "label": "event_log",
+      "sublabel": "Postgres queue table",
+      "pos": [
+        260,
+        340
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "entities",
+      "type": "database",
+      "label": "Entity tables",
+      "sublabel": "entities + links",
+      "pos": [
+        260,
+        440
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "chunks",
+      "type": "database",
+      "label": "chunks",
+      "sublabel": "pgvector + full-text",
+      "pos": [
+        260,
+        540
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "verdicts",
+      "type": "database",
+      "label": "verdicts",
+      "sublabel": "append-only, keyed",
+      "pos": [
+        260,
+        640
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "state",
+      "type": "database",
+      "label": "compliance_state",
+      "sublabel": "bitemporal",
+      "pos": [
+        260,
+        740
+      ],
+      "size": [
+        120,
+        60
+      ],
+      "tag": "append-only"
+    },
+    {
+      "id": "report",
+      "type": "frontend",
+      "label": "ccp report",
+      "sublabel": "framework rollup",
+      "pos": [
+        260,
+        840
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "tools",
+      "type": "security",
+      "label": "Read-only tools",
+      "sublabel": "tenant by closure",
+      "tag": "13 tools",
+      "pos": [
+        480,
+        440
+      ],
+      "size": [
+        120,
+        360
+      ]
+    },
+    {
+      "id": "core",
+      "type": "backend",
+      "label": "Agent core",
+      "sublabel": "LangGraph graphs",
+      "tag": "PostgresSaver",
+      "pos": [
+        690,
+        440
+      ],
+      "size": [
+        120,
+        360
+      ]
+    },
+    {
+      "id": "investigator",
+      "type": "backend",
+      "label": "Investigator",
+      "sublabel": "root cause",
+      "pos": [
+        856,
+        440
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "policy",
+      "type": "backend",
+      "label": "Policy Agent",
+      "sublabel": "gap analysis, drafts",
+      "pos": [
+        856,
+        590
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "copilot",
+      "type": "backend",
+      "label": "Copilot",
+      "sublabel": "terminal REPL",
+      "pos": [
+        856,
+        740
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "operator",
+      "type": "external",
+      "label": "Operator",
+      "sublabel": "CLI, typed name",
+      "pos": [
+        1060,
+        340
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "approvals",
+      "type": "security",
+      "label": "Approval stage",
+      "sublabel": "approvals + events",
+      "pos": [
+        1060,
+        440
+      ],
+      "size": [
+        120,
+        360
+      ]
+    },
+    {
+      "id": "remediation",
+      "type": "backend",
+      "label": "Remediation",
+      "sublabel": "dry run by default",
+      "pos": [
+        1060,
+        840
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "github",
+      "type": "external",
+      "label": "GitHub API",
+      "sublabel": "remove collaborator",
+      "pos": [
+        856,
+        840
+      ],
+      "size": [
+        120,
+        60
+      ]
+    },
+    {
+      "id": "anthropic",
+      "type": "external",
+      "label": "Anthropic API",
+      "sublabel": "via LLMClient only",
+      "pos": [
+        690,
+        840
+      ],
+      "size": [
+        120,
+        60
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "pull",
+      "from": "sources",
+      "to": "connectors",
+      "label": "pull()",
+      "variant": "emphasis"
+    },
+    {
+      "id": "source-events",
+      "from": "connectors",
+      "to": "landing",
+      "label": "SourceEvent",
+      "variant": "emphasis"
+    },
+    {
+      "id": "write-raw",
+      "from": "landing",
+      "to": "rawzone",
+      "label": "write once"
+    },
+    {
+      "id": "append-raw",
+      "from": "landing",
+      "to": "eventlog",
+      "label": "append raw.*"
+    },
+    {
+      "id": "raw-topic",
+      "from": "landing",
+      "to": "normalize",
+      "label": "raw.* topic",
+      "variant": "emphasis"
+    },
+    {
+      "id": "insert-entities",
+      "from": "normalize",
+      "to": "entities",
+      "label": "insert, link"
+    },
+    {
+      "id": "entities-topic",
+      "from": "normalize",
+      "to": "evaluators",
+      "label": "entities topic",
+      "variant": "emphasis"
+    },
+    {
+      "id": "index-refresh",
+      "from": "entities",
+      "to": "chunks",
+      "label": "chunk + embed",
+      "variant": "dashed"
+    },
+    {
+      "id": "retrieve",
+      "from": "evaluators",
+      "to": "chunks",
+      "label": "retrieve"
+    },
+    {
+      "id": "persist-verdict",
+      "from": "evaluators",
+      "to": "verdicts",
+      "label": "persist"
+    },
+    {
+      "id": "verdicts-topic",
+      "from": "evaluators",
+      "to": "statewriter",
+      "label": "verdicts topic",
+      "variant": "emphasis"
+    },
+    {
+      "id": "append-state",
+      "from": "statewriter",
+      "to": "state",
+      "label": "append row",
+      "variant": "emphasis"
+    },
+    {
+      "id": "rollup",
+      "from": "state",
+      "to": "report",
+      "label": "chain heads",
+      "variant": "emphasis"
+    },
+    {
+      "id": "read-entities",
+      "from": "tools",
+      "to": "entities",
+      "label": "get_person"
+    },
+    {
+      "id": "read-chunks",
+      "from": "tools",
+      "to": "chunks",
+      "label": "search"
+    },
+    {
+      "id": "read-verdicts",
+      "from": "tools",
+      "to": "verdicts",
+      "label": "get_verdict"
+    },
+    {
+      "id": "read-state",
+      "from": "tools",
+      "to": "state",
+      "label": "state rows"
+    },
+    {
+      "id": "investigate-trigger",
+      "from": "eventlog",
+      "to": "investigator",
+      "label": "verdicts topic: fail, needs_review"
+    },
+    {
+      "id": "core-tools",
+      "from": "core",
+      "to": "tools",
+      "label": "tool calls"
+    },
+    {
+      "id": "investigator-core",
+      "from": "investigator",
+      "to": "core"
+    },
+    {
+      "id": "policy-core",
+      "from": "policy",
+      "to": "core"
+    },
+    {
+      "id": "copilot-core",
+      "from": "copilot",
+      "to": "core"
+    },
+    {
+      "id": "core-llm",
+      "from": "core",
+      "to": "anthropic",
+      "label": "LLMClient"
+    },
+    {
+      "id": "open-proposals",
+      "from": "investigator",
+      "to": "approvals",
+      "label": "proposals",
+      "variant": "security"
+    },
+    {
+      "id": "open-draft",
+      "from": "policy",
+      "to": "approvals",
+      "label": "draft",
+      "variant": "security"
+    },
+    {
+      "id": "open-fix",
+      "from": "copilot",
+      "to": "approvals",
+      "label": "fix this",
+      "variant": "security"
+    },
+    {
+      "id": "decide",
+      "from": "operator",
+      "to": "approvals",
+      "label": "approve",
+      "variant": "security"
+    },
+    {
+      "id": "gate-five",
+      "from": "approvals",
+      "to": "remediation",
+      "label": "approved",
+      "variant": "security"
+    },
+    {
+      "id": "live-call",
+      "from": "remediation",
+      "to": "github",
+      "label": "live only",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Event log",
+      "items": [
+        "Edges named topic are rows in event_log, the Postgres table used as a queue",
+        "Ordered consumers keep a cursor; evaluations are claimed with FOR UPDATE SKIP LOCKED",
+        "The Investigator is the second consumer of the verdicts topic; state never waits for it"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Read-only agents",
+      "items": [
+        "Graphs read, runners write: no tool has a side effect, and the runners open approval items",
+        "Tools take the tenant from a closure; allowlists give the Investigator 11 tools, the Policy Agent 4, the Copilot all 13",
+        "Remediation is a dry run unless five gates hold, including an approved item with a matching payload hash"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Approval kinds",
+      "items": [
+        "remediation, policy_draft, evidence_request, tier3_interrupt",
+        "Tier 3 runs on the agent core and pauses as a tier3_interrupt item",
+        "reevaluate() re-pulls the connector so the new verdict supersedes the failing row; only the e2e test calls it, and there is no CLI command for it"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Where the code differs from spec.md",
+      "items": [
+        "ccp run enqueues every (test, subject) pair; the impact step runs from ccp evaluate run --impact, the worker, and re-evaluation",
+        "The Policy Agent runs only from ccp policy gap or draft; spec Layer 9 also calls it a verdicts consumer",
+        "The parallel investigations topic is declared but never produced or consumed"
+      ]
+    }
+  ]
+}

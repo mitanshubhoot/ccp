@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "CCP target architecture: code decides, models propose, people approve",
+    "locale": "en",
+    "output": "docs/diagrams/architecture-ccp-target/ccp-target.html",
+    "quality_profile": "showcase",
+    "legend": {
+      "entries": {
+        "backend": { "label": "CCP code" },
+        "database": { "label": "Stores" },
+        "security": { "label": "Gates and policy" },
+        "cloud": { "label": "Model APIs" },
+        "frontend": { "label": "Product UI" },
+        "external": { "label": "Customer side" }
+      }
+    }
+  },
+  "components": [
+    { "id": "raw-evidence", "type": "database", "label": "Raw evidence", "sublabel": "S3 Object Lock, write once", "pos": [550, 40], "size": [150, 64] },
+    { "id": "audit-chain", "type": "security", "label": "Audit chain", "sublabel": "per-tenant hash chain", "tag": "signed hourly", "pos": [805, 40], "size": [150, 64] },
+    { "id": "customer-systems", "type": "external", "label": "Customer systems", "sublabel": "GitHub, AWS, HR, IdP", "tag": "uploads too", "pos": [40, 170], "size": [150, 64] },
+    { "id": "connectors", "type": "backend", "label": "1 Connectors", "sublabel": "complete syncs + receipts", "pos": [295, 170], "size": [150, 64] },
+    { "id": "ingestion", "type": "backend", "label": "2 Ingestion", "sublabel": "hash raw, map to facts", "pos": [550, 170], "size": [150, 64] },
+    { "id": "evidence-store", "type": "database", "label": "3 Evidence store", "sublabel": "Postgres, bitemporal, RLS", "pos": [805, 170], "size": [150, 64] },
+    { "id": "rules-engine", "type": "backend", "label": "4 Rules engine", "sublabel": "decides every status", "tag": "abstains if incomplete", "pos": [1060, 170], "size": [150, 64] },
+    { "id": "customer-ui", "type": "frontend", "label": "11 Customer UI", "sublabel": "findings, inbox, auditors", "pos": [1315, 170], "size": [150, 64] },
+    { "id": "reviewer", "type": "external", "icon": "person", "label": "Reviewer", "sublabel": "customer staff", "pos": [1570, 170], "size": [150, 64] },
+    { "id": "voyage", "type": "cloud", "label": "Voyage", "sublabel": "voyage-4-large, rerank-3", "pos": [295, 320], "size": [150, 64] },
+    { "id": "retrieval", "type": "backend", "label": "Retrieval", "sublabel": "per-tenant hybrid, HNSW", "tag": "exact + read-span tools", "pos": [550, 320], "size": [150, 64] },
+    { "id": "tier2-extraction", "type": "backend", "label": "7 Tier 2 extraction", "sublabel": "one call, typed fields", "pos": [805, 320], "size": [150, 64] },
+    { "id": "agent-runtime", "type": "backend", "label": "5 Agent runtime", "sublabel": "graphs, budgets, run log", "tag": "versioned bundles", "pos": [1060, 320], "size": [150, 64] },
+    { "id": "approvals", "type": "security", "label": "9 Approvals", "sublabel": "payload-bound, single use", "pos": [1315, 320], "size": [150, 64] },
+    { "id": "executor", "type": "backend", "label": "Executor", "sublabel": "code-rendered PRs", "pos": [1570, 320], "size": [150, 64] },
+    { "id": "anthropic-api", "type": "cloud", "label": "Anthropic API", "sublabel": "zero-retention org", "tag": "Bedrock standby", "pos": [805, 470], "size": [150, 64] },
+    { "id": "tier3-agents", "type": "backend", "label": "7 Tier 3 agents", "sublabel": "investigate, propose only", "pos": [1060, 470], "size": [150, 64] },
+    { "id": "proposal-checks", "type": "security", "label": "Proposal checks", "sublabel": "citations, dry-run rule", "pos": [1315, 470], "size": [150, 64] },
+    { "id": "customer-repo", "type": "external", "label": "Customer repo", "sublabel": "customer merges the PR", "pos": [1570, 470], "size": [150, 64] },
+    { "id": "tool-registry", "type": "security", "label": "6 Tool registry", "sublabel": "typed tools, default deny", "tag": "REST now, MCP later", "pos": [1060, 620], "size": [150, 64] }
+  ],
+  "connections": [
+    { "id": "sync", "from": "customer-systems", "to": "connectors", "label": "API reads", "variant": "emphasis" },
+    { "id": "raw-pages", "from": "connectors", "to": "ingestion", "label": "raw pages", "variant": "emphasis" },
+    { "id": "write-raw", "from": "ingestion", "to": "raw-evidence", "label": "write once" },
+    { "id": "observations", "from": "ingestion", "to": "evidence-store", "label": "observations", "variant": "emphasis" },
+    { "id": "row-hashes", "from": "evidence-store", "to": "audit-chain", "label": "row hashes", "variant": "security" },
+    { "id": "as-of-facts", "from": "evidence-store", "to": "rules-engine", "label": "as-of facts", "variant": "emphasis" },
+    { "id": "status", "from": "rules-engine", "to": "customer-ui", "label": "status + why", "variant": "emphasis" },
+    { "id": "reviews", "from": "reviewer", "to": "customer-ui", "label": "reviews" },
+    { "id": "index", "from": "ingestion", "to": "retrieval", "label": "chunks, vectors" },
+    { "id": "embeddings", "from": "retrieval", "to": "voyage", "label": "embeddings" },
+    { "id": "top-spans", "from": "retrieval", "to": "tier2-extraction", "label": "top 6 spans" },
+    { "id": "checked-fields", "from": "tier2-extraction", "to": "evidence-store", "label": "checked fields", "variant": "security" },
+    { "id": "haiku-call", "from": "tier2-extraction", "to": "anthropic-api", "label": "Haiku 5.5" },
+    { "id": "fail-trigger", "from": "rules-engine", "to": "agent-runtime", "label": "FAIL: investigate", "variant": "dashed" },
+    { "id": "runs-graph", "from": "agent-runtime", "to": "tier3-agents", "label": "runs graph" },
+    { "id": "sonnet-call", "from": "tier3-agents", "to": "anthropic-api", "label": "Sonnet 5.5" },
+    { "id": "read-calls", "from": "tier3-agents", "to": "tool-registry", "label": "read calls" },
+    { "id": "search", "from": "tool-registry", "to": "retrieval", "label": "search, read span", "fromSide": "left", "toSide": "bottom", "via": [[625, 652]] },
+    { "id": "proposal", "from": "tier3-agents", "to": "proposal-checks", "label": "proposal" },
+    { "id": "checked-proposal", "from": "proposal-checks", "to": "approvals", "label": "checked", "variant": "security" },
+    { "id": "approve", "from": "customer-ui", "to": "approvals", "label": "approve (passkey)", "variant": "security" },
+    { "id": "grant", "from": "approvals", "to": "executor", "label": "grant", "variant": "security" },
+    { "id": "pull-request", "from": "executor", "to": "customer-repo", "label": "opens PR" }
+  ],
+  "cards": [
+    { "dot": "rose", "title": "The rule", "items": ["Code decides every status from complete, versioned facts", "Models read, extract and propose; they never set a status", "People approve every change to customer systems"] },
+    { "dot": "cyan", "title": "Platform", "items": ["One Python service (FastAPI) on AWS ECS Fargate", "RDS PostgreSQL 17 per cell, forced row-level security", "S3 Object Lock and a KMS key per tenant", "Planned for about 500 tenants at 18 months"] },
+    { "dot": "violet", "title": "Models", "items": ["Anthropic API in a zero-retention organization", "Haiku 5.5 extracts, Sonnet 5.5 investigates, Opus 5.5 only where measured", "Tier 2 fields enter the store as facts only after code checks their citations"] },
+    { "dot": "emerald", "title": "8 Evals", "items": ["Every release bundle passes per-model evals", "Gold sets sized to a 1% false-PASS bound", "Daily production canary and sampled judges"] },
+    { "dot": "amber", "title": "9 Guardrails, 10 Observability", "items": ["Evidence never in the user turn; default-deny tools", "Run log in Postgres is the record; Langfuse sees metadata only", "Hash chain with hourly signed checkpoints"] },
+    { "dot": "slate", "title": "Later, on a trigger", "items": ["MCP server for customers' agents", "Opt-in runbook role with passkey approvals", "Fan-out for breadth work; DBOS if the queue falls short"] }
+  ]
+}

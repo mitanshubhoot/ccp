@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "8386dec5-71da-4998-af2f-b7382678b471",
+  "status": "current",
+  "command": "deliver",
+  "type": "dataflow",
+  "input": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\dataflow-ccp-event-to-report\\candidate.json",
+  "output": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\dataflow-ccp-event-to-report\\ccp-event-to-report.html",
+  "specification": {
+    "sha256": "01a829fc871fc754e4dce7064917b1f33cf5ce4f1db9c417f2543a08582ff50a",
+    "bytes": 5630
+  },
+  "artifact": {
+    "sha256": "9ebecdfc017dc08955e28e8b937112ea2c616a1769bf111aad497dd6e23a89e8",
+    "bytes": 832020
+  }
+}

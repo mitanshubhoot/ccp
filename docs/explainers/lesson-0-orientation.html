@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0, The Big Picture</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+  :root {
+    --bg: #f2f4f6;
+    --paper: #ffffff;
+    --ink: #1b2430;
+    --ink-soft: #5b6674;
+    --line: #cfd6de;
+    --blue: #2f5d8a;
+    --green: #2e7d5b;
+    --amber: #b8791e;
+    --purple: #a34a9a;
+    --red: #c8322b;
+    --blue-bg: #e4ecf5;
+    --green-bg: #e1f0e8;
+    --amber-bg: #f7ecd7;
+    --purple-bg: #f2e3f0;
+    --red-bg: #f8e1df;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151a20; --paper: #1e242c; --ink: #eef1f4; --ink-soft: #a3adb8; --line: #384350;
+      --blue: #7fb0e0; --green: #6fc79b; --amber: #e6b45c; --purple: #d98ad0; --red: #ef6b62;
+      --blue-bg: #22344a; --green-bg: #1f3a2e; --amber-bg: #3c2f1a; --purple-bg: #3a2438; --red-bg: #45201e;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #151a20; --paper: #1e242c; --ink: #eef1f4; --ink-soft: #a3adb8; --line: #384350;
+    --blue: #7fb0e0; --green: #6fc79b; --amber: #e6b45c; --purple: #d98ad0; --red: #ef6b62;
+    --blue-bg: #22344a; --green-bg: #1f3a2e; --amber-bg: #3c2f1a; --purple-bg: #3a2438; --red-bg: #45201e;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+    font-size: 18px;
+    line-height: 1.5;
+    margin: 0;
+    padding-inline: 20px;
+    padding-block: 40px 80px;
+  }
+  main { max-width: 820px; margin: 0 auto; display: grid; gap: 64px; }
+
+  h1, h2, h3 {
+    font-family: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+    text-wrap: balance;
+    line-height: 1.05;
+    margin: 0;
+  }
+  h1 { font-size: clamp(38px, 7vw, 60px); font-weight: 800; letter-spacing: -0.02em; }
+  h2 { font-size: clamp(26px, 4.5vw, 34px); font-weight: 800; letter-spacing: -0.01em; }
+  h3 { font-size: 20px; font-weight: 800; margin-top: 8px; }
+  p { margin: 0; max-width: 64ch; }
+  .lede { color: var(--ink-soft); font-size: 20px; margin-top: 14px; }
+
+  section { display: grid; gap: 18px; }
+  figure { margin: 0; display: grid; gap: 12px; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { color: var(--ink-soft); font-size: 16px; max-width: 64ch; }
+
+  .eyebrow {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  code {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.85em;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 1px 6px;
+  }
+  pre {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 14px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 0;
+  }
+
+  .note {
+    background: var(--amber-bg);
+    border-left: 6px solid var(--amber);
+    border-radius: 12px;
+    padding: 14px 18px;
+    display: grid;
+    gap: 8px;
+  }
+  .note strong { color: var(--amber); }
+
+  .card {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 18px 20px;
+    display: grid;
+    gap: 8px;
+  }
+  .cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .card.blue { border-top: 6px solid var(--blue); }
+  .card.green { border-top: 6px solid var(--green); }
+  .card.amber { border-top: 6px solid var(--amber); }
+  .card.purple { border-top: 6px solid var(--purple); }
+  .card.red { border-top: 6px solid var(--red); }
+  .big { font-family: "Bricolage Grotesque", system-ui, sans-serif; font-size: 40px; font-weight: 800; line-height: 1; }
+
+  .tablewrap { overflow-x: auto; background: var(--paper); border: 1px solid var(--line); border-radius: 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); }
+  tr:last-child td { border-bottom: 0; }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 700; }
+  .pill.t1 { background: var(--green-bg); color: var(--green); }
+  .pill.t2 { background: var(--amber-bg); color: var(--amber); }
+  .pill.t3 { background: var(--purple-bg); color: var(--purple); }
+
+  ol.quiz { display: grid; gap: 12px; padding-left: 24px; font-size: 19px; }
+  ul.plain { padding-left: 22px; display: grid; gap: 6px; }
+  .end { color: var(--ink-soft); font-size: 16px; }
+
+  /* SVG text uses the page palette */
+  svg text { font-family: "Atkinson Hyperlegible", system-ui, sans-serif; fill: var(--ink); }
+  svg .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+  svg .soft { fill: var(--ink-soft); }
+  svg .box { fill: var(--paper); stroke: var(--line); stroke-width: 2; }
+  svg .blue { fill: var(--blue-bg); stroke: var(--blue); stroke-width: 2; }
+  svg .green { fill: var(--green-bg); stroke: var(--green); stroke-width: 2; }
+  svg .amber { fill: var(--amber-bg); stroke: var(--amber); stroke-width: 2; }
+  svg .purple { fill: var(--purple-bg); stroke: var(--purple); stroke-width: 2; }
+  svg .red { fill: var(--red-bg); stroke: var(--red); stroke-width: 2; }
+  svg .arrow { stroke: var(--ink-soft); stroke-width: 2.5; fill: none; marker-end: url(#head); }
+  svg .cross { stroke: var(--red); stroke-width: 5; stroke-linecap: round; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <div class="eyebrow">ccp, Lesson 0, told simply</div>
+  <h1>A Robot Hall Monitor for Company Rules</h1>
+  <p class="lede">The repo builds a program that watches a company's systems, checks them against rulebooks, remembers what it believed and when, and asks a human before it ever touches anything. Ten pictures, one story, same order as the professor's lesson.</p>
+</header>
+
+<section>
+  <div class="note">
+    <strong>Two honest notes first.</strong>
+    <p><b>There are three verdict tiers, not four.</b> Tier 1 decides with plain rules, tier 2 reads one document, tier 3 reads two and pauses for a human. The "four" that exists is the test harness's four <i>levels</i>: unit, component, workflow, e2e (spec A-15, D4). Two different counts, two different words.</p>
+    <p><b>The spec's first line is stale.</b> Line 3 says no code exists yet. The code is the current truth; spec section 22 (A-1 to A-94) records every place the build drifted from the plan. The README still says A-92, but the review commit added A-93 and A-94.</p>
+  </div>
+</section>
+
+<!-- PART 1 -->
+<section>
+  <div class="eyebrow">Part 1 of 10</div>
+  <h2>What it does, and the Jane Smith story</h2>
+  <p>Big companies promise auditors they follow rules (SOC 2, ISO 27001). Products like Vanta and Drata check those promises automatically. This repo is a small, honest copy of that shape.</p>
+  <div class="cards">
+    <div class="card blue"><div class="big">2</div><p>connectors: GitHub and a pretend HR system, plus a folder for uploaded files</p></div>
+    <div class="card green"><div class="big">2</div><p>rulebook slices: SOC 2 and ISO 27001:2022</p></div>
+    <div class="card amber"><div class="big">9 / 10</div><p>nine controls, ten tests</p></div>
+    <div class="card purple"><div class="big">2</div><p>customers ("tenants"): acme and globex</p></div>
+  </div>
+  <figure>
+    <svg viewBox="0 0 800 300" role="img" aria-label="Jane Smith is terminated in HR on August 20 but still has GitHub access on August 25">
+      <defs><marker id="head" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-soft)"/></marker></defs>
+      <rect x="20" y="30" width="330" height="200" rx="16" class="blue"/>
+      <text x="40" y="65" font-size="20" font-weight="700">HR system (acme)</text>
+      <text x="40" y="100" font-size="17">Jane Smith, employee E1042</text>
+      <text x="40" y="130" font-size="17">status: <tspan font-weight="700" fill="var(--red)">terminated</tspan></text>
+      <text x="40" y="160" font-size="15" class="mono soft">2026-08-20T17:00Z</text>
+      <text x="40" y="205" font-size="14" class="soft">fixtures/acme/hris/employees.json:6</text>
+
+      <rect x="450" y="30" width="330" height="200" rx="16" class="amber"/>
+      <text x="470" y="65" font-size="20" font-weight="700">GitHub (acme-example)</text>
+      <text x="470" y="100" font-size="17">login jsmith, still an org member</text>
+      <text x="470" y="130" font-size="17">still a collaborator on <tspan class="mono">platform</tspan></text>
+      <text x="470" y="160" font-size="15" class="mono soft">seen 2026-08-25</text>
+      <text x="470" y="205" font-size="14" class="soft">fixtures/acme/github/members.json:3</text>
+
+      <path d="M350,130 L450,130" class="arrow"/>
+      <text x="400" y="118" font-size="14" text-anchor="middle" class="soft">same person?</text>
+
+      <rect x="230" y="245" width="340" height="44" rx="10" class="red"/>
+      <text x="400" y="274" font-size="18" font-weight="700" text-anchor="middle" fill="var(--red)">Test HR-1 must say FAIL and propose removal</text>
+    </svg>
+    <figcaption>The one story the whole build must prove: a person is gone from HR but not from GitHub. Finding it means joining two systems through identity resolution, writing the fail into state, and proposing a fix (spec.md lines 62 to 66).</figcaption>
+  </figure>
+</section>
+
+<!-- PART 2 -->
+<section>
+  <div class="eyebrow">Part 2 of 10</div>
+  <h2>The pipeline, one conveyor belt</h2>
+  <figure>
+    <svg viewBox="0 0 800 760" role="img" aria-label="Pipeline from fixtures to raw zone to entities to identity links to verdicts to state to agents">
+      <!-- column of stages -->
+      <rect x="40" y="20" width="720" height="56" rx="12" class="box"/>
+      <text x="60" y="44" font-size="16" font-weight="700">1. Fixtures</text>
+      <text x="60" y="66" font-size="14" class="soft">fixtures/{tenant}/{github, hris, uploads}  ->  Connector.pull() gives SourceEvents  (L1 ccp/connectors)</text>
+      <path d="M400,76 L400,96" class="arrow"/>
+
+      <rect x="40" y="100" width="720" height="56" rx="12" class="box"/>
+      <text x="60" y="124" font-size="16" font-weight="700">2. Raw zone + event log</text>
+      <text x="60" y="146" font-size="14" class="soft">data/raw/ never rewritten; event_log table; consumers claim with SKIP LOCKED; dead_letter  (L2 ccp/ingest)</text>
+      <path d="M400,156 L400,176" class="arrow"/>
+
+      <rect x="40" y="180" width="720" height="56" rx="12" class="box"/>
+      <text x="60" y="204" font-size="16" font-weight="700">3. Entities</text>
+      <text x="60" y="226" font-size="14" class="soft">Person, AccessGrant, Asset, Finding, Evidence, Vendor  (L3 ccp/normalize)</text>
+      <path d="M400,236 L400,256" class="arrow"/>
+
+      <rect x="40" y="260" width="720" height="56" rx="12" class="box"/>
+      <text x="60" y="284" font-size="16" font-weight="700">4. Identity links</text>
+      <text x="60" y="306" font-size="14" class="soft">block -> gate -> score -> route; person_links says jsmith is E1042  (L4 ccp/identity)</text>
+      <path d="M400,316 L400,336" class="arrow"/>
+
+      <rect x="40" y="340" width="720" height="56" rx="12" class="box"/>
+      <text x="60" y="364" font-size="16" font-weight="700">5. Impact step</text>
+      <text x="60" y="386" font-size="14" class="soft">impact.py: an entity changed -> which (test, subject) pairs to re-check -> evaluations topic</text>
+
+      <path d="M200,396 L200,426" class="arrow"/>
+      <path d="M400,396 L400,426" class="arrow"/>
+      <path d="M600,396 L600,426" class="arrow"/>
+      <rect x="60" y="430" width="230" height="62" rx="12" class="green"/>
+      <text x="175" y="455" font-size="15" font-weight="700" text-anchor="middle">Tier 1: plain rules</text>
+      <text x="175" y="478" font-size="13" text-anchor="middle" class="soft">deterministic/*.py, no model</text>
+      <rect x="300" y="430" width="200" height="62" rx="12" class="amber"/>
+      <text x="400" y="455" font-size="15" font-weight="700" text-anchor="middle">Tier 2: read + rule</text>
+      <text x="400" y="478" font-size="13" text-anchor="middle" class="soft">retrieval, llm, extract</text>
+      <rect x="510" y="430" width="230" height="62" rx="12" class="purple"/>
+      <text x="625" y="455" font-size="15" font-weight="700" text-anchor="middle">Tier 3: LangGraph</text>
+      <text x="625" y="478" font-size="13" text-anchor="middle" class="soft">ccp/agent, human gate</text>
+      <path d="M175,492 L175,516" class="arrow"/>
+      <path d="M400,492 L400,516" class="arrow"/>
+      <path d="M625,492 L625,516" class="arrow"/>
+
+      <rect x="40" y="520" width="720" height="56" rx="12" class="box"/>
+      <text x="60" y="544" font-size="16" font-weight="700">6. Verdicts</text>
+      <text x="60" y="566" font-size="14" class="soft">append-only table; evaluation_key is UNIQUE so a retry never writes twice  (L7 ccp/evaluators)</text>
+      <path d="M400,576 L400,596" class="arrow"/>
+
+      <rect x="40" y="600" width="720" height="56" rx="12" class="blue"/>
+      <text x="60" y="624" font-size="16" font-weight="700">7. Compliance state (bitemporal) -> report rollup</text>
+      <text x="60" y="646" font-size="14" class="soft">remembers what is true AND what we believed at each moment  (L5 storage, L9 compliance_state)</text>
+
+      <path d="M160,656 L160,690" class="arrow"/>
+      <path d="M400,656 L400,690" class="arrow"/>
+      <path d="M640,656 L640,690" class="arrow"/>
+      <rect x="40" y="694" width="240" height="56" rx="12" class="box"/>
+      <text x="160" y="717" font-size="14" font-weight="700" text-anchor="middle">Investigator (L14)</text>
+      <text x="160" y="738" font-size="12" text-anchor="middle" class="soft">proposal -> approvals (L16) -> remediation (L10) -> re-evaluate</text>
+      <rect x="290" y="694" width="220" height="56" rx="12" class="box"/>
+      <text x="400" y="717" font-size="14" font-weight="700" text-anchor="middle">Policy Agent (L15)</text>
+      <text x="400" y="738" font-size="12" text-anchor="middle" class="soft">drafts/ folder + an approval</text>
+      <rect x="520" y="694" width="240" height="56" rx="12" class="box"/>
+      <text x="640" y="717" font-size="14" font-weight="700" text-anchor="middle">Copilot (L17)</text>
+      <text x="640" y="738" font-size="12" text-anchor="middle" class="soft">same tools; "fix" only opens an approval</text>
+    </svg>
+    <figcaption>Every box is a layer number from spec.md. Data only moves down the belt; nothing at the bottom can reach back up and change the top.</figcaption>
+  </figure>
+</section>
+
+<!-- PART 3 -->
+<section>
+  <div class="eyebrow">Part 3 of 10</div>
+  <h2>The two rules every agent obeys</h2>
+  <figure>
+    <svg viewBox="0 0 800 330" role="img" aria-label="Two rules: graphs read and runners write; models extract and code decides">
+      <rect x="20" y="20" width="370" height="290" rx="16" class="green"/>
+      <text x="205" y="55" font-size="20" font-weight="800" text-anchor="middle">Graphs read, runners write</text>
+      <rect x="50" y="80" width="130" height="60" rx="10" class="box"/>
+      <text x="115" y="106" font-size="14" text-anchor="middle" font-weight="700">LangGraph graph</text>
+      <text x="115" y="126" font-size="12" text-anchor="middle" class="soft">only looks</text>
+      <path d="M180,110 L230,110" class="arrow"/>
+      <rect x="232" y="80" width="130" height="60" rx="10" class="box"/>
+      <text x="297" y="106" font-size="14" text-anchor="middle" font-weight="700">typed proposal</text>
+      <text x="297" y="126" font-size="12" text-anchor="middle" class="soft">verdict, draft, action</text>
+      <path d="M297,140 L297,180" class="arrow"/>
+      <rect x="232" y="184" width="130" height="60" rx="10" class="box"/>
+      <text x="297" y="210" font-size="14" text-anchor="middle" font-weight="700">plain Python runner</text>
+      <text x="297" y="230" font-size="12" text-anchor="middle" class="soft">saves it / opens approval</text>
+      <text x="205" y="285" font-size="13" text-anchor="middle" class="soft">Buys: one allowlist test + one isolation test cover all four graphs</text>
+
+      <rect x="410" y="20" width="370" height="290" rx="16" class="amber"/>
+      <text x="595" y="55" font-size="20" font-weight="800" text-anchor="middle">Models extract, code decides</text>
+      <rect x="440" y="80" width="130" height="60" rx="10" class="box"/>
+      <text x="505" y="106" font-size="14" text-anchor="middle" font-weight="700">the model</text>
+      <text x="505" y="126" font-size="12" text-anchor="middle" class="soft">fills fields + quotes</text>
+      <path d="M570,110 L620,110" class="arrow"/>
+      <rect x="622" y="80" width="130" height="60" rx="10" class="box"/>
+      <text x="687" y="106" font-size="14" text-anchor="middle" font-weight="700">pure rule</text>
+      <text x="687" y="126" font-size="12" text-anchor="middle" class="soft">pass / fail / partial</text>
+      <text x="595" y="185" font-size="15" text-anchor="middle">The model <tspan font-weight="700" fill="var(--red)">never</tspan> says pass or fail.</text>
+      <text x="595" y="212" font-size="15" text-anchor="middle">Each field carries a citation that is checked.</text>
+      <text x="595" y="285" font-size="13" text-anchor="middle" class="soft">Buys: replayable verdicts, confidence that is measured</text>
+    </svg>
+    <figcaption>spec.md lines 229 to 240. The first rule keeps side effects out of every graph. The second keeps the verdict out of the model's mouth, so a trick hidden in a document can only poison a field, and citation checking then drops that field.</figcaption>
+  </figure>
+</section>
+
+<!-- PART 4 -->
+<section>
+  <div class="eyebrow">Part 4 of 10</div>
+  <h2>Three tiers, ten tests</h2>
+  <p>Which tier a test uses is written in <code>ccp/knowledge/tests.yaml</code> (<code>evaluation:</code> and <code>evidence_types:</code>), not decided in code branches.</p>
+  <figure>
+    <svg viewBox="0 0 800 250" role="img" aria-label="Three tiers by how much reading they need">
+      <rect x="20" y="30" width="240" height="180" rx="16" class="green"/>
+      <text x="140" y="65" font-size="22" font-weight="800" text-anchor="middle">Tier 1</text>
+      <text x="140" y="95" font-size="15" text-anchor="middle">counts and joins over entities</text>
+      <text x="140" y="120" font-size="15" text-anchor="middle">no model, no network</text>
+      <text x="140" y="145" font-size="15" text-anchor="middle">confidence always 1.0</text>
+      <text x="140" y="185" font-size="14" text-anchor="middle" class="mono">7 tests</text>
+
+      <rect x="280" y="30" width="240" height="180" rx="16" class="amber"/>
+      <text x="400" y="65" font-size="22" font-weight="800" text-anchor="middle">Tier 2</text>
+      <text x="400" y="95" font-size="15" text-anchor="middle">one document type</text>
+      <text x="400" y="120" font-size="15" text-anchor="middle">retrieve, extract, verify, rule</text>
+      <text x="400" y="145" font-size="15" text-anchor="middle">Haiku 4.5</text>
+      <text x="400" y="185" font-size="14" text-anchor="middle" class="mono">GH-4, HR-3</text>
+
+      <rect x="540" y="30" width="240" height="180" rx="16" class="purple"/>
+      <text x="660" y="65" font-size="22" font-weight="800" text-anchor="middle">Tier 3</text>
+      <text x="660" y="95" font-size="15" text-anchor="middle">two document types</text>
+      <text x="660" y="120" font-size="15" text-anchor="middle">fixed LangGraph + human gate</text>
+      <text x="660" y="145" font-size="15" text-anchor="middle">Sonnet 5</text>
+      <text x="660" y="185" font-size="14" text-anchor="middle" class="mono">HR-4</text>
+      <text x="400" y="238" font-size="14" text-anchor="middle" class="soft">tier 1: ccp/evaluators/deterministic/   tier 2: tier2.py, rules/, extraction/   tier 3: ccp/agent/tier3.py, graphs/tier3.py</text>
+    </svg>
+    <figcaption>A tier 3 tool loop exists only as a fallback when the direct fetch finds nothing, and using it is logged as a guardrail event.</figcaption>
+  </figure>
+  <div class="note">
+    <strong>Spec miscount.</strong>
+    <p>The phase plan says "eight deterministic modules" (spec.md line 2201). Ten tests minus three interpretive ones is seven, and the folder has seven: gh1, gh2, gh3, gh5, hr1, hr2, hr5. The code is right.</p>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Id</th><th>Question</th><th>Tier</th><th>Subject</th><th>Fixture expectation</th></tr></thead>
+      <tbody>
+        <tr><td>GH-1</td><td>terminated person still in GitHub</td><td><span class="pill t1">1</span></td><td>person</td><td>Jane Smith fail</td></tr>
+        <tr><td>GH-2</td><td>admin count within limit</td><td><span class="pill t1">1</span></td><td>org</td><td>per tenant limit (3 / 2)</td></tr>
+        <tr><td>GH-3</td><td>default branch requires review</td><td><span class="pill t1">1</span></td><td>repo</td><td>partial when admins exempt</td></tr>
+        <tr><td>GH-4</td><td>disclosure policy states a timeline</td><td><span class="pill t2">2</span></td><td>repo</td><td>acme pass, globex fail/partial (the injection fixture)</td></tr>
+        <tr><td>GH-5</td><td>no plaintext secrets</td><td><span class="pill t1">1</span></td><td>repo</td><td>acme <code>ghp_</code> in <code>.env.example</code> fails</td></tr>
+        <tr><td>HR-1</td><td>zero active grants after SLA</td><td><span class="pill t1">1</span></td><td>person</td><td>Jane Smith fail, both grants cited</td></tr>
+        <tr><td>HR-2</td><td>all identities have MFA</td><td><span class="pill t1">1</span></td><td>tenant</td><td>one offender each tenant</td></tr>
+        <tr><td>HR-3</td><td>training record theirs, complete, fresh</td><td><span class="pill t2">2</span></td><td>person</td><td>wrong-person, in-progress, stale cases</td></tr>
+        <tr><td>HR-4</td><td>access review covers all critical systems</td><td><span class="pill t3">3</span></td><td>tenant</td><td>acme partial (missing Payroll-SaaS), globex pass</td></tr>
+        <tr><td>HR-5</td><td>shared accounts have owners</td><td><span class="pill t1">1</span></td><td>tenant</td><td>acme <code>ops-shared</code> fail</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="end">Source: spec.md lines 2149 to 2168. Remember: tiers are how a verdict is made. Levels (unit, component, workflow, e2e) are how the harness groups its checks.</p>
+</section>
+
+<!-- PART 5 -->
+<section>
+  <div class="eyebrow">Part 5 of 10</div>
+  <h2>The building: floors may look down, never up</h2>
+  <p>The list in <code>pyproject.toml</code> lines 78 to 108 is a stack. A higher floor may import a lower one. A lower floor importing a higher one fails the build. The order matches the lessons, bottom up.</p>
+  <figure>
+    <svg viewBox="0 0 800 700" role="img" aria-label="Import layer stack drawn as floors of a building">
+      <g font-size="15">
+        <rect x="120" y="20" width="560" height="38" rx="8" class="box"/><text x="140" y="45" font-weight="700">cli</text><text x="660" y="45" text-anchor="end" class="soft">Lesson 0 / 16</text>
+        <rect x="120" y="62" width="560" height="38" rx="8" class="box"/><text x="140" y="87" font-weight="700">evals</text><text x="660" y="87" text-anchor="end" class="soft">Lesson 13</text>
+        <rect x="120" y="104" width="560" height="38" rx="8" class="box"/><text x="140" y="129" font-weight="700">replay</text><text x="660" y="129" text-anchor="end" class="soft">Lesson 14</text>
+        <rect x="120" y="146" width="560" height="38" rx="8" class="box"/><text x="140" y="171" font-weight="700">copilot, investigation, policy</text><text x="660" y="171" text-anchor="end" class="soft">Lesson 12</text>
+        <rect x="120" y="188" width="560" height="38" rx="8" class="box"/><text x="140" y="213" font-weight="700">remediation, approvals.cli, approvals.actions</text><text x="660" y="213" text-anchor="end" class="soft">Lesson 11</text>
+        <rect x="120" y="230" width="560" height="38" rx="8" class="box"/><text x="140" y="255" font-weight="700">compliance_state</text><text x="660" y="255" text-anchor="end" class="soft">Lesson 10</text>
+        <rect x="120" y="272" width="560" height="38" rx="8" class="box"/><text x="140" y="297" font-weight="700">agent</text><text x="660" y="297" text-anchor="end" class="soft">Lesson 9</text>
+        <rect x="120" y="314" width="560" height="38" rx="8" class="box"/><text x="140" y="339" font-weight="700">evaluators</text><text x="660" y="339" text-anchor="end" class="soft">Lesson 8</text>
+        <rect x="120" y="356" width="560" height="38" rx="8" class="box"/><text x="140" y="381" font-weight="700">retrieval</text><text x="660" y="381" text-anchor="end" class="soft">Lesson 7</text>
+        <rect x="120" y="398" width="560" height="38" rx="8" class="box"/><text x="140" y="423" font-weight="700">llm</text><text x="660" y="423" text-anchor="end" class="soft">Lesson 6</text>
+        <rect x="120" y="440" width="560" height="38" rx="8" class="box"/><text x="140" y="465" font-weight="700">knowledge</text><text x="660" y="465" text-anchor="end" class="soft">Lesson 5</text>
+        <rect x="120" y="482" width="560" height="38" rx="8" class="box"/><text x="140" y="507" font-weight="700">identity, normalize</text><text x="660" y="507" text-anchor="end" class="soft">Lesson 4</text>
+        <rect x="120" y="524" width="560" height="38" rx="8" class="box"/><text x="140" y="549" font-weight="700">ingest, connectors</text><text x="660" y="549" text-anchor="end" class="soft">Lesson 3</text>
+        <rect x="120" y="566" width="560" height="38" rx="8" class="amber"/><text x="140" y="591" font-weight="700">approvals.store</text><text x="660" y="591" text-anchor="end" class="soft">Lesson 11, sits LOW on purpose</text>
+        <rect x="120" y="608" width="560" height="38" rx="8" class="box"/><text x="140" y="633" font-weight="700">storage</text><text x="660" y="633" text-anchor="end" class="soft">Lesson 2</text>
+        <rect x="120" y="650" width="560" height="38" rx="8" class="blue"/><text x="140" y="675" font-weight="700">security, observability, tenancy, config, types</text><text x="660" y="675" text-anchor="end" class="soft">Lesson 1, the floor</text>
+      </g>
+      <path d="M60,650 L60,60" class="arrow"/>
+      <text x="40" y="360" font-size="13" transform="rotate(-90 40 360)" text-anchor="middle" class="soft">imports allowed this way only</text>
+    </svg>
+    <figcaption><code>ccp/types.py</code> is the true ground floor ("imports nothing from the package"). <code>approvals.store</code> is split off and placed just above storage so graph wrappers can open approval items without importing the approval CLI.</figcaption>
+  </figure>
+  <h3>Six extra house rules the same test file checks by reading source text</h3>
+  <p><code>tests/unit/test_layering.py</code> lines 66 to 140:</p>
+  <ul class="plain">
+    <li><code>anthropic</code> is imported only in <code>ccp/llm/anthropic_client.py</code>.</li>
+    <li><code>DATABASE_ADMIN_URL</code> appears only in <code>ccp/config.py</code> and <code>ccp/storage/db.py</code>.</li>
+    <li><code>voyageai</code> and <code>openai</code> only in <code>ccp/retrieval/embeddings.py</code> and <code>rerank.py</code>.</li>
+    <li>The fence string <code>&lt;&lt;EVIDENCE-</code> is built only in <code>ccp/security/prompt_guard.py</code>.</li>
+    <li>Deterministic evaluators never import <code>ccp.llm</code>, <code>anthropic</code>, <code>langgraph</code>, <code>httpx</code>, <code>voyageai</code>, <code>openai</code>.</li>
+    <li><code>ccp/agent/tools.py</code> never imports remediation, approvals, policy, or investigation.</li>
+  </ul>
+</section>
+
+<!-- PART 6 -->
+<section>
+  <div class="eyebrow">Part 6 of 10</div>
+  <h2>Where the map and the land disagree</h2>
+  <p>spec.md's layout (lines 286 to 388) was drawn before the build. When it and the code disagree, the code is current and section 22 says why.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Spec says</th><th>Code has</th></tr></thead>
+      <tbody>
+        <tr><td><code>ccp/evaluators/router.py</code>, <code>tier3.py</code></td><td><code>ccp/evaluators/registry.py</code>; tier 3 lives in <code>ccp/agent/tier3.py</code></td></tr>
+        <tr><td><code>ccp/observability/replay.py</code></td><td>its own package <code>ccp/replay/rebuild.py</code></td></tr>
+        <tr><td><code>ccp/identity/review_queue.py</code></td><td>no such file; identity is <code>blocking, config, resolver, scoring</code></td></tr>
+        <tr><td><code>ccp/storage/rls.sql</code></td><td><code>migrations/0002_rls.sql</code>, one of 15 migrations <code>0001</code> to <code>0015</code></td></tr>
+        <tr><td>no <code>ccp/types.py</code></td><td>exists, and is the bottom of the layer list</td></tr>
+        <tr><td>D8: Langfuse self-hosted in Docker</td><td>superseded by D9 and the stack table: Langfuse Cloud; <code>docker-compose.yml</code> runs Postgres only</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- PART 7 -->
+<section>
+  <div class="eyebrow">Part 7 of 10</div>
+  <h2>How to read the big rulebook, spec.md</h2>
+  <figure>
+    <svg viewBox="0 0 800 300" role="img" aria-label="Five things to know when reading spec.md">
+      <rect x="20" y="20" width="240" height="120" rx="14" class="blue"/>
+      <text x="140" y="52" font-size="16" font-weight="800" text-anchor="middle">Layer numbers stick</text>
+      <text x="140" y="80" font-size="13" text-anchor="middle">"Layer 7" is always the evaluators,</text>
+      <text x="140" y="100" font-size="13" text-anchor="middle">wherever it sits in the contents</text>
+      <text x="140" y="125" font-size="12" text-anchor="middle" class="soft">lines 47 to 50</text>
+
+      <rect x="280" y="20" width="240" height="120" rx="14" class="green"/>
+      <text x="400" y="52" font-size="16" font-weight="800" text-anchor="middle">Section 22: A-1 to A-94</text>
+      <text x="400" y="80" font-size="13" text-anchor="middle">what each phase actually did;</text>
+      <text x="400" y="100" font-size="13" text-anchor="middle">A-93, A-94 are the freshest word</text>
+      <text x="400" y="125" font-size="12" text-anchor="middle" class="soft">lines 2313 to 2314</text>
+
+      <rect x="540" y="20" width="240" height="120" rx="14" class="amber"/>
+      <text x="660" y="52" font-size="16" font-weight="800" text-anchor="middle">Section 23: D1 to D9</text>
+      <text x="660" y="80" font-size="13" text-anchor="middle">decisions; D9 points at</text>
+      <text x="660" y="100" font-size="13" text-anchor="middle">docs/eng-review-2026-09-11.md</text>
+      <text x="660" y="125" font-size="12" text-anchor="middle" class="soft">22 rationale entries live there</text>
+
+      <rect x="150" y="160" width="240" height="120" rx="14" class="purple"/>
+      <text x="270" y="192" font-size="16" font-weight="800" text-anchor="middle">Section 21: the phases</text>
+      <text x="270" y="220" font-size="13" text-anchor="middle">17 phases, each with "done when";</text>
+      <text x="270" y="240" font-size="13" text-anchor="middle">doubles as a test index</text>
+
+      <rect x="410" y="160" width="240" height="120" rx="14" class="red"/>
+      <text x="530" y="192" font-size="16" font-weight="800" text-anchor="middle">Section 15: S1 to S21</text>
+      <text x="530" y="220" font-size="13" text-anchor="middle">every guardrail names the test</text>
+      <text x="530" y="240" font-size="13" text-anchor="middle">under tests/security/ that proves it</text>
+    </svg>
+    <figcaption>When a code choice looks strange and its layer section does not explain it, grep the spec for <code>A-</code> first.</figcaption>
+  </figure>
+</section>
+
+<!-- PART 8 -->
+<section>
+  <div class="eyebrow">Part 8 of 10</div>
+  <h2>The buttons you can press</h2>
+  <p>Every command takes <code>--tenant</code> or <code>CCP_TENANT</code>. There is no login: the CLI is the operator, and approvals record a typed reviewer name. Sub-apps are registered in <code>ccp/cli.py</code> lines 52 to 77 and 449 to 455.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Area</th><th>Commands</th><th>Defined at</th></tr></thead>
+      <tbody>
+        <tr><td>Pipeline</td><td><code>ccp run</code>, <code>ccp report</code></td><td>cli.py 80, 430</td></tr>
+        <tr><td>Setup</td><td><code>tenants list</code>, <code>db migrate</code>, <code>db check</code>, <code>knowledge load/show</code></td><td>cli.py 807 to 837, 402 to 428</td></tr>
+        <tr><td>Ingest</td><td><code>connectors pull</code>, <code>ingest run</code>, <code>worker run/list</code>, <code>normalize run</code>, <code>identity resolve/review</code></td><td>cli.py 458 to 566, 763</td></tr>
+        <tr><td>Evaluate</td><td><code>evaluate run/list/clock</code>, <code>state current/history/asof</code></td><td>cli.py 100 to 212, 368 to 400</td></tr>
+        <tr><td>Retrieval</td><td><code>index rebuild/refresh/stats/distractors/calibrate/search</code></td><td>cli.py 212 to 366</td></tr>
+        <tr><td>Agents</td><td><code>agent pending/inspect/resume</code>, <code>investigate run</code>, <code>policy gap/draft</code>, <code>copilot</code></td><td>mounted from their packages</td></tr>
+        <tr><td>Human</td><td><code>approvals list/approve/reject</code>, <code>remediate propose/execute/simulate/rollback/reevaluate</code></td><td>mounted from their packages</td></tr>
+        <tr><td>Evals</td><td><code>evals run/calibrate/regress/capture/threshold</code></td><td>cli.py 586 to 709</td></tr>
+        <tr><td>Replay</td><td><code>replay &lt;id&gt; [--execute]</code></td><td>cli.py 711</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="end">Try it: <code>uv run --no-sync ccp --help</code> prints the same 23 top-level entries.</p>
+</section>
+
+<!-- PART 9 -->
+<section>
+  <div class="eyebrow">Part 9 of 10</div>
+  <h2>Two customers, one shared name on purpose</h2>
+  <pre>acme     Acme Corp            github_org=acme-example   admin_limit=3 sla_h=24 critical_tags=critical,tier0
+globex   Globex Corporation   github_org=globex-example admin_limit=2 sla_h=24 critical_tags=critical</pre>
+  <figure>
+    <svg viewBox="0 0 800 300" role="img" aria-label="Both tenants have a Jane Smith and a platform repo so a leak is visible">
+      <rect x="20" y="20" width="360" height="220" rx="16" class="blue"/>
+      <text x="200" y="55" font-size="20" font-weight="800" text-anchor="middle">acme</text>
+      <text x="200" y="95" font-size="16" text-anchor="middle">a Jane Smith</text>
+      <text x="200" y="125" font-size="16" text-anchor="middle">a repo named <tspan class="mono">platform</tspan></text>
+      <text x="200" y="165" font-size="13" text-anchor="middle" class="soft">github/ 7 JSON files incl. deliveries.json</text>
+      <text x="200" y="188" font-size="13" text-anchor="middle" class="soft">hris/ employees, identities, accounts, assets, events, docs</text>
+      <text x="200" y="211" font-size="13" text-anchor="middle" class="soft">uploads/ manifest, policy .md, one PDF</text>
+
+      <rect x="420" y="20" width="360" height="220" rx="16" class="amber"/>
+      <text x="600" y="55" font-size="20" font-weight="800" text-anchor="middle">globex</text>
+      <text x="600" y="95" font-size="16" text-anchor="middle">also a Jane Smith</text>
+      <text x="600" y="125" font-size="16" text-anchor="middle">also a repo named <tspan class="mono">platform</tspan></text>
+      <text x="600" y="165" font-size="13" text-anchor="middle" class="soft">same three folders, its own numbers</text>
+      <text x="600" y="188" font-size="13" text-anchor="middle" class="soft">(employee ids G2001..., one PDF access review)</text>
+
+      <line x1="385" y1="60" x2="415" y2="200" class="cross"/>
+      <line x1="415" y1="60" x2="385" y2="200" class="cross"/>
+      <text x="400" y="275" font-size="15" text-anchor="middle">If a query crosses the wall, the wrong Jane shows up and the test sees it. A leak can never be a quiet "no result".</text>
+    </svg>
+    <figcaption>spec.md lines 435 to 438. Also: <code>config/tenants.yaml</code> carries <code>daily_budget_usd: 5.00</code> and <code>max_concurrency: 4</code>, which the spec's copy at lines 417 to 431 omits (added by A-11). acme's upload manifest pins the training PDF to employee E1058 and says the tenant is the directory, never the manifest.</figcaption>
+  </figure>
+</section>
+
+<!-- PART 10 -->
+<section>
+  <div class="eyebrow">Part 10 of 10</div>
+  <h2>Where the proof lives</h2>
+  <div class="cards">
+    <div class="card green"><div class="big">18</div><p><code>tests/unit</code>, no database needed</p></div>
+    <div class="card green"><div class="big">31</div><p><code>tests/component</code>, need Postgres (<code>db</code> marker skips otherwise)</p></div>
+    <div class="card green"><div class="big">2 / 1 / 1</div><p><code>tests/workflow</code>, <code>tests/e2e</code>, <code>tests/property</code></p></div>
+    <div class="card red"><div class="big">13</div><p><code>tests/security</code>, the S-numbered proofs</p></div>
+    <div class="card blue"><div class="big">7</div><p><code>tests/support</code> stub models: agent, copilot, extractors, investigator, judge, policy, adversarial</p></div>
+    <div class="card amber"><div class="big">69 / 4 / 2 / 30</div><p><code>evals/golden</code>: component, workflow, e2e, retrieval cases</p></div>
+    <div class="card amber"><div class="big">16</div><p><code>evals/adversarial</code> injection cases</p></div>
+    <div class="card amber"><div class="big">20</div><p><code>evals/labeled</code>: 15 verdicts + 5 copilot answers, for judge calibration</p></div>
+    <div class="card purple"><div class="big">26</div><p><code>evals/runs</code> JSON records plus <code>latest.json</code></p></div>
+  </div>
+  <p class="end">Without API keys, stubs in <code>tests/support/</code> stand in for models. That proves the mechanisms work, not that a live model behaves; the nightly keyed job is for that (README lines 98 to 100).</p>
+</section>
+
+<section>
+  <div class="eyebrow">Bonus</div>
+  <h2>Three things a senior reviewer asks</h2>
+  <div class="cards">
+    <div class="card blue"><h3>Why is Postgres the queue, the vector store, and the state store?</h3><p>D7 (spec.md 2360 to 2374): one container, and row-level security then covers the queue, the chunks, and the state with one policy. Cost: no horizontal scaling, and the checkpoint schema is a soft spot (A-40).</p></div>
+    <div class="card amber"><h3>Why does no model return a status?</h3><p>A model that says pass or fail can be tricked into a verdict. A model that returns cited fields can only be tricked into a field, and citation checking drops it.</p></div>
+    <div class="card green"><h3>What does the keyless suite prove?</h3><p>The mechanisms, using the same fenced prompts a model would see. Model behaviour is the nightly keyed job's business.</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Quiz</div>
+  <h2>Five questions</h2>
+  <ol class="quiz">
+    <li>Name the two rules from section 2 that every agent box obeys, and say which security test each one makes possible.</li>
+    <li>Which tests are tier 3, and what makes a test tier 3 rather than tier 2?</li>
+    <li>What is the lowest module in the import layer list, and why is <code>approvals.store</code> placed far below <code>approvals.cli</code>?</li>
+    <li>Why do both tenants have a "Jane Smith"?</li>
+    <li>Where would you look first when a code choice seems odd and the layer section does not explain it?</li>
+  </ol>
+  <p class="end">Say <code>next</code> for Lesson 1, or ask anything.</p>
+</section>
+
+</main>
+</body>
+</html>

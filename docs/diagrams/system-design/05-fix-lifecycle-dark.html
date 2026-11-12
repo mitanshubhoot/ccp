@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fix lifecycle · CCP</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root { --paper: #2d3142; --ink: #f5f5f5; --muted: #bfc0c0; --soft: #949eb2;
+      --accent: #f08a59; --link: #739fdf; --card: #393e53; --rule: rgba(245,245,245,0.12); }
+    body { font-family: 'Geist', system-ui, sans-serif; background: var(--paper); color: var(--ink);
+      padding: 2.5rem clamp(1rem, 3vw, 2.5rem) 3rem; }
+    .frame { max-width: 1320px; margin: 0 auto; }
+    .nav { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+      font-family: 'Geist Mono', ui-monospace, monospace; font-size: 0.68rem; letter-spacing: 0.08em; margin-bottom: 2rem; }
+    .nav a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--rule); }
+    .nav a:hover { color: var(--ink); }
+    .eyebrow { font-family: 'Geist Mono', ui-monospace, monospace; font-size: 0.66rem; font-weight: 500; letter-spacing: 0.18em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 0.5rem; }
+    h1 { font-family: 'Instrument Serif', 'Noto Serif', serif; font-size: clamp(1.6rem, 2.4vw + 0.8rem, 2.4rem); font-weight: 400;
+      letter-spacing: -0.02em; line-height: 1.12; margin-bottom: 0.75rem; }
+    .subtitle { color: var(--muted); font-size: 0.95rem; line-height: 1.55; max-width: 76ch;
+      margin-bottom: 2rem; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .diagram-container svg { width: 100%; min-width: 1280px; display: block; }
+    .cards { display: grid; gap: 1rem; margin-top: 2rem; }
+    .card { background: var(--card); border: 1px solid var(--rule); border-radius: 6px;
+      padding: 1.25rem; min-width: 0; }
+    .card .eyebrow { margin-bottom: 0.6rem; }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
+    .card h3 { font-size: 0.98rem; font-weight: 600; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+    .dot.accent { background: var(--accent); } .dot.ink { background: var(--ink); }
+    .dot.muted { background: var(--muted); }
+    .card ul { padding-left: 1rem; display: grid; gap: 0.4rem; }
+    .card li { color: var(--muted); font-size: 0.86rem; line-height: 1.5; }
+    footer { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid var(--rule);
+      font-family: 'Geist Mono', ui-monospace, monospace; font-size: 0.68rem; color: var(--muted); line-height: 1.6; }
+    @media (max-width: 880px) { .cards { grid-template-columns: 1fr !important; } }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      .diagram-container svg { min-width: 0; }
+    }
+</style>
+</head>
+<body>
+  <div class="frame">
+    <nav class="nav">
+      <a href="index-dark.html">← CCP SYSTEM DESIGN</a>
+      <span><a href="05-fix-lifecycle.html">LIGHT VERSION</a>
+      &nbsp;·&nbsp; <a href="06-evidence-chain-dark.html">NEXT:
+      EVIDENCE CHAIN →</a></span>
+    </nav>
+    <p class="eyebrow">05 · State machine · CCP target architecture</p>
+    <h1>The life of a fix suggestion</h1>
+    <p class="subtitle">CCP suggests fixes and applies none. Code renders and checks each one; a person may accept or dismiss it, but only a later read of the customer&#x27;s systems confirms it, and a FAIL within 30 days reopens it.</p>
+    <div class="diagram-container">
+<svg viewBox="0 48 1280 556" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="05-fix-lifecycle-dark-title 05-fix-lifecycle-dark-desc">
+<title id="05-fix-lifecycle-dark-title">The life of a fix suggestion</title>
+<desc id="05-fix-lifecycle-dark-desc">Lifecycle of a fix suggestion: Chosen, Rendered, Open, Accepted and Confirmed on the primary rail; Reopened as the recovery state; Not offered, Dismissed and Superseded as terminal outcomes.</desc>
+<defs><marker id="05-fix-lifecycle-dark-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bfc0c0"/></marker><marker id="05-fix-lifecycle-dark-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f08a59"/></marker><marker id="05-fix-lifecycle-dark-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#739fdf"/></marker><marker id="05-fix-lifecycle-dark-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#bfc0c0" stroke-width="1.2"/></marker></defs>
+<rect x="0" y="48" width="1280" height="556" fill="#2d3142"/>
+<rect x="24" y="72" width="1232" height="144" rx="8" fill="rgba(191,192,192,0.035)" stroke="rgba(245,245,245,0.12)"/>
+<rect x="24" y="400" width="1232" height="128" rx="8" fill="rgba(245,245,245,0.035)" stroke="rgba(245,245,245,0.12)"/>
+<text x="40" y="92" fill="#949eb2" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">RECOVERY</text>
+<text x="40" y="252" fill="#949eb2" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">PRIMARY PHASES</text>
+<text x="40" y="420" fill="#949eb2" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">TERMINAL OUTCOMES</text>
+<line x1="46" y1="308" x2="88" y2="308" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<line x1="248" y1="308" x2="320" y2="308" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<line x1="480" y1="308" x2="552" y2="308" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<line x1="712" y1="308" x2="784" y2="308" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<line x1="944" y1="308" x2="1048" y2="308" fill="none" stroke="#f08a59" stroke-width="1.4" marker-end="url(#05-fix-lifecycle-dark-arrow-accent)"/>
+<line x1="1160" y1="272" x2="1160" y2="184" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<line x1="1096" y1="184" x2="1096" y2="272" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<line x1="400" y1="344" x2="400" y2="440" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<line x1="632" y1="344" x2="632" y2="440" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<line x1="864" y1="344" x2="864" y2="440" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<rect x="51" y="288" width="32" height="12" rx="2" fill="#2d3142"/><text x="67" y="297" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">FAIL</text>
+<rect x="262" y="288" width="44" height="12" rx="2" fill="#2d3142"/><text x="284" y="297" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">RENDER</text>
+<rect x="492" y="288" width="48" height="12" rx="2" fill="#2d3142"/><text x="516" y="297" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">CHECKED</text>
+<rect x="726" y="288" width="44" height="12" rx="2" fill="#2d3142"/><text x="748" y="297" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">ACCEPT</text>
+<rect x="964" y="288" width="64" height="12" rx="2" fill="#2d3142"/><text x="996" y="297" fill="#f08a59" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">LATER READ</text>
+<rect x="1020" y="222" width="68" height="12" rx="2" fill="#2d3142"/><text x="1054" y="231" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">READ: FIXED</text>
+<rect x="1168" y="222" width="76" height="12" rx="2" fill="#2d3142"/><text x="1206" y="231" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">FAIL IN 30 D</text>
+<rect x="408" y="378" width="80" height="12" rx="2" fill="#2d3142"/><text x="448" y="387" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">A CHECK FAILS</text>
+<rect x="640" y="378" width="80" height="12" rx="2" fill="#2d3142"/><text x="680" y="387" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">DISMISS + WHY</text>
+<rect x="872" y="378" width="80" height="12" rx="2" fill="#2d3142"/><text x="912" y="387" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">NEW RENDERING</text>
+<circle cx="40" cy="308" r="6" fill="#f5f5f5"/>
+<path d="M748,146 Q864,150 864,268" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="1" stroke-dasharray="4,3"/>
+<circle cx="864" cy="268" r="2" fill="#f5f5f5"/>
+<text x="744" y="140" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" text-anchor="end" font-style="italic">Accepting is optional and confirms</text>
+<text x="744" y="158" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" text-anchor="end" font-style="italic">nothing; only a later read does.</text>
+<path d="M980,480 Q964,478 948,478" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="1" stroke-dasharray="4,3"/>
+<circle cx="948" cy="478" r="2" fill="#f5f5f5"/>
+<text x="984" y="472" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" font-style="italic">Superseded only by a different</text>
+<text x="984" y="490" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" font-style="italic">rendering; a repeat is the same.</text>
+<rect x="88" y="272" width="160" height="72" rx="8" fill="#2d3142"/><rect x="88" y="272" width="160" height="72" rx="8" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="96" y="278" width="44" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="118" y="287" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PHASE 1</text>
+<text x="168" y="314" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Chosen</text>
+<text x="168" y="329" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">fix id, by code or model</text>
+<rect x="320" y="272" width="160" height="72" rx="8" fill="#2d3142"/><rect x="320" y="272" width="160" height="72" rx="8" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="328" y="278" width="44" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="350" y="287" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PHASE 2</text>
+<text x="400" y="314" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Rendered</text>
+<text x="400" y="329" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">template, checked offline</text>
+<rect x="552" y="272" width="160" height="72" rx="8" fill="#2d3142"/><rect x="552" y="272" width="160" height="72" rx="8" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="560" y="278" width="44" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="582" y="287" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PHASE 3</text>
+<text x="632" y="314" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Open</text>
+<text x="632" y="329" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">one per resource and fix</text>
+<rect x="784" y="272" width="160" height="72" rx="8" fill="#2d3142"/><rect x="784" y="272" width="160" height="72" rx="8" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="792" y="278" width="44" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="814" y="287" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PHASE 4</text>
+<text x="864" y="314" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Accepted</text>
+<text x="864" y="329" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">customer applies it</text>
+<rect x="1048" y="272" width="160" height="72" rx="8" fill="#2d3142"/><rect x="1048" y="272" width="160" height="72" rx="8" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+<rect x="1056" y="278" width="44" height="12" rx="2" fill="none" stroke="rgba(240,138,89,0.5)" stroke-width="0.8"/><text x="1078" y="287" fill="#f08a59" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PHASE 5</text>
+<text x="1128" y="314" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Confirmed</text>
+<text x="1128" y="329" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">a later read sees it</text>
+<circle cx="1188" cy="292" r="7" fill="none" stroke="#f5f5f5" stroke-width="1"/><circle cx="1188" cy="292" r="4" fill="#f5f5f5"/>
+<rect x="1048" y="112" width="160" height="72" rx="8" fill="#2d3142"/><rect x="1048" y="112" width="160" height="72" rx="8" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.35)" stroke-width="1" stroke-dasharray="4,3"/>
+<rect x="1056" y="118" width="48" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.22)" stroke-width="0.8"/><text x="1080" y="127" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">RECOVERY</text>
+<text x="1128" y="154" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Reopened</text>
+<text x="1128" y="169" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">FAIL within 30 days</text>
+<rect x="320" y="440" width="160" height="72" rx="8" fill="#2d3142"/><rect x="320" y="440" width="160" height="72" rx="8" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<rect x="328" y="446" width="48" height="12" rx="2" fill="none" stroke="rgba(191,192,192,0.5)" stroke-width="0.8"/><text x="352" y="455" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">TERMINAL</text>
+<text x="400" y="482" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Not offered</text>
+<text x="400" y="497" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">fix_check_failed</text>
+<rect x="552" y="440" width="160" height="72" rx="8" fill="#2d3142"/><rect x="552" y="440" width="160" height="72" rx="8" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<rect x="560" y="446" width="48" height="12" rx="2" fill="none" stroke="rgba(191,192,192,0.5)" stroke-width="0.8"/><text x="584" y="455" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">TERMINAL</text>
+<text x="632" y="482" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Dismissed</text>
+<text x="632" y="497" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">a person says why</text>
+<rect x="784" y="440" width="160" height="72" rx="8" fill="#2d3142"/><rect x="784" y="440" width="160" height="72" rx="8" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<rect x="792" y="446" width="48" height="12" rx="2" fill="none" stroke="rgba(191,192,192,0.5)" stroke-width="0.8"/><text x="816" y="455" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">TERMINAL</text>
+<text x="864" y="482" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Superseded</text>
+<text x="864" y="497" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">a new rendering</text>
+<line x1="40" y1="552" x2="1240" y2="552" stroke="rgba(245,245,245,0.1)" stroke-width="0.8"/>
+<text x="40" y="568" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">LEGEND</text>
+<rect x="40" y="579" width="14" height="10" rx="2" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<text x="60" y="588" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Phase</text>
+<rect x="116" y="579" width="14" height="10" rx="2" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+<text x="136" y="588" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Done: seen by a read</text>
+<rect x="268" y="579" width="14" height="10" rx="2" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.35)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="288" y="588" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Recovery</text>
+<rect x="360" y="579" width="14" height="10" rx="2" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<text x="380" y="588" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Terminal</text>
+<line x1="452" y1="584" x2="480" y2="584" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<text x="488" y="588" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Transition</text>
+<line x1="568" y1="584" x2="596" y2="584" fill="none" stroke="#f08a59" stroke-width="1.4" marker-end="url(#05-fix-lifecycle-dark-arrow-accent)"/>
+<text x="604" y="588" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Only a read confirms</text>
+<line x1="736" y1="584" x2="764" y2="584" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<text x="772" y="588" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Recovery loop</text>
+</svg>
+    </div>
+    <div class="cards" style="grid-template-columns: 1.1fr 1fr 0.9fr;">
+<div class="card"><p class="eyebrow">RENDERED</p><div class="card-header"><span class="dot ink"></span><h3>Code writes what is shown</h3></div><ul><li>The model, or code when the rule explains the failure, picks a fix by id and its parameters. It never writes a command or a diff.</li><li>Code fills the versioned template and checks params, commands, syntax, scope and placeholders. A failure is recorded, never offered.</li></ul></div>
+<div class="card"><p class="eyebrow">NO EXECUTION</p><div class="card-header"><span class="dot muted"></span><h3>The customer applies it</h3></div><ul><li>No pull request, write credential or executor. The suggestion is a Terraform change, commands and console steps to copy.</li><li>Accept and dismiss are records; a dismissal says why.</li></ul></div>
+<div class="card"><p class="eyebrow">DONE MEANS READ</p><div class="card-header"><span class="dot accent"></span><h3>Confirmed by evidence</h3></div><ul><li>A verdict on evidence observed after the suggestion that no longer names the resource confirms it.</li><li>ccp fixes metrics reports time to confirm and the 30-day reopen rate.</li></ul></div>
+    </div>
+    <footer>Source: docs/reports/ccp-target-architecture.md and spec.md. Generated by
+    docs/diagrams/system-design/build.py; edit the script, not this file.</footer>
+  </div>
+</body>
+</html>

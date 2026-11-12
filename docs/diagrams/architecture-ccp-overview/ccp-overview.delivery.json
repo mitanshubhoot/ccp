@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "66b01828-d7e0-44e6-8a94-26b96cbd5d48",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\architecture-ccp-overview\\candidate.json",
+  "output": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\architecture-ccp-overview\\ccp-overview.html",
+  "specification": {
+    "sha256": "27fa1f3a82d3a98b7afbca014e0eef67e67b533485288e57b13cebc396c0b82e",
+    "bytes": 11150
+  },
+  "artifact": {
+    "sha256": "f55a63797397b182400086ea809000b9006a3ddc4f60ee607d7bc2d360d4b7fb",
+    "bytes": 863561
+  }
+}

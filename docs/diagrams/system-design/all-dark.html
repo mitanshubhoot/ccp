@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CCP system design, all views</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root { --paper: #2d3142; --ink: #f5f5f5; --muted: #bfc0c0; --soft: #949eb2;
+      --accent: #f08a59; --link: #739fdf; --card: #393e53; --rule: rgba(245,245,245,0.12); }
+    body { font-family: 'Geist', system-ui, sans-serif; background: var(--paper); color: var(--ink);
+      padding: 2.5rem clamp(1rem, 3vw, 2.5rem) 3rem; }
+    .frame { max-width: 1320px; margin: 0 auto; }
+    .nav { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+      font-family: 'Geist Mono', ui-monospace, monospace; font-size: 0.68rem; letter-spacing: 0.08em; margin-bottom: 2rem; }
+    .nav a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--rule); }
+    .nav a:hover { color: var(--ink); }
+    .eyebrow { font-family: 'Geist Mono', ui-monospace, monospace; font-size: 0.66rem; font-weight: 500; letter-spacing: 0.18em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 0.5rem; }
+    h1 { font-family: 'Instrument Serif', 'Noto Serif', serif; font-size: clamp(1.6rem, 2.4vw + 0.8rem, 2.4rem); font-weight: 400;
+      letter-spacing: -0.02em; line-height: 1.12; margin-bottom: 0.75rem; }
+    .subtitle { color: var(--muted); font-size: 0.95rem; line-height: 1.55; max-width: 76ch;
+      margin-bottom: 2rem; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .diagram-container svg { width: 100%; min-width: 1280px; display: block; }
+    .cards { display: grid; gap: 1rem; margin-top: 2rem; }
+    .card { background: var(--card); border: 1px solid var(--rule); border-radius: 6px;
+      padding: 1.25rem; min-width: 0; }
+    .card .eyebrow { margin-bottom: 0.6rem; }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
+    .card h3 { font-size: 0.98rem; font-weight: 600; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+    .dot.accent { background: var(--accent); } .dot.ink { background: var(--ink); }
+    .dot.muted { background: var(--muted); }
+    .card ul { padding-left: 1rem; display: grid; gap: 0.4rem; }
+    .card li { color: var(--muted); font-size: 0.86rem; line-height: 1.5; }
+    footer { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid var(--rule);
+      font-family: 'Geist Mono', ui-monospace, monospace; font-size: 0.68rem; color: var(--muted); line-height: 1.6; }
+    @media (max-width: 880px) { .cards { grid-template-columns: 1fr !important; } }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      .diagram-container svg { min-width: 0; }
+    }
+
+    .jump { position: sticky; top: 0; z-index: 10; background: var(--paper);
+      border-bottom: 1px solid var(--rule); padding: 0.75rem 0; margin-bottom: 2rem;
+      display: flex; flex-wrap: wrap; gap: 0.4rem 1.25rem; font-family: 'Geist Mono', ui-monospace, monospace;
+      font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .jump a { color: var(--muted); text-decoration: none; }
+    .jump a:hover { color: var(--accent); }
+    .jump .end { margin-left: auto; }
+    section { padding: 3rem 0 3.5rem; border-bottom: 1px solid var(--rule);
+      scroll-margin-top: 3.5rem; }
+    section:first-of-type { padding-top: 1rem; }
+    h2 { font-family: 'Instrument Serif', 'Noto Serif', serif; font-size: clamp(1.5rem, 2vw + 0.8rem, 2.1rem); font-weight: 400;
+      letter-spacing: -0.02em; line-height: 1.15; margin-bottom: 0.6rem; }
+    </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">CCP · target architecture</p>
+    <h1>CCP system design</h1>
+    <p class="subtitle">Seven views of the platform we are building, in reading order.</p>
+    <nav class="jump">
+<a href="#01-architecture">01 System architecture</a>
+<a href="#02-deployment">02 AWS deployment</a>
+<a href="#03-sequence-s3">03 End-to-end sequence</a>
+<a href="#04-verdict-pipeline">04 Verdict pipeline</a>
+<a href="#05-fix-lifecycle">05 Fix lifecycle</a>
+<a href="#06-evidence-chain">06 Evidence chain</a>
+<a href="#07-guardrails">07 Guardrail catalogue</a>
+      <a class="end" href="all.html">light version</a>
+    </nav>
+  <section id="01-architecture">
+    <p class="eyebrow">01 · Architecture</p>
+    <h2>Code decides, models propose, people approve</h2>
+    <p class="subtitle">Evidence flows left to right through code that sets every status. Agents read through one gateway and can only propose; code renders each fix, the customer applies it, and only the next sync confirms it.</p>
+    <div class="diagram-container">
+<svg viewBox="0 72 1280 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="01-architecture-dark-title 01-architecture-dark-desc">
+<title id="01-architecture-dark-title">Code decides, models propose, people approve</title>
+<desc id="01-architecture-dark-desc">Architecture of CCP: connectors, evidence store, rules engine and compliance state in a code-only zone; agents behind a read-only tool gateway that can only propose; a fix renderer and signed-in approvals. CCP writes nothing to the customer&#x27;s systems; a person applies a suggested fix.</desc>
+<defs><marker id="01-architecture-dark-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bfc0c0"/></marker><marker id="01-architecture-dark-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f08a59"/></marker><marker id="01-architecture-dark-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#739fdf"/></marker><marker id="01-architecture-dark-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#bfc0c0" stroke-width="1.2"/></marker></defs>
+<rect x="0" y="72" width="1280" height="520" fill="#2d3142"/>
+<rect x="248" y="104" width="984" height="120" rx="8" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.12)" stroke-width="0.8"/><rect x="260" y="108" width="180" height="12" rx="2" fill="#2d3142"/><text x="350" y="117" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.14em">CODE DECIDES · FACTS AND STATUS</text>
+<rect x="248" y="392" width="472" height="120" rx="8" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.12)" stroke-width="0.8"/><rect x="260" y="396" width="164" height="12" rx="2" fill="#2d3142"/><text x="342" y="405" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.14em">CODE RENDERS · PEOPLE DECIDE</text>
+<rect x="760" y="392" width="472" height="120" rx="8" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.12)" stroke-width="0.8"/><rect x="916" y="396" width="184" height="12" rx="2" fill="#2d3142"/><text x="1008" y="405" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.14em">MODELS PROPOSE · READ-ONLY TOOLS</text>
+<line x1="184" y1="168" x2="272" y2="168" fill="none" stroke="#739fdf" stroke-width="1.2" marker-end="url(#01-architecture-dark-arrow-link)"/>
+<line x1="440" y1="168" x2="528" y2="168" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#01-architecture-dark-arrow)"/>
+<line x1="696" y1="168" x2="784" y2="168" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#01-architecture-dark-arrow)"/>
+<line x1="952" y1="168" x2="1040" y2="168" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#01-architecture-dark-arrow)"/>
+<line x1="840" y1="200" x2="840" y2="424" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#01-architecture-dark-arrow)"/>
+<line x1="896" y1="424" x2="896" y2="236" stroke="#f08a59" stroke-width="1.4" stroke-dasharray="5,4"/>
+<line x1="884" y1="232" x2="908" y2="232" stroke="#f08a59" stroke-width="2"/>
+<line x1="1124" y1="424" x2="1124" y2="200" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#01-architecture-dark-arrow)"/>
+<line x1="952" y1="456" x2="1040" y2="456" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#01-architecture-dark-arrow)"/>
+<line x1="784" y1="456" x2="696" y2="456" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#01-architecture-dark-arrow)"/>
+<line x1="528" y1="456" x2="440" y2="456" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#01-architecture-dark-arrow)"/>
+<line x1="272" y1="456" x2="184" y2="456" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#01-architecture-dark-arrow)"/>
+<rect x="198" y="148" width="60" height="12" rx="2" fill="#2d3142"/><text x="228" y="157" fill="#739fdf" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">API READS</text>
+<rect x="450" y="148" width="68" height="12" rx="2" fill="#2d3142"/><text x="484" y="157" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">RAW + FACTS</text>
+<rect x="706" y="148" width="68" height="12" rx="2" fill="#2d3142"/><text x="740" y="157" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">AS-OF FACTS</text>
+<rect x="972" y="148" width="48" height="12" rx="2" fill="#2d3142"/><text x="996" y="157" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">VERDICT</text>
+<rect x="784" y="294" width="48" height="12" rx="2" fill="#2d3142"/><text x="808" y="303" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">ON FAIL</text>
+<rect x="904" y="326" width="88" height="12" rx="2" fill="#2d3142"/><text x="948" y="335" fill="#f08a59" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">NEVER A STATUS</text>
+<rect x="1056" y="306" width="60" height="12" rx="2" fill="#2d3142"/><text x="1086" y="315" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">READ ONLY</text>
+<rect x="966" y="436" width="60" height="12" rx="2" fill="#2d3142"/><text x="996" y="445" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">TOOL CALL</text>
+<rect x="714" y="436" width="52" height="12" rx="2" fill="#2d3142"/><text x="740" y="445" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">PROPOSAL</text>
+<rect x="450" y="436" width="68" height="12" rx="2" fill="#2d3142"/><text x="484" y="445" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">CHECKED FIX</text>
+<rect x="190" y="436" width="76" height="12" rx="2" fill="#2d3142"/><text x="228" y="445" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">COPY + APPLY</text>
+<path d="M272,312 Q228,318 184,372" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="1" stroke-dasharray="4,3"/>
+<circle cx="184" cy="372" r="2" fill="#f5f5f5"/>
+<text x="280" y="300" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" font-style="italic">CCP holds no write credential: a fix counts</text>
+<text x="280" y="318" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" font-style="italic">only when a later sync reads it in place.</text>
+<rect x="40" y="136" width="144" height="352" rx="6" fill="#2d3142"/><rect x="40" y="136" width="144" height="352" rx="6" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.3)" stroke-width="1"/>
+<rect x="48" y="142" width="24" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.22)" stroke-width="0.8"/><text x="60" y="151" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">EXT</text>
+<text x="112" y="304" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Customer systems</text>
+<text x="112" y="319" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">GitHub · AWS</text>
+<text x="112" y="332" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">HRIS · IdP</text>
+<text x="112" y="345" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">uploads</text>
+<rect x="272" y="136" width="168" height="64" rx="6" fill="#2d3142"/><rect x="272" y="136" width="168" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="280" y="142" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="294" y="151" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">SYNC</text>
+<text x="356" y="174" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Connectors</text>
+<text x="356" y="189" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">complete syncs, receipts</text>
+<rect x="528" y="136" width="168" height="64" rx="6" fill="#2d3142"/><rect x="528" y="136" width="168" height="64" rx="6" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<rect x="536" y="142" width="36" height="12" rx="2" fill="none" stroke="rgba(191,192,192,0.5)" stroke-width="0.8"/><text x="554" y="151" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">STORE</text>
+<text x="612" y="174" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Evidence store</text>
+<text x="612" y="189" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">raw write-once · facts</text>
+<rect x="784" y="136" width="168" height="64" rx="6" fill="#2d3142"/><rect x="784" y="136" width="168" height="64" rx="6" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+<rect x="792" y="142" width="36" height="12" rx="2" fill="none" stroke="rgba(240,138,89,0.5)" stroke-width="0.8"/><text x="810" y="151" fill="#f08a59" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">RULES</text>
+<text x="868" y="174" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Rules engine</text>
+<text x="868" y="189" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">versioned · pinned inputs</text>
+<rect x="1040" y="136" width="168" height="64" rx="6" fill="#2d3142"/><rect x="1040" y="136" width="168" height="64" rx="6" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<rect x="1048" y="142" width="36" height="12" rx="2" fill="none" stroke="rgba(191,192,192,0.5)" stroke-width="0.8"/><text x="1066" y="151" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">STATE</text>
+<text x="1124" y="174" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Compliance state</text>
+<text x="1124" y="189" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">bitemporal · rollup</text>
+<rect x="272" y="424" width="168" height="64" rx="6" fill="#2d3142"/><rect x="272" y="424" width="168" height="64" rx="6" fill="rgba(240,138,89,0.05)" stroke="rgba(240,138,89,0.5)" stroke-width="1" stroke-dasharray="4,4"/>
+<rect x="280" y="430" width="28" height="12" rx="2" fill="none" stroke="rgba(240,138,89,0.4)" stroke-width="0.8"/><text x="294" y="439" fill="#f08a59" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">GATE</text>
+<text x="356" y="462" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Approvals</text>
+<text x="356" y="477" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">signed-in · hash-bound</text>
+<rect x="528" y="424" width="168" height="64" rx="6" fill="#2d3142"/><rect x="528" y="424" width="168" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="536" y="430" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="550" y="439" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="612" y="462" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Fix renderer</text>
+<text x="612" y="477" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">templates · offline checks</text>
+<rect x="784" y="424" width="168" height="64" rx="6" fill="#2d3142"/><rect x="784" y="424" width="168" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="792" y="430" width="36" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="810" y="439" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">AGENT</text>
+<text x="868" y="462" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Agents</text>
+<text x="868" y="477" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">LangGraph + Claude</text>
+<rect x="1040" y="424" width="168" height="64" rx="6" fill="#2d3142"/><rect x="1040" y="424" width="168" height="64" rx="6" fill="rgba(240,138,89,0.05)" stroke="rgba(240,138,89,0.5)" stroke-width="1" stroke-dasharray="4,4"/>
+<rect x="1048" y="430" width="40" height="12" rx="2" fill="none" stroke="rgba(240,138,89,0.4)" stroke-width="0.8"/><text x="1068" y="439" fill="#f08a59" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">POLICY</text>
+<text x="1124" y="462" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Tool gateway</text>
+<text x="1124" y="477" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">typed · fails closed</text>
+<line x1="40" y1="540" x2="1240" y2="540" stroke="rgba(245,245,245,0.1)" stroke-width="0.8"/>
+<text x="40" y="556" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">LEGEND</text>
+<rect x="40" y="567" width="14" height="10" rx="2" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+<text x="60" y="576" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Decides status</text>
+<rect x="160" y="567" width="14" height="10" rx="2" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<text x="180" y="576" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">CCP code</text>
+<rect x="252" y="567" width="14" height="10" rx="2" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<text x="272" y="576" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Store</text>
+<rect x="328" y="567" width="14" height="10" rx="2" fill="rgba(240,138,89,0.05)" stroke="rgba(240,138,89,0.5)" stroke-width="1" stroke-dasharray="4,4"/>
+<text x="348" y="576" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Gate or policy</text>
+<rect x="448" y="567" width="14" height="10" rx="2" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.3)" stroke-width="1"/>
+<text x="468" y="576" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Customer side</text>
+<line x1="564" y1="572" x2="592" y2="572" fill="none" stroke="#739fdf" stroke-width="1.2" marker-end="url(#01-architecture-dark-arrow-link)"/>
+<text x="600" y="576" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">External call</text>
+<line x1="696" y1="572" x2="724" y2="572" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#01-architecture-dark-arrow)"/>
+<text x="732" y="576" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Internal flow</text>
+<line x1="828" y1="572" x2="856" y2="572" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#01-architecture-dark-arrow)"/>
+<text x="864" y="576" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Done by a person</text>
+<line x1="976" y1="572" x2="1000" y2="572" stroke="#f08a59" stroke-width="1.4" stroke-dasharray="5,4"/>
+<line x1="1002" y1="566" x2="1002" y2="578" stroke="#f08a59" stroke-width="2"/>
+<text x="1012" y="576" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Blocked path</text>
+</svg>
+    </div>
+    <div class="cards" style="grid-template-columns: 1.1fr 1fr 0.9fr;">
+<div class="card"><p class="eyebrow">CODE DECIDES</p><div class="card-header"><span class="dot accent"></span><h3>Every status comes from a rule</h3></div><ul><li>A versioned rule over pinned facts sets PASS, FAIL or PARTIAL. Tier-2 models only extract typed fields, with pointer citations that code checks.</li><li>Absence counts only from a complete sync; a partial or denied read gives needs_review.</li><li>Verdict, state row and announcement commit in one transaction.</li></ul></div>
+<div class="card"><p class="eyebrow">MODELS PROPOSE</p><div class="card-header"><span class="dot ink"></span><h3>Agents read, then propose</h3></div><ul><li>Agents run as bounded queue jobs (turns, tokens, cost, time), at most one run per evidence state.</li><li>Every tool is typed, bound to the tenant in code and checked by a fail-closed policy.check. Code, not the model, chooses every live read.</li><li>A run ends with a draft or a fix chosen by id from the catalogue, never a write.</li></ul></div>
+<div class="card"><p class="eyebrow">PEOPLE DECIDE</p><div class="card-header"><span class="dot muted"></span><h3>Suggest, never apply</h3></div><ul><li>Code renders the Terraform change, commands and console steps from a versioned template and checks them offline before anyone sees them.</li><li>A signed-in member approves drafts by payload hash, never the requester; accepting a fix is a record only.</li><li>No pull request, executor or write credential: a fix is confirmed only when a later read sees it.</li></ul></div>
+    </div>
+  </section>
+  <section id="02-deployment">
+    <p class="eyebrow">02 · Deployment</p>
+    <h2>Where CCP runs on AWS</h2>
+    <p class="subtitle">One cell per region from the same Terraform: one image as api and worker behind PgBouncer, RDS PostgreSQL with a read replica as the record, a write-once raw zone, and checkpoints in an account CCP cannot write to.</p>
+    <div class="diagram-container">
+<svg viewBox="0 16 1280 628" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="02-deployment-dark-title 02-deployment-dark-desc">
+<title id="02-deployment-dark-title">Where CCP runs on AWS</title>
+<desc id="02-deployment-dark-desc">Deployment of one CCP cell on AWS: ECS Fargate api, worker and PgBouncer services, RDS PostgreSQL 17 with a read replica and an S3 raw zone in the production account, a checkpoint bucket in a separate audit account, a read-only role in the customer&#x27;s account, and external model and SaaS APIs. An EU cell is the same module in eu-central-1.</desc>
+<defs><marker id="02-deployment-dark-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bfc0c0"/></marker><marker id="02-deployment-dark-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f08a59"/></marker><marker id="02-deployment-dark-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#739fdf"/></marker><marker id="02-deployment-dark-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#bfc0c0" stroke-width="1.2"/></marker></defs>
+<rect x="0" y="16" width="1280" height="628" fill="#2d3142"/>
+<rect x="40" y="72" width="728" height="488" rx="8" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.22)" stroke-width="0.8" stroke-dasharray="4,4"/><rect x="52" y="76" width="260" height="12" rx="2" fill="#2d3142"/><text x="182" y="85" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.14em">CCP PRODUCTION ACCOUNT · ONE CELL (US-1 SHOWN)</text>
+<rect x="808" y="72" width="432" height="160" rx="8" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.22)" stroke-width="0.8" stroke-dasharray="4,4"/><rect x="820" y="76" width="104" height="12" rx="2" fill="#2d3142"/><text x="872" y="85" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.14em">CCP AUDIT ACCOUNT</text>
+<rect x="808" y="256" width="432" height="200" rx="8" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.22)" stroke-width="0.8" stroke-dasharray="4,4"/><rect x="820" y="260" width="120" height="12" rx="2" fill="#2d3142"/><text x="880" y="269" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.14em">CUSTOMER AWS ACCOUNT</text>
+<circle cx="520" cy="40" r="4" fill="#739fdf"/>
+<text x="532" y="43" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">reviewers&#x27; browsers</text>
+<line x1="520" y1="44" x2="520" y2="216" fill="none" stroke="#739fdf" stroke-width="1.2" marker-end="url(#02-deployment-dark-arrow-link)"/>
+<line x1="448" y1="248" x2="352" y2="248" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#02-deployment-dark-arrow)"/>
+<line x1="448" y1="340" x2="352" y2="340" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#02-deployment-dark-arrow)"/>
+<path d="M632,216 L632,164 Q632,156 640,156 L840,156" fill="none" stroke="#f08a59" stroke-width="1.4" stroke-dasharray="5,4" marker-end="url(#02-deployment-dark-arrow-accent)"/>
+<line x1="728" y1="304" x2="840" y2="304" fill="none" stroke="#739fdf" stroke-width="1.2" marker-end="url(#02-deployment-dark-arrow-link)"/>
+<path d="M704,392 L704,512 Q704,520 712,520 L840,520" fill="none" stroke="#739fdf" stroke-width="1.2" marker-end="url(#02-deployment-dark-arrow-link)"/>
+<rect x="528" y="118" width="60" height="12" rx="2" fill="#2d3142"/><text x="558" y="127" fill="#739fdf" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">HTTPS:443</text>
+<rect x="374" y="228" width="52" height="12" rx="2" fill="#2d3142"/><text x="400" y="237" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">TLS:5432</text>
+<rect x="366" y="348" width="68" height="12" rx="2" fill="#2d3142"/><text x="400" y="357" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">HTTPS · PUT</text>
+<rect x="696" y="136" width="88" height="12" rx="2" fill="#2d3142"/><text x="740" y="145" fill="#f08a59" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">HOURLY, SIGNED</text>
+<rect x="750" y="284" width="68" height="12" rx="2" fill="#2d3142"/><text x="784" y="293" fill="#739fdf" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">ASSUME ROLE</text>
+<rect x="742" y="500" width="60" height="12" rx="2" fill="#2d3142"/><text x="772" y="509" fill="#739fdf" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">HTTPS:443</text>
+<path d="M520,460 Q520,428 520,396" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="1" stroke-dasharray="4,3"/>
+<circle cx="520" cy="396" r="2" fill="#f5f5f5"/>
+<text x="384" y="478" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" font-style="italic">eu-1 is the same module in eu-central-1:</text>
+<text x="384" y="496" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" font-style="italic">Bedrock in-region, Voyage&#x27;s EU endpoint.</text>
+<rect x="72" y="112" width="280" height="168" rx="6" fill="#2d3142"/><rect x="72" y="112" width="280" height="168" rx="6" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+<rect x="80" y="118" width="44" height="12" rx="2" fill="none" stroke="rgba(240,138,89,0.5)" stroke-width="0.8"/><text x="102" y="127" fill="#f08a59" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">MANAGED</text>
+<text x="212" y="148" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">RDS PostgreSQL</text>
+<text x="212" y="163" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">Multi-AZ · forced RLS</text>
+<rect x="84" y="176" width="256" height="24" rx="4" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="0.8"/>
+<text x="92" y="192" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif">PostgreSQL</text>
+<text x="332" y="192" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">17</text>
+<rect x="84" y="208" width="256" height="24" rx="4" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="0.8"/>
+<text x="92" y="224" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif">pgvector</text>
+<text x="332" y="224" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">0.8.2+, HNSW per tenant</text>
+<rect x="84" y="240" width="256" height="24" rx="4" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="0.8"/>
+<text x="92" y="256" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif">read replica</text>
+<text x="332" y="256" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">reports, lag ≤ 30 s</text>
+<rect x="72" y="328" width="280" height="136" rx="6" fill="#2d3142"/><rect x="72" y="328" width="280" height="136" rx="6" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<rect x="80" y="334" width="44" height="12" rx="2" fill="none" stroke="rgba(191,192,192,0.5)" stroke-width="0.8"/><text x="102" y="343" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">MANAGED</text>
+<text x="212" y="364" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">S3 raw zone</text>
+<text x="212" y="379" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">write once · tenant-first keys</text>
+<rect x="84" y="392" width="256" height="24" rx="4" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="0.8"/>
+<text x="92" y="408" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif">Object Lock</text>
+<text x="332" y="408" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">governance + event holds</text>
+<rect x="84" y="424" width="256" height="24" rx="4" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="0.8"/>
+<text x="92" y="440" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif">KMS</text>
+<text x="332" y="440" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">one key per tenant</text>
+<rect x="448" y="216" width="280" height="176" rx="6" fill="#2d3142"/><rect x="448" y="216" width="280" height="176" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="456" y="222" width="44" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="478" y="231" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">FARGATE</text>
+<text x="588" y="252" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">ECS on Fargate</text>
+<text x="588" y="267" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">ccp image + PgBouncer · ALB + Cognito</text>
+<rect x="460" y="280" width="256" height="24" rx="4" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="0.8"/>
+<text x="468" y="296" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif">api</text>
+<text x="708" y="296" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">FastAPI + HTMX · ×2</text>
+<rect x="460" y="312" width="256" height="24" rx="4" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="0.8"/>
+<text x="468" y="328" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif">worker</text>
+<text x="708" y="328" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">queue + agents · ×2–8</text>
+<rect x="460" y="344" width="256" height="24" rx="4" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="0.8"/>
+<text x="468" y="360" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif">pooler</text>
+<text x="708" y="360" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">PgBouncer, transaction · ×2</text>
+<rect x="840" y="104" width="368" height="104" rx="6" fill="#2d3142"/><rect x="840" y="104" width="368" height="104" rx="6" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<rect x="848" y="110" width="44" height="12" rx="2" fill="none" stroke="rgba(191,192,192,0.5)" stroke-width="0.8"/><text x="870" y="119" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">MANAGED</text>
+<text x="1024" y="140" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Checkpoint bucket</text>
+<text x="1024" y="155" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">Object Lock compliance mode</text>
+<rect x="852" y="168" width="344" height="24" rx="4" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="0.8"/>
+<text x="860" y="184" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif">chain checkpoint</text>
+<text x="1188" y="184" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">hourly · signed</text>
+<rect x="840" y="288" width="368" height="136" rx="6" fill="#2d3142"/><rect x="840" y="288" width="368" height="136" rx="6" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.3)" stroke-width="1"/>
+<rect x="848" y="294" width="24" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.22)" stroke-width="0.8"/><text x="860" y="303" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">IAM</text>
+<text x="1024" y="324" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Customer read role</text>
+<text x="1024" y="339" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">external ID · no write actions</text>
+<rect x="852" y="352" width="344" height="24" rx="4" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="0.8"/>
+<text x="860" y="368" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif">ccp-read stack</text>
+<text x="1188" y="368" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">SecurityAudit v94 + denies</text>
+<rect x="852" y="384" width="344" height="24" rx="4" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="0.8"/>
+<text x="860" y="400" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif">lookups</text>
+<text x="1188" y="400" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">Config history · CloudTrail</text>
+<rect x="840" y="480" width="368" height="80" rx="6" fill="#2d3142"/><rect x="840" y="480" width="368" height="80" rx="6" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.3)" stroke-width="1"/>
+<rect x="848" y="486" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.22)" stroke-width="0.8"/><text x="862" y="495" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">SAAS</text>
+<text x="1024" y="519" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">External services</text>
+<text x="1024" y="534" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">Anthropic API (us-1) · Bedrock in-region (eu-1)</text>
+<text x="1024" y="547" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">Voyage · Langfuse (metadata only) · GitHub (read)</text>
+<line x1="40" y1="592" x2="1240" y2="592" stroke="rgba(245,245,245,0.1)" stroke-width="0.8"/>
+<text x="40" y="608" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">LEGEND</text>
+<rect x="40" y="619" width="14" height="10" rx="2" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+<text x="60" y="628" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">System of record</text>
+<rect x="172" y="619" width="14" height="10" rx="2" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<text x="192" y="628" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Compute</text>
+<rect x="256" y="619" width="14" height="10" rx="2" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<text x="276" y="628" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Managed storage</text>
+<rect x="384" y="619" width="14" height="10" rx="2" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.3)" stroke-width="1"/>
+<text x="404" y="628" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Outside CCP&#x27;s accounts</text>
+<rect x="548" y="619" width="20" height="10" rx="3" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="0.8"/>
+<text x="574" y="628" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Deployed artifact or setting</text>
+<line x1="748" y1="624" x2="776" y2="624" fill="none" stroke="#739fdf" stroke-width="1.2" marker-end="url(#02-deployment-dark-arrow-link)"/>
+<text x="784" y="628" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Crosses an account</text>
+<line x1="904" y1="624" x2="932" y2="624" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#02-deployment-dark-arrow)"/>
+<text x="940" y="628" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Inside one account</text>
+<line x1="1060" y1="624" x2="1088" y2="624" fill="none" stroke="#f08a59" stroke-width="1.4" stroke-dasharray="5,4" marker-end="url(#02-deployment-dark-arrow-accent)"/>
+<text x="1096" y="628" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Integrity checkpoint</text>
+</svg>
+    </div>
+    <div class="cards" style="grid-template-columns: 1fr 0.9fr 1.1fr;">
+<div class="card"><p class="eyebrow">INVENTORY</p><div class="card-header"><span class="dot ink"></span><h3>Small on purpose</h3></div><ul><li>Per cell: RDS PostgreSQL 17 (Multi-AZ) and a read replica, PgBouncer in transaction mode, S3 in two accounts, KMS keys, one image run as api and worker, a load balancer, Cognito, CloudWatch.</li><li>Outside services: Anthropic (US cell), Bedrock (EU cell), Voyage, Langfuse Cloud, GitHub (read only).</li></ul></div>
+<div class="card"><p class="eyebrow">NOT ADDED</p><div class="card-header"><span class="dot muted"></span><h3>Deliberately left out</h3></div><ul><li>Kafka, Redis, Temporal, Kubernetes, a vector database, self-hosted observability, an MCP gateway, a code sandbox.</li><li>Any write role, executor or GitHub App in a customer&#x27;s account: CCP suggests fixes and applies none.</li></ul></div>
+<div class="card"><p class="eyebrow">SCALE</p><div class="card-header"><span class="dot accent"></span><h3>Cells, a pooler, a replica</h3></div><ul><li>The readiness report reads the replica only while its lag is under 30 seconds; one large tenant can get a partition of its own.</li><li>A tenant lives in one cell and a process serves only its cell. eu-1 calls models through Bedrock in its region; a dedicated cell is the same module.</li></ul></div>
+    </div>
+  </section>
+  <section id="03-sequence-s3">
+    <p class="eyebrow">03 · Sequence</p>
+    <h2>A public S3 bucket, from first read to a confirmed fix</h2>
+    <p class="subtitle">The AWS worked example, suggest-only: a rule finds the bucket open, code looks up who changed it and where it lives in Terraform, renders a checked fix, the customer applies it, and the next read confirms it.</p>
+    <div class="diagram-container">
+<svg viewBox="0 16 1280 884" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="03-sequence-s3-dark-title 03-sequence-s3-dark-desc">
+<title id="03-sequence-s3-dark-title">A public S3 bucket, from first read to a confirmed fix</title>
+<desc id="03-sequence-s3-dark-desc">Sequence of the S3 public-bucket example across Customer, Connector, Rules engine, Lookups and Fix suggestions: read, FAIL, code-chosen lookups landed raw first, a code-written investigation, a rendered and checked fix, the customer applying it, a re-read, a PASS that supersedes the FAIL and the suggestion confirmed.</desc>
+<defs><marker id="03-sequence-s3-dark-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bfc0c0"/></marker><marker id="03-sequence-s3-dark-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f08a59"/></marker><marker id="03-sequence-s3-dark-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#739fdf"/></marker><marker id="03-sequence-s3-dark-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#bfc0c0" stroke-width="1.2"/></marker></defs>
+<rect x="0" y="16" width="1280" height="884" fill="#2d3142"/>
+<line x1="40" y1="284" x2="1240" y2="284" stroke="rgba(245,245,245,0.14)" stroke-width="1" stroke-dasharray="2,4"/>
+<line x1="40" y1="432" x2="1240" y2="432" stroke="rgba(245,245,245,0.14)" stroke-width="1" stroke-dasharray="2,4"/>
+<line x1="40" y1="604" x2="1240" y2="604" stroke="rgba(245,245,245,0.14)" stroke-width="1" stroke-dasharray="2,4"/>
+<line x1="128" y1="104" x2="128" y2="832" stroke="rgba(245,245,245,0.22)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="384" y1="104" x2="384" y2="832" stroke="rgba(245,245,245,0.22)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="640" y1="104" x2="640" y2="832" stroke="rgba(245,245,245,0.22)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="896" y1="104" x2="896" y2="832" stroke="rgba(245,245,245,0.22)" stroke-width="1" stroke-dasharray="3,3"/>
+<line x1="1152" y1="104" x2="1152" y2="832" stroke="rgba(245,245,245,0.22)" stroke-width="1" stroke-dasharray="3,3"/>
+<rect x="140" y="116" width="76" height="16" rx="2" fill="#2d3142"/>
+<text x="146" y="127" fill="#949eb2" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">1 · DETECT</text>
+<rect x="140" y="276" width="80" height="16" rx="2" fill="#2d3142"/>
+<text x="146" y="287" fill="#949eb2" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">2 · LOOK UP</text>
+<rect x="140" y="424" width="80" height="16" rx="2" fill="#2d3142"/>
+<text x="146" y="435" fill="#949eb2" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">3 · SUGGEST</text>
+<rect x="140" y="596" width="140" height="16" rx="2" fill="#2d3142"/>
+<text x="146" y="607" fill="#949eb2" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">4 · APPLY AND CONFIRM</text>
+<rect x="124" y="152" width="8" height="52" fill="rgba(245,245,245,0.06)" stroke="#bfc0c0" stroke-width="0.8"/>
+<rect x="124" y="532" width="8" height="56" fill="rgba(245,245,245,0.06)" stroke="#bfc0c0" stroke-width="0.8"/>
+<rect x="124" y="620" width="8" height="64" fill="rgba(245,245,245,0.06)" stroke="#bfc0c0" stroke-width="0.8"/>
+<rect x="380" y="152" width="8" height="96" fill="rgba(245,245,245,0.06)" stroke="#bfc0c0" stroke-width="0.8"/>
+<rect x="380" y="352" width="8" height="52" fill="rgba(245,245,245,0.06)" stroke="#bfc0c0" stroke-width="0.8"/>
+<rect x="380" y="664" width="8" height="56" fill="rgba(245,245,245,0.06)" stroke="#bfc0c0" stroke-width="0.8"/>
+<rect x="636" y="232" width="8" height="96" fill="rgba(245,245,245,0.06)" stroke="#bfc0c0" stroke-width="0.8"/>
+<rect x="636" y="704" width="8" height="88" fill="rgba(245,245,245,0.06)" stroke="#bfc0c0" stroke-width="0.8"/>
+<rect x="892" y="312" width="8" height="164" fill="rgba(245,245,245,0.06)" stroke="#bfc0c0" stroke-width="0.8"/>
+<rect x="1148" y="460" width="8" height="132" fill="rgba(245,245,245,0.06)" stroke="#bfc0c0" stroke-width="0.8"/>
+<rect x="1148" y="776" width="8" height="48" fill="rgba(245,245,245,0.06)" stroke="#bfc0c0" stroke-width="0.8"/>
+<line x1="380" y1="160" x2="132" y2="160" fill="none" stroke="#739fdf" stroke-width="1.2" marker-end="url(#03-sequence-s3-dark-arrow-link)"/>
+<rect x="194" y="140" width="124" height="12" rx="2" fill="#2d3142"/><text x="256" y="149" fill="#739fdf" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">READ BUCKET + ACCOUNT</text>
+<line x1="132" y1="196" x2="380" y2="196" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#03-sequence-s3-dark-arrow)"/>
+<rect x="180" y="176" width="152" height="12" rx="2" fill="#2d3142"/><text x="256" y="185" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">PAGES · HASHED, WRITE-ONCE</text>
+<line x1="388" y1="240" x2="636" y2="240" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#03-sequence-s3-dark-arrow-open)"/>
+<rect x="474" y="220" width="76" height="12" rx="2" fill="#2d3142"/><text x="512" y="229" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">OBSERVATIONS</text>
+<line x1="644" y1="320" x2="892" y2="320" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#03-sequence-s3-dark-arrow-open)"/>
+<rect x="708" y="300" width="120" height="12" rx="2" fill="#2d3142"/><text x="768" y="309" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">FAIL · LOOKUPS TOPIC</text>
+<line x1="892" y1="360" x2="388" y2="360" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#03-sequence-s3-dark-arrow)"/>
+<rect x="678" y="340" width="180" height="12" rx="2" fill="#2d3142"/><text x="768" y="349" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">CONFIG · CLOUDTRAIL · TF SEARCH</text>
+<line x1="388" y1="396" x2="892" y2="396" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#03-sequence-s3-dark-arrow)"/>
+<rect x="430" y="376" width="164" height="12" rx="2" fill="#2d3142"/><text x="512" y="385" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">RESPONSES · LANDED RAW FIRST</text>
+<line x1="900" y1="468" x2="1148" y2="468" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#03-sequence-s3-dark-arrow)"/>
+<rect x="960" y="448" width="128" height="12" rx="2" fill="#2d3142"/><text x="1024" y="457" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">INVESTIGATION + FIX ID</text>
+<line x1="1148" y1="548" x2="132" y2="548" fill="none" stroke="#739fdf" stroke-width="1.2" marker-end="url(#03-sequence-s3-dark-arrow-link)"/>
+<rect x="938" y="528" width="172" height="12" rx="2" fill="#2d3142"/><text x="1024" y="537" fill="#739fdf" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">CHECKED CHANGE · NEVER APPLIED</text>
+<line x1="132" y1="580" x2="1148" y2="580" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#03-sequence-s3-dark-arrow)"/>
+<rect x="192" y="560" width="128" height="12" rx="2" fill="#2d3142"/><text x="256" y="569" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">ACCEPT · A RECORD ONLY</text>
+<line x1="380" y1="676" x2="132" y2="676" fill="none" stroke="#739fdf" stroke-width="1.2" marker-end="url(#03-sequence-s3-dark-arrow-link)"/>
+<rect x="202" y="656" width="108" height="12" rx="2" fill="#2d3142"/><text x="256" y="665" fill="#739fdf" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">NEXT SYNC RE-READS</text>
+<line x1="388" y1="716" x2="636" y2="716" fill="none" stroke="#f08a59" stroke-width="1.4" marker-end="url(#03-sequence-s3-dark-arrow-accent)"/>
+<rect x="464" y="696" width="96" height="12" rx="2" fill="#2d3142"/><text x="512" y="705" fill="#f08a59" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">NEW OBSERVATIONS</text>
+<line x1="644" y1="788" x2="1148" y2="788" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#03-sequence-s3-dark-arrow-open)"/>
+<rect x="938" y="768" width="172" height="12" rx="2" fill="#2d3142"/><text x="1024" y="777" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">LATER VERDICT · NEWER EVIDENCE</text>
+<rect x="652" y="256" width="200" height="20" rx="4" fill="#2d3142" stroke="rgba(245,245,245,0.35)" stroke-width="1"/>
+<text x="664" y="270" fill="#f5f5f5" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" font-weight="600">FAIL</text>
+<text x="696" y="270" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">names the open bucket</text>
+<rect x="920" y="484" width="224" height="20" rx="4" fill="#2d3142" stroke="rgba(245,245,245,0.35)" stroke-width="1"/>
+<text x="932" y="498" fill="#f5f5f5" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" font-weight="600">CHECKED</text>
+<text x="980" y="498" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">params · syntax · scope</text>
+<rect x="140" y="624" width="224" height="20" rx="4" fill="#2d3142" stroke="rgba(245,245,245,0.35)" stroke-width="1"/>
+<text x="152" y="638" fill="#f5f5f5" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" font-weight="600">APPLIED</text>
+<text x="200" y="638" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">by the customer, not CCP</text>
+<rect x="652" y="728" width="200" height="20" rx="4" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+<text x="664" y="742" fill="#f08a59" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" font-weight="600">PASS</text>
+<text x="696" y="742" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">supersedes the FAIL</text>
+<rect x="920" y="800" width="224" height="20" rx="4" fill="#2d3142" stroke="rgba(245,245,245,0.35)" stroke-width="1"/>
+<text x="932" y="814" fill="#f5f5f5" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" font-weight="600">CONFIRMED</text>
+<text x="992" y="814" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">reopens on a FAIL ≤ 30 d</text>
+<rect x="32" y="40" width="192" height="64" rx="6" fill="#2d3142"/><rect x="32" y="40" width="192" height="64" rx="6" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.3)" stroke-width="1"/>
+<rect x="40" y="46" width="24" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.22)" stroke-width="0.8"/><text x="52" y="55" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">EXT</text>
+<text x="128" y="78" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Customer</text>
+<text x="128" y="93" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">AWS · Terraform · engineer</text>
+<rect x="288" y="40" width="192" height="64" rx="6" fill="#2d3142"/><rect x="288" y="40" width="192" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="296" y="46" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="310" y="55" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">SYNC</text>
+<text x="384" y="78" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Connector</text>
+<text x="384" y="93" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">AWS · GitHub · raw zone</text>
+<rect x="544" y="40" width="192" height="64" rx="6" fill="#2d3142"/><rect x="544" y="40" width="192" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="552" y="46" width="36" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="570" y="55" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">RULES</text>
+<text x="640" y="78" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Rules engine</text>
+<text x="640" y="93" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">versioned rule decides</text>
+<rect x="800" y="40" width="192" height="64" rx="6" fill="#2d3142"/><rect x="800" y="40" width="192" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="808" y="46" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="822" y="55" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="896" y="78" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Lookups + investigation</text>
+<text x="896" y="93" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">code picks every read</text>
+<rect x="1056" y="40" width="192" height="64" rx="6" fill="#2d3142"/><rect x="1056" y="40" width="192" height="64" rx="6" fill="rgba(240,138,89,0.05)" stroke="rgba(240,138,89,0.5)" stroke-width="1" stroke-dasharray="4,4"/>
+<rect x="1064" y="46" width="36" height="12" rx="2" fill="none" stroke="rgba(240,138,89,0.4)" stroke-width="0.8"/><text x="1082" y="55" fill="#f08a59" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">FIXES</text>
+<text x="1152" y="78" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Fix suggestions</text>
+<text x="1152" y="93" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">catalogue · checked offline</text>
+<line x1="40" y1="848" x2="1240" y2="848" stroke="rgba(245,245,245,0.1)" stroke-width="0.8"/>
+<text x="40" y="864" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">LEGEND</text>
+<line x1="40" y1="880" x2="68" y2="880" fill="none" stroke="#739fdf" stroke-width="1.2" marker-end="url(#03-sequence-s3-dark-arrow-link)"/>
+<text x="76" y="884" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Crosses to the customer side</text>
+<line x1="248" y1="880" x2="276" y2="880" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#03-sequence-s3-dark-arrow)"/>
+<text x="284" y="884" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Internal call</text>
+<line x1="380" y1="880" x2="408" y2="880" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#03-sequence-s3-dark-arrow)"/>
+<text x="416" y="884" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Return or record</text>
+<line x1="528" y1="880" x2="556" y2="880" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#03-sequence-s3-dark-arrow-open)"/>
+<text x="564" y="884" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Async event</text>
+<line x1="652" y1="880" x2="680" y2="880" fill="none" stroke="#f08a59" stroke-width="1.4" marker-end="url(#03-sequence-s3-dark-arrow-accent)"/>
+<text x="688" y="884" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Headline result</text>
+</svg>
+    </div>
+    <div class="cards" style="grid-template-columns: 1.1fr 0.9fr 1fr;">
+<div class="card"><p class="eyebrow">DETECT</p><div class="card-header"><span class="dot ink"></span><h3>Code finds the FAIL</h3></div><ul><li>Every page lands write-once with a hash and a completeness record before it is mapped.</li><li>The failing rule names the bucket, so the rule itself explains the failure: no model is needed and nothing parks.</li></ul></div>
+<div class="card"><p class="eyebrow">LOOK UP</p><div class="card-header"><span class="dot muted"></span><h3>Code picks every read</h3></div><ul><li>Config history in 7-day windows, the CloudTrail events that can change the setting, and a search of the organization&#x27;s Terraform; 10 resources and 30 days at most.</li><li>Each response lands raw before its typed row. A model never chooses a live read or its parameters.</li></ul></div>
+<div class="card"><p class="eyebrow">SUGGEST AND CONFIRM</p><div class="card-header"><span class="dot accent"></span><h3>Applied by the customer</h3></div><ul><li>Code fills the fix&#x27;s template and checks parameters, commands, syntax and scope; a fix that fails a check is never offered.</li><li>Accepting is a record. Only a verdict on evidence observed after the suggestion confirms it; a FAIL within 30 days reopens it.</li></ul></div>
+    </div>
+  </section>
+  <section id="04-verdict-pipeline">
+    <p class="eyebrow">04 · Flowchart</p>
+    <h2>How evidence becomes a verdict</h2>
+    <p class="subtitle">Every path ends in a verdict that code wrote. Gaps in the data abstain as needs_review; a model&#x27;s only job is to fill typed fields that code checks before a rule reads them.</p>
+    <div class="diagram-container">
+<svg viewBox="0 40 1280 548" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="04-verdict-pipeline-dark-title 04-verdict-pipeline-dark-desc">
+<title id="04-verdict-pipeline-dark-title">How evidence becomes a verdict</title>
+<desc id="04-verdict-pipeline-dark-desc">Flowchart of CCP&#x27;s evaluation path: evidence lands, the impact table picks affected tests, incomplete reads abstain as needs_review, tier-1 tests go straight to a versioned rule and tier-2 tests extract cited fields first, and the verdict and state row are written together before the rollup.</desc>
+<defs><marker id="04-verdict-pipeline-dark-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bfc0c0"/></marker><marker id="04-verdict-pipeline-dark-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f08a59"/></marker><marker id="04-verdict-pipeline-dark-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#739fdf"/></marker><marker id="04-verdict-pipeline-dark-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#bfc0c0" stroke-width="1.2"/></marker></defs>
+<rect x="0" y="40" width="1280" height="548" fill="#2d3142"/>
+<line x1="192" y1="216" x2="240" y2="216" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#04-verdict-pipeline-dark-arrow)"/>
+<line x1="392" y1="216" x2="440" y2="216" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#04-verdict-pipeline-dark-arrow)"/>
+<line x1="616" y1="216" x2="680" y2="216" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#04-verdict-pipeline-dark-arrow)"/>
+<line x1="528" y1="272" x2="528" y2="368" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#04-verdict-pipeline-dark-arrow)"/>
+<line x1="808" y1="216" x2="880" y2="216" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#04-verdict-pipeline-dark-arrow)"/>
+<line x1="744" y1="260" x2="744" y2="368" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#04-verdict-pipeline-dark-arrow)"/>
+<path d="M840,384 L852,384 Q860,384 860,376 L860,244 Q860,236 868,236 L880,236" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#04-verdict-pipeline-dark-arrow)"/>
+<line x1="680" y1="400" x2="592" y2="400" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#04-verdict-pipeline-dark-arrow)"/>
+<line x1="968" y1="248" x2="968" y2="368" fill="none" stroke="#f08a59" stroke-width="1.4" marker-end="url(#04-verdict-pipeline-dark-arrow-accent)"/>
+<path d="M516,432 L516,472 Q516,480 524,480 L960,480 Q968,480 968,472 L968,432" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#04-verdict-pipeline-dark-arrow)"/>
+<line x1="1056" y1="400" x2="1104" y2="400" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#04-verdict-pipeline-dark-arrow)"/>
+<rect x="634" y="196" width="28" height="12" rx="2" fill="#2d3142"/><text x="648" y="205" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">YES</text>
+<rect x="536" y="314" width="20" height="12" rx="2" fill="#2d3142"/><text x="546" y="323" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">NO</text>
+<rect x="822" y="196" width="44" height="12" rx="2" fill="#2d3142"/><text x="844" y="205" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">TIER 1</text>
+<rect x="752" y="308" width="44" height="12" rx="2" fill="#2d3142"/><text x="774" y="317" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">TIER 2</text>
+<rect x="602" y="380" width="68" height="12" rx="2" fill="#2d3142"/><text x="636" y="389" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">CHECK FAILS</text>
+<rect x="976" y="302" width="124" height="12" rx="2" fill="#2d3142"/><text x="1038" y="311" fill="#f08a59" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">PASS · FAIL · PARTIAL</text>
+<rect x="702" y="488" width="76" height="12" rx="2" fill="#2d3142"/><text x="740" y="497" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">NEEDS_REVIEW</text>
+<path d="M440,100 Q528,104 528,156" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="1" stroke-dasharray="4,3"/>
+<circle cx="528" cy="156" r="2" fill="#f5f5f5"/>
+<text x="240" y="72" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" font-style="italic">Absence counts only from a complete read:</text>
+<text x="240" y="90" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" font-style="italic">a partial or denied scope is not “nothing there”.</text>
+<path d="M1000,100 Q968,112 968,180" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="1" stroke-dasharray="4,3"/>
+<circle cx="968" cy="180" r="2" fill="#f5f5f5"/>
+<text x="1240" y="72" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" text-anchor="end" font-style="italic">The verdict is keyed by its rule version and</text>
+<text x="1240" y="90" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" text-anchor="end" font-style="italic">pinned inputs, so it can be rebuilt exactly.</text>
+<rect x="40" y="184" width="152" height="64" rx="20" fill="#2d3142"/><rect x="40" y="184" width="152" height="64" rx="20" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.3)" stroke-width="1"/>
+<rect x="48" y="190" width="36" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.22)" stroke-width="0.8"/><text x="66" y="199" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">START</text>
+<text x="116" y="222" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Evidence lands</text>
+<text x="116" y="237" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">raw hashed · facts mapped</text>
+<rect x="240" y="184" width="152" height="64" rx="6" fill="#2d3142"/><rect x="240" y="184" width="152" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="248" y="190" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="262" y="199" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">DATA</text>
+<text x="316" y="222" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Impact table</text>
+<text x="316" y="237" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">which (test, subject)</text>
+<polygon points="528,160 616,216 528,272 440,216" fill="#2d3142"/>
+<polygon points="528,160 616,216 528,272 440,216" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<text x="528" y="212" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Read complete,</text>
+<text x="528" y="228" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">inputs known?</text>
+<polygon points="744,172 808,216 744,260 680,216" fill="#2d3142"/>
+<polygon points="744,172 808,216 744,260 680,216" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<text x="744" y="220" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Test tier?</text>
+<rect x="880" y="184" width="176" height="64" rx="6" fill="#2d3142"/><rect x="880" y="184" width="176" height="64" rx="6" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+<rect x="888" y="190" width="28" height="12" rx="2" fill="none" stroke="rgba(240,138,89,0.5)" stroke-width="0.8"/><text x="902" y="199" fill="#f08a59" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="968" y="222" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Versioned rule</text>
+<text x="968" y="237" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">pure function of facts</text>
+<rect x="440" y="368" width="152" height="64" rx="6" fill="#2d3142"/><rect x="440" y="368" width="152" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="448" y="374" width="44" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="470" y="383" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">ABSTAIN</text>
+<text x="516" y="406" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Needs review</text>
+<text x="516" y="421" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">never a PASS on a gap</text>
+<rect x="680" y="368" width="160" height="64" rx="6" fill="#2d3142"/><rect x="680" y="368" width="160" height="64" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="688" y="374" width="36" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="706" y="383" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">MODEL</text>
+<text x="760" y="406" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Extract fields</text>
+<text x="760" y="421" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">Haiku 5.5 · cited spans</text>
+<rect x="880" y="368" width="176" height="64" rx="6" fill="#2d3142"/><rect x="880" y="368" width="176" height="64" rx="6" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<rect x="888" y="374" width="36" height="12" rx="2" fill="none" stroke="rgba(191,192,192,0.5)" stroke-width="0.8"/><text x="906" y="383" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">WRITE</text>
+<text x="968" y="406" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Verdict + state row</text>
+<text x="968" y="421" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">one transaction + outbox</text>
+<rect x="1104" y="368" width="136" height="64" rx="20" fill="#2d3142"/><rect x="1104" y="368" width="136" height="64" rx="20" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.3)" stroke-width="1"/>
+<rect x="1112" y="374" width="24" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.22)" stroke-width="0.8"/><text x="1124" y="383" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">END</text>
+<text x="1172" y="406" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Rollup</text>
+<text x="1172" y="421" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">coverage · freshness</text>
+<line x1="40" y1="528" x2="1240" y2="528" stroke="rgba(245,245,245,0.1)" stroke-width="0.8"/>
+<text x="40" y="544" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">LEGEND</text>
+<rect x="40" y="555" width="14" height="10" rx="2" fill="rgba(245,245,245,0.03)" stroke="rgba(245,245,245,0.3)" stroke-width="1"/>
+<text x="60" y="564" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Start or end</text>
+<rect x="152" y="555" width="14" height="10" rx="2" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<text x="172" y="564" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Step</text>
+<rect x="224" y="555" width="14" height="10" rx="2" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+<text x="244" y="564" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Where status is set</text>
+<rect x="372" y="555" width="14" height="10" rx="2" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<text x="392" y="564" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Write</text>
+<text x="448" y="564" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Diamond = decision</text>
+<line x1="568" y1="560" x2="596" y2="560" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#04-verdict-pipeline-dark-arrow)"/>
+<text x="604" y="564" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Flow</text>
+<line x1="656" y1="560" x2="684" y2="560" fill="none" stroke="#f08a59" stroke-width="1.4" marker-end="url(#04-verdict-pipeline-dark-arrow-accent)"/>
+<text x="692" y="564" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Status leaves the rule</text>
+</svg>
+    </div>
+    <div class="cards" style="grid-template-columns: 1fr 1.1fr 0.9fr;">
+<div class="card"><p class="eyebrow">TIER 1</p><div class="card-header"><span class="dot ink"></span><h3>Rules over facts</h3></div><ul><li>Pure functions over observations, keyed by rule version and pinned inputs.</li><li>Tier 1 never waits on a model budget.</li></ul></div>
+<div class="card"><p class="eyebrow">TIER 2</p><div class="card-header"><span class="dot accent"></span><h3>Extract, then rule</h3></div><ul><li>Haiku 5.5 fills a typed schema with pointer citations (segment ids, JSON Pointers). Code checks each one, then a rule decides.</li><li>A refusal or failed check gives needs_review. A second reader runs before any AI-derived PASS.</li></ul></div>
+<div class="card"><p class="eyebrow">ROLLUP</p><div class="card-header"><span class="dot muted"></span><h3>Over who should be there</h3></div><ul><li>The rollup counts the expected population, not only rows that exist, and marks stale or unassessed subjects.</li><li>No PASS over a partial or stale population.</li></ul></div>
+    </div>
+  </section>
+  <section id="05-fix-lifecycle">
+    <p class="eyebrow">05 · State machine</p>
+    <h2>The life of a fix suggestion</h2>
+    <p class="subtitle">CCP suggests fixes and applies none. Code renders and checks each one; a person may accept or dismiss it, but only a later read of the customer&#x27;s systems confirms it, and a FAIL within 30 days reopens it.</p>
+    <div class="diagram-container">
+<svg viewBox="0 48 1280 556" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="05-fix-lifecycle-dark-title 05-fix-lifecycle-dark-desc">
+<title id="05-fix-lifecycle-dark-title">The life of a fix suggestion</title>
+<desc id="05-fix-lifecycle-dark-desc">Lifecycle of a fix suggestion: Chosen, Rendered, Open, Accepted and Confirmed on the primary rail; Reopened as the recovery state; Not offered, Dismissed and Superseded as terminal outcomes.</desc>
+<defs><marker id="05-fix-lifecycle-dark-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bfc0c0"/></marker><marker id="05-fix-lifecycle-dark-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f08a59"/></marker><marker id="05-fix-lifecycle-dark-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#739fdf"/></marker><marker id="05-fix-lifecycle-dark-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#bfc0c0" stroke-width="1.2"/></marker></defs>
+<rect x="0" y="48" width="1280" height="556" fill="#2d3142"/>
+<rect x="24" y="72" width="1232" height="144" rx="8" fill="rgba(191,192,192,0.035)" stroke="rgba(245,245,245,0.12)"/>
+<rect x="24" y="400" width="1232" height="128" rx="8" fill="rgba(245,245,245,0.035)" stroke="rgba(245,245,245,0.12)"/>
+<text x="40" y="92" fill="#949eb2" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">RECOVERY</text>
+<text x="40" y="252" fill="#949eb2" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">PRIMARY PHASES</text>
+<text x="40" y="420" fill="#949eb2" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">TERMINAL OUTCOMES</text>
+<line x1="46" y1="308" x2="88" y2="308" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<line x1="248" y1="308" x2="320" y2="308" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<line x1="480" y1="308" x2="552" y2="308" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<line x1="712" y1="308" x2="784" y2="308" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<line x1="944" y1="308" x2="1048" y2="308" fill="none" stroke="#f08a59" stroke-width="1.4" marker-end="url(#05-fix-lifecycle-dark-arrow-accent)"/>
+<line x1="1160" y1="272" x2="1160" y2="184" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<line x1="1096" y1="184" x2="1096" y2="272" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<line x1="400" y1="344" x2="400" y2="440" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<line x1="632" y1="344" x2="632" y2="440" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<line x1="864" y1="344" x2="864" y2="440" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<rect x="51" y="288" width="32" height="12" rx="2" fill="#2d3142"/><text x="67" y="297" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">FAIL</text>
+<rect x="262" y="288" width="44" height="12" rx="2" fill="#2d3142"/><text x="284" y="297" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">RENDER</text>
+<rect x="492" y="288" width="48" height="12" rx="2" fill="#2d3142"/><text x="516" y="297" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">CHECKED</text>
+<rect x="726" y="288" width="44" height="12" rx="2" fill="#2d3142"/><text x="748" y="297" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">ACCEPT</text>
+<rect x="964" y="288" width="64" height="12" rx="2" fill="#2d3142"/><text x="996" y="297" fill="#f08a59" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">LATER READ</text>
+<rect x="1020" y="222" width="68" height="12" rx="2" fill="#2d3142"/><text x="1054" y="231" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">READ: FIXED</text>
+<rect x="1168" y="222" width="76" height="12" rx="2" fill="#2d3142"/><text x="1206" y="231" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">FAIL IN 30 D</text>
+<rect x="408" y="378" width="80" height="12" rx="2" fill="#2d3142"/><text x="448" y="387" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">A CHECK FAILS</text>
+<rect x="640" y="378" width="80" height="12" rx="2" fill="#2d3142"/><text x="680" y="387" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">DISMISS + WHY</text>
+<rect x="872" y="378" width="80" height="12" rx="2" fill="#2d3142"/><text x="912" y="387" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">NEW RENDERING</text>
+<circle cx="40" cy="308" r="6" fill="#f5f5f5"/>
+<path d="M748,146 Q864,150 864,268" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="1" stroke-dasharray="4,3"/>
+<circle cx="864" cy="268" r="2" fill="#f5f5f5"/>
+<text x="744" y="140" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" text-anchor="end" font-style="italic">Accepting is optional and confirms</text>
+<text x="744" y="158" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" text-anchor="end" font-style="italic">nothing; only a later read does.</text>
+<path d="M980,480 Q964,478 948,478" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="1" stroke-dasharray="4,3"/>
+<circle cx="948" cy="478" r="2" fill="#f5f5f5"/>
+<text x="984" y="472" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" font-style="italic">Superseded only by a different</text>
+<text x="984" y="490" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" font-style="italic">rendering; a repeat is the same.</text>
+<rect x="88" y="272" width="160" height="72" rx="8" fill="#2d3142"/><rect x="88" y="272" width="160" height="72" rx="8" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="96" y="278" width="44" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="118" y="287" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PHASE 1</text>
+<text x="168" y="314" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Chosen</text>
+<text x="168" y="329" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">fix id, by code or model</text>
+<rect x="320" y="272" width="160" height="72" rx="8" fill="#2d3142"/><rect x="320" y="272" width="160" height="72" rx="8" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="328" y="278" width="44" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="350" y="287" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PHASE 2</text>
+<text x="400" y="314" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Rendered</text>
+<text x="400" y="329" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">template, checked offline</text>
+<rect x="552" y="272" width="160" height="72" rx="8" fill="#2d3142"/><rect x="552" y="272" width="160" height="72" rx="8" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="560" y="278" width="44" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="582" y="287" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PHASE 3</text>
+<text x="632" y="314" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Open</text>
+<text x="632" y="329" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">one per resource and fix</text>
+<rect x="784" y="272" width="160" height="72" rx="8" fill="#2d3142"/><rect x="784" y="272" width="160" height="72" rx="8" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="792" y="278" width="44" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="814" y="287" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PHASE 4</text>
+<text x="864" y="314" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Accepted</text>
+<text x="864" y="329" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">customer applies it</text>
+<rect x="1048" y="272" width="160" height="72" rx="8" fill="#2d3142"/><rect x="1048" y="272" width="160" height="72" rx="8" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+<rect x="1056" y="278" width="44" height="12" rx="2" fill="none" stroke="rgba(240,138,89,0.5)" stroke-width="0.8"/><text x="1078" y="287" fill="#f08a59" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PHASE 5</text>
+<text x="1128" y="314" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Confirmed</text>
+<text x="1128" y="329" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">a later read sees it</text>
+<circle cx="1188" cy="292" r="7" fill="none" stroke="#f5f5f5" stroke-width="1"/><circle cx="1188" cy="292" r="4" fill="#f5f5f5"/>
+<rect x="1048" y="112" width="160" height="72" rx="8" fill="#2d3142"/><rect x="1048" y="112" width="160" height="72" rx="8" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.35)" stroke-width="1" stroke-dasharray="4,3"/>
+<rect x="1056" y="118" width="48" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.22)" stroke-width="0.8"/><text x="1080" y="127" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">RECOVERY</text>
+<text x="1128" y="154" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Reopened</text>
+<text x="1128" y="169" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">FAIL within 30 days</text>
+<rect x="320" y="440" width="160" height="72" rx="8" fill="#2d3142"/><rect x="320" y="440" width="160" height="72" rx="8" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<rect x="328" y="446" width="48" height="12" rx="2" fill="none" stroke="rgba(191,192,192,0.5)" stroke-width="0.8"/><text x="352" y="455" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">TERMINAL</text>
+<text x="400" y="482" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Not offered</text>
+<text x="400" y="497" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">fix_check_failed</text>
+<rect x="552" y="440" width="160" height="72" rx="8" fill="#2d3142"/><rect x="552" y="440" width="160" height="72" rx="8" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<rect x="560" y="446" width="48" height="12" rx="2" fill="none" stroke="rgba(191,192,192,0.5)" stroke-width="0.8"/><text x="584" y="455" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">TERMINAL</text>
+<text x="632" y="482" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Dismissed</text>
+<text x="632" y="497" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">a person says why</text>
+<rect x="784" y="440" width="160" height="72" rx="8" fill="#2d3142"/><rect x="784" y="440" width="160" height="72" rx="8" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<rect x="792" y="446" width="48" height="12" rx="2" fill="none" stroke="rgba(191,192,192,0.5)" stroke-width="0.8"/><text x="816" y="455" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">TERMINAL</text>
+<text x="864" y="482" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600" text-anchor="middle">Superseded</text>
+<text x="864" y="497" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle">a new rendering</text>
+<line x1="40" y1="552" x2="1240" y2="552" stroke="rgba(245,245,245,0.1)" stroke-width="0.8"/>
+<text x="40" y="568" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">LEGEND</text>
+<rect x="40" y="579" width="14" height="10" rx="2" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<text x="60" y="588" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Phase</text>
+<rect x="116" y="579" width="14" height="10" rx="2" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+<text x="136" y="588" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Done: seen by a read</text>
+<rect x="268" y="579" width="14" height="10" rx="2" fill="rgba(245,245,245,0.02)" stroke="rgba(245,245,245,0.35)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="288" y="588" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Recovery</text>
+<rect x="360" y="579" width="14" height="10" rx="2" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<text x="380" y="588" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Terminal</text>
+<line x1="452" y1="584" x2="480" y2="584" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<text x="488" y="588" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Transition</text>
+<line x1="568" y1="584" x2="596" y2="584" fill="none" stroke="#f08a59" stroke-width="1.4" marker-end="url(#05-fix-lifecycle-dark-arrow-accent)"/>
+<text x="604" y="588" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Only a read confirms</text>
+<line x1="736" y1="584" x2="764" y2="584" fill="none" stroke="#bfc0c0" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#05-fix-lifecycle-dark-arrow)"/>
+<text x="772" y="588" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Recovery loop</text>
+</svg>
+    </div>
+    <div class="cards" style="grid-template-columns: 1.1fr 1fr 0.9fr;">
+<div class="card"><p class="eyebrow">RENDERED</p><div class="card-header"><span class="dot ink"></span><h3>Code writes what is shown</h3></div><ul><li>The model, or code when the rule explains the failure, picks a fix by id and its parameters. It never writes a command or a diff.</li><li>Code fills the versioned template and checks params, commands, syntax, scope and placeholders. A failure is recorded, never offered.</li></ul></div>
+<div class="card"><p class="eyebrow">NO EXECUTION</p><div class="card-header"><span class="dot muted"></span><h3>The customer applies it</h3></div><ul><li>No pull request, write credential or executor. The suggestion is a Terraform change, commands and console steps to copy.</li><li>Accept and dismiss are records; a dismissal says why.</li></ul></div>
+<div class="card"><p class="eyebrow">DONE MEANS READ</p><div class="card-header"><span class="dot accent"></span><h3>Confirmed by evidence</h3></div><ul><li>A verdict on evidence observed after the suggestion that no longer names the resource confirms it.</li><li>ccp fixes metrics reports time to confirm and the 30-day reopen rate.</li></ul></div>
+    </div>
+  </section>
+  <section id="06-evidence-chain">
+    <p class="eyebrow">06 · ER / data model</p>
+    <h2>The evidence chain behind every verdict</h2>
+    <p class="subtitle">One chain from a raw provider page to the read that confirmed a fix: evidence, FAIL, lookups, investigation, suggestion, confirming verdict. Rows are appended and superseded, never edited.</p>
+    <div class="diagram-container">
+<svg viewBox="0 40 1280 660" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="06-evidence-chain-dark-title 06-evidence-chain-dark-desc">
+<title id="06-evidence-chain-dark-title">The evidence chain behind every verdict</title>
+<desc id="06-evidence-chain-dark-desc">Entity model of CCP&#x27;s audit chain: raw_events map to observations, which verdicts cite; verdicts are stated as compliance_state rows and looked up in lookups, which investigations read; investigations suggest fix_suggestions, whose fix_suggestion_events link to the later verdict that confirmed the fix.</desc>
+<defs><marker id="06-evidence-chain-dark-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bfc0c0"/></marker><marker id="06-evidence-chain-dark-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f08a59"/></marker><marker id="06-evidence-chain-dark-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#739fdf"/></marker><marker id="06-evidence-chain-dark-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#bfc0c0" stroke-width="1.2"/></marker></defs>
+<rect x="0" y="40" width="1280" height="660" fill="#2d3142"/>
+<line x1="272" y1="148" x2="368" y2="148" stroke="#bfc0c0" stroke-width="1.2"/>
+<line x1="592" y1="148" x2="688" y2="148" stroke="#bfc0c0" stroke-width="1.2"/>
+<line x1="912" y1="148" x2="1008" y2="148" stroke="#bfc0c0" stroke-width="1.2"/>
+<path d="M840,220 L840,272 Q840,280 848,280 L1112,280 Q1120,280 1120,288 L1120,392" fill="none" stroke="#bfc0c0" stroke-width="1.2"/>
+<line x1="1008" y1="468" x2="912" y2="468" stroke="#bfc0c0" stroke-width="1.2"/>
+<line x1="688" y1="468" x2="592" y2="468" stroke="#bfc0c0" stroke-width="1.2"/>
+<line x1="368" y1="468" x2="272" y2="468" stroke="#bfc0c0" stroke-width="1.2"/>
+<path d="M160,392 L160,336 Q160,328 168,328 L752,328 Q760,328 760,320 L760,220" fill="none" stroke="#f08a59" stroke-width="1.4"/>
+<rect x="296" y="128" width="48" height="12" rx="2" fill="#2d3142"/><text x="320" y="137" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">MAPS TO</text>
+<rect x="614" y="128" width="52" height="12" rx="2" fill="#2d3142"/><text x="640" y="137" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">CITED BY</text>
+<rect x="930" y="128" width="60" height="12" rx="2" fill="#2d3142"/><text x="960" y="137" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">STATED AS</text>
+<rect x="950" y="260" width="60" height="12" rx="2" fill="#2d3142"/><text x="980" y="269" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">LOOKED UP</text>
+<rect x="936" y="448" width="48" height="12" rx="2" fill="#2d3142"/><text x="960" y="457" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">READ BY</text>
+<rect x="614" y="448" width="52" height="12" rx="2" fill="#2d3142"/><text x="640" y="457" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">SUGGESTS</text>
+<rect x="290" y="448" width="60" height="12" rx="2" fill="#2d3142"/><text x="320" y="457" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">STATUS IN</text>
+<rect x="422" y="308" width="76" height="12" rx="2" fill="#2d3142"/><text x="460" y="317" fill="#f08a59" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">CONFIRMED BY</text>
+<rect x="280" y="156" width="16" height="12" rx="2" fill="#2d3142"/><text x="288" y="165" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">1</text>
+<rect x="344" y="156" width="16" height="12" rx="2" fill="#2d3142"/><text x="352" y="165" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">N</text>
+<rect x="600" y="156" width="16" height="12" rx="2" fill="#2d3142"/><text x="608" y="165" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">N</text>
+<rect x="664" y="156" width="16" height="12" rx="2" fill="#2d3142"/><text x="672" y="165" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">N</text>
+<rect x="920" y="156" width="16" height="12" rx="2" fill="#2d3142"/><text x="928" y="165" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">1</text>
+<rect x="968" y="156" width="32" height="12" rx="2" fill="#2d3142"/><text x="984" y="165" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">1..*</text>
+<rect x="968" y="476" width="32" height="12" rx="2" fill="#2d3142"/><text x="984" y="485" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">0..*</text>
+<rect x="920" y="476" width="32" height="12" rx="2" fill="#2d3142"/><text x="936" y="485" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">0..1</text>
+<rect x="648" y="476" width="32" height="12" rx="2" fill="#2d3142"/><text x="664" y="485" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">0..1</text>
+<rect x="600" y="476" width="32" height="12" rx="2" fill="#2d3142"/><text x="616" y="485" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">0..*</text>
+<rect x="344" y="476" width="16" height="12" rx="2" fill="#2d3142"/><text x="352" y="485" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">1</text>
+<rect x="280" y="476" width="32" height="12" rx="2" fill="#2d3142"/><text x="296" y="485" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">1..*</text>
+<rect x="848" y="234" width="16" height="12" rx="2" fill="#2d3142"/><text x="856" y="243" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">1</text>
+<rect x="1128" y="366" width="32" height="12" rx="2" fill="#2d3142"/><text x="1144" y="375" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">0..*</text>
+<rect x="736" y="234" width="16" height="12" rx="2" fill="#2d3142"/><text x="744" y="243" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">1</text>
+<rect x="168" y="366" width="32" height="12" rx="2" fill="#2d3142"/><text x="184" y="375" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.06em">0..1</text>
+<path d="M316,586 Q176,584 160,508" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="1" stroke-dasharray="4,3"/>
+<circle cx="160" cy="508" r="2" fill="#f5f5f5"/>
+<text x="320" y="592" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" font-style="italic">Every row on this page joins a per-tenant hash chain;</text>
+<text x="320" y="610" fill="#f5f5f5" font-size="14" font-family="'Instrument Serif', 'Noto Serif', serif" font-style="italic">an hourly signed checkpoint lands in a separate account.</text>
+<rect x="48" y="72" width="224" height="148" rx="6" fill="#2d3142"/><rect x="48" y="72" width="224" height="148" rx="6" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<rect x="56" y="78" width="24" height="12" rx="2" fill="none" stroke="rgba(191,192,192,0.5)" stroke-width="0.8"/><text x="68" y="87" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">RAW</text>
+<text x="60" y="107" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">raw_events</text>
+<line x1="48" y1="116" x2="272" y2="116" stroke="rgba(245,245,245,0.12)" stroke-width="0.8"/>
+<text x="60" y="133" fill="#f5f5f5" font-size="9" font-family="'Geist Mono', ui-monospace, monospace"># source_event_id</text>
+<text x="60" y="149" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">tenant_id · connector</text>
+<text x="60" y="165" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">payload_sha256</text>
+<text x="60" y="181" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">stored_sha256</text>
+<text x="60" y="197" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">raw_path · version_id</text>
+<text x="60" y="213" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">source_ts</text>
+<rect x="368" y="72" width="224" height="148" rx="6" fill="#2d3142"/><rect x="368" y="72" width="224" height="148" rx="6" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<rect x="376" y="78" width="36" height="12" rx="2" fill="none" stroke="rgba(191,192,192,0.5)" stroke-width="0.8"/><text x="394" y="87" fill="#bfc0c0" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">FACTS</text>
+<text x="380" y="107" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">observations</text>
+<line x1="368" y1="116" x2="592" y2="116" stroke="rgba(245,245,245,0.12)" stroke-width="0.8"/>
+<text x="580" y="87" fill="#949eb2" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="end">evidence, assets, …</text>
+<text x="380" y="133" fill="#f5f5f5" font-size="9" font-family="'Geist Mono', ui-monospace, monospace"># entity_id</text>
+<text x="380" y="149" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">→ source_event_id</text>
+<text x="380" y="165" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">observed_at</text>
+<text x="380" y="181" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">recorded_seq</text>
+<text x="380" y="197" fill="#949eb2" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">+ mapper_version</text>
+<text x="380" y="213" fill="#949eb2" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">+ sync_run_id</text>
+<rect x="688" y="72" width="224" height="148" rx="6" fill="#2d3142"/><rect x="688" y="72" width="224" height="148" rx="6" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+<rect x="696" y="78" width="28" height="12" rx="2" fill="none" stroke="rgba(240,138,89,0.5)" stroke-width="0.8"/><text x="710" y="87" fill="#f08a59" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">ROOT</text>
+<text x="700" y="107" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">verdicts</text>
+<line x1="688" y1="116" x2="912" y2="116" stroke="rgba(245,245,245,0.12)" stroke-width="0.8"/>
+<text x="700" y="133" fill="#f5f5f5" font-size="9" font-family="'Geist Mono', ui-monospace, monospace"># verdict_id</text>
+<text x="700" y="149" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">evaluation_key</text>
+<text x="700" y="165" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">test_id · subject_key</text>
+<text x="700" y="181" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">status</text>
+<text x="700" y="197" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">rule_version</text>
+<text x="700" y="213" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">manifest (pinned inputs)</text>
+<rect x="1008" y="72" width="224" height="148" rx="6" fill="#2d3142"/><rect x="1008" y="72" width="224" height="148" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="1016" y="78" width="36" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="1034" y="87" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">STATE</text>
+<text x="1020" y="107" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">compliance_state</text>
+<line x1="1008" y1="116" x2="1232" y2="116" stroke="rgba(245,245,245,0.12)" stroke-width="0.8"/>
+<text x="1020" y="133" fill="#f5f5f5" font-size="9" font-family="'Geist Mono', ui-monospace, monospace"># row_id</text>
+<text x="1020" y="149" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">→ verdict_id</text>
+<text x="1020" y="165" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">valid_from · valid_to</text>
+<text x="1020" y="181" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">recorded_seq</text>
+<text x="1020" y="197" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">supersedes_row_id</text>
+<text x="1020" y="213" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">reason</text>
+<rect x="1008" y="392" width="224" height="132" rx="6" fill="#2d3142"/><rect x="1008" y="392" width="224" height="132" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="1016" y="398" width="40" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="1036" y="407" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">LOOKUP</text>
+<text x="1020" y="427" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">lookups</text>
+<line x1="1008" y1="436" x2="1232" y2="436" stroke="rgba(245,245,245,0.12)" stroke-width="0.8"/>
+<text x="1020" y="453" fill="#f5f5f5" font-size="9" font-family="'Geist Mono', ui-monospace, monospace"># lookup_id</text>
+<text x="1020" y="469" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">→ verdict_id</text>
+<text x="1020" y="485" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">kind · resource</text>
+<text x="1020" y="501" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">params · status</text>
+<text x="1020" y="517" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">→ response_ids (raw)</text>
+<rect x="688" y="392" width="224" height="132" rx="6" fill="#2d3142"/><rect x="688" y="392" width="224" height="132" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="696" y="398" width="24" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="708" y="407" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">RUN</text>
+<text x="700" y="427" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">investigations</text>
+<line x1="688" y1="436" x2="912" y2="436" stroke="rgba(245,245,245,0.12)" stroke-width="0.8"/>
+<text x="700" y="453" fill="#f5f5f5" font-size="9" font-family="'Geist Mono', ui-monospace, monospace"># investigation_id</text>
+<text x="700" y="469" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">→ verdict_id</text>
+<text x="700" y="485" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">root_cause · citations</text>
+<text x="700" y="501" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">prompt_version</text>
+<text x="700" y="517" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">→ thread_id (model runs)</text>
+<rect x="368" y="392" width="224" height="148" rx="6" fill="#2d3142"/><rect x="368" y="392" width="224" height="148" rx="6" fill="rgba(240,138,89,0.05)" stroke="rgba(240,138,89,0.5)" stroke-width="1" stroke-dasharray="4,4"/>
+<rect x="376" y="398" width="60" height="12" rx="2" fill="none" stroke="rgba(240,138,89,0.4)" stroke-width="0.8"/><text x="406" y="407" fill="#f08a59" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">SUGGESTION</text>
+<text x="380" y="427" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">fix_suggestions</text>
+<line x1="368" y1="436" x2="592" y2="436" stroke="rgba(245,245,245,0.12)" stroke-width="0.8"/>
+<text x="380" y="453" fill="#f5f5f5" font-size="9" font-family="'Geist Mono', ui-monospace, monospace"># suggestion_id</text>
+<text x="380" y="469" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">→ investigation_id</text>
+<text x="380" y="485" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">fix · fix_version</text>
+<text x="380" y="501" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">params · body · checks</text>
+<text x="380" y="517" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">→ lookup_ids</text>
+<text x="380" y="533" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">source: code | model</text>
+<rect x="48" y="392" width="224" height="116" rx="6" fill="#2d3142"/><rect x="48" y="392" width="224" height="116" rx="6" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<rect x="56" y="398" width="40" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="76" y="407" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">STATUS</text>
+<text x="60" y="427" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">fix_suggestion_events</text>
+<line x1="48" y1="436" x2="272" y2="436" stroke="rgba(245,245,245,0.12)" stroke-width="0.8"/>
+<text x="60" y="453" fill="#f5f5f5" font-size="9" font-family="'Geist Mono', ui-monospace, monospace"># event_id</text>
+<text x="60" y="469" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">→ suggestion_id</text>
+<text x="60" y="485" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">status · actor · note</text>
+<text x="60" y="501" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">→ verdict_id (the read)</text>
+<line x1="40" y1="648" x2="1240" y2="648" stroke="rgba(245,245,245,0.1)" stroke-width="0.8"/>
+<text x="40" y="664" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">LEGEND</text>
+<rect x="40" y="675" width="14" height="10" rx="2" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+<text x="60" y="684" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Aggregate root</text>
+<rect x="160" y="675" width="14" height="10" rx="2" fill="rgba(245,245,245,0.05)" stroke="#bfc0c0" stroke-width="1"/>
+<text x="180" y="684" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Evidence</text>
+<rect x="252" y="675" width="14" height="10" rx="2" fill="#393e53" stroke="#f5f5f5" stroke-width="1"/>
+<text x="272" y="684" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Record</text>
+<rect x="332" y="675" width="14" height="10" rx="2" fill="rgba(240,138,89,0.05)" stroke="rgba(240,138,89,0.5)" stroke-width="1" stroke-dasharray="4,4"/>
+<text x="352" y="684" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">A person decides</text>
+<text x="464" y="684" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif"># key   → reference   + planned column</text>
+<line x1="688" y1="680" x2="716" y2="680" stroke="#f08a59" stroke-width="1.2"/>
+<text x="724" y="684" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Closes the loop</text>
+</svg>
+    </div>
+    <div class="cards" style="grid-template-columns: 1.1fr 0.9fr 1fr;">
+<div class="card"><p class="eyebrow">APPEND ONLY</p><div class="card-header"><span class="dot ink"></span><h3>History is kept</h3></div><ul><li>Verdicts and state rows are insert-only; a correction supersedes with a reason and never rewrites.</li><li>As-of queries show what was true, and what CCP believed, at any time.</li></ul></div>
+<div class="card"><p class="eyebrow">REBUILDABLE</p><div class="card-header"><span class="dot accent"></span><h3>Verdicts carry their inputs</h3></div><ul><li>rule_version and the manifest of pinned inputs identify each verdict.</li><li>Model requests and responses are stored, so an AI-derived verdict is rebuilt from stored outputs, never re-sampled.</li></ul></div>
+<div class="card"><p class="eyebrow">VERIFIABLE</p><div class="card-header"><span class="dot muted"></span><h3>Without trusting the database</h3></div><ul><li>A per-tenant hash chain covers raw objects and every row above.</li><li>Hourly signed checkpoints sit in a compliance-mode bucket in a separate account; ccp audit verify checks them.</li><li>As-of audit packages carry raw pointers and chain proofs and verify offline with a public key.</li></ul></div>
+    </div>
+  </section>
+  <section id="07-guardrails">
+    <p class="eyebrow">07 · Layer stack</p>
+    <h2>Guardrails, by where they are enforced</h2>
+    <p class="subtitle">Twenty controls on the five surfaces a finding crosses. Each one is enforced outside the model: by CCP code with a test, by Postgres or AWS, or by a signed-in person.</p>
+    <div class="diagram-container">
+<svg viewBox="0 32 1280 592" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="07-guardrails-dark-title 07-guardrails-dark-desc">
+<title id="07-guardrails-dark-title">Guardrails, by where they are enforced</title>
+<desc id="07-guardrails-dark-desc">Catalogue of CCP guardrails grouped by enforcement surface: ingest, tool gateway, decision, approval and record, with four controls each and the actor that enforces it.</desc>
+<defs><marker id="07-guardrails-dark-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bfc0c0"/></marker><marker id="07-guardrails-dark-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f08a59"/></marker><marker id="07-guardrails-dark-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#739fdf"/></marker><marker id="07-guardrails-dark-arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#bfc0c0" stroke-width="1.2"/></marker></defs>
+<rect x="0" y="32" width="1280" height="592" fill="#2d3142"/>
+<text x="40" y="56" fill="#949eb2" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">ALONG ONE FINDING</text>
+<line x1="88" y1="80" x2="88" y2="536" fill="none" stroke="#bfc0c0" stroke-width="1.2" marker-end="url(#07-guardrails-dark-arrow)"/>
+<rect x="136" y="72" width="1104" height="96" fill="#2d3142"/>
+<text x="152" y="102" fill="#949eb2" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L1 · INGEST</text>
+<text x="152" y="126" fill="#f5f5f5" font-size="14" font-family="'Geist', system-ui, sans-serif" font-weight="600">Connectors</text>
+<text x="152" y="144" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">when evidence lands</text>
+<rect x="408" y="92" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(245,245,245,0.18)" stroke-width="1"/>
+<rect x="416" y="98" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="430" y="107" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="420" y="125" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Absence only from</text>
+<text x="420" y="140" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">a complete scope</text>
+<rect x="616" y="92" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(245,245,245,0.18)" stroke-width="1"/>
+<rect x="624" y="98" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="638" y="107" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="628" y="125" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Denied or partial reads</text>
+<text x="628" y="140" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">give needs_review</text>
+<rect x="824" y="92" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(245,245,245,0.18)" stroke-width="1"/>
+<rect x="832" y="98" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="846" y="107" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="836" y="125" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Secrets dropped</text>
+<text x="836" y="140" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">before landing</text>
+<rect x="1032" y="92" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(245,245,245,0.18)" stroke-width="1"/>
+<rect x="1040" y="98" width="48" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.22)" stroke-width="0.8"/><text x="1064" y="107" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PLATFORM</text>
+<text x="1044" y="125" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Raw written once,</text>
+<text x="1044" y="140" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">hashed, Object Lock</text>
+<rect x="136" y="168" width="1104" height="96" fill="#393e53"/>
+<text x="152" y="198" fill="#949eb2" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L2 · TOOLS</text>
+<text x="152" y="222" fill="#f5f5f5" font-size="14" font-family="'Geist', system-ui, sans-serif" font-weight="600">Tool gateway</text>
+<text x="152" y="240" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">when an agent reads</text>
+<rect x="408" y="188" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(245,245,245,0.18)" stroke-width="1"/>
+<rect x="416" y="194" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="430" y="203" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="420" y="221" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Tenant bound in code,</text>
+<text x="420" y="236" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">never by the model</text>
+<rect x="616" y="188" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(245,245,245,0.18)" stroke-width="1"/>
+<rect x="624" y="194" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="638" y="203" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="628" y="221" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">policy.check fails</text>
+<text x="628" y="236" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">closed: permit, deny, ask</text>
+<rect x="824" y="188" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(245,245,245,0.18)" stroke-width="1"/>
+<rect x="832" y="194" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="846" y="203" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="836" y="221" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Code picks every live</text>
+<text x="836" y="236" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">read, never the model</text>
+<rect x="1032" y="188" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(245,245,245,0.18)" stroke-width="1"/>
+<rect x="1040" y="194" width="48" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.22)" stroke-width="0.8"/><text x="1064" y="203" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PLATFORM</text>
+<text x="1044" y="221" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Read-only database</text>
+<text x="1044" y="236" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">role for agents</text>
+<line x1="136" y1="168" x2="1240" y2="168" stroke="rgba(245,245,245,0.12)" stroke-width="1"/>
+<rect x="136" y="264" width="1104" height="96" fill="rgba(240,138,89,0.06)"/>
+<text x="152" y="294" fill="#f08a59" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L3 · DECISION</text>
+<text x="152" y="318" fill="#f5f5f5" font-size="14" font-family="'Geist', system-ui, sans-serif" font-weight="600">Rules engine</text>
+<text x="152" y="336" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">when a status is set</text>
+<rect x="408" y="284" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(240,138,89,0.5)" stroke-width="1"/>
+<rect x="416" y="290" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="430" y="299" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="420" y="317" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Only a versioned rule</text>
+<text x="420" y="332" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">sets a status</text>
+<rect x="616" y="284" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(240,138,89,0.5)" stroke-width="1"/>
+<rect x="624" y="290" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="638" y="299" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="628" y="317" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Code checks every</text>
+<text x="628" y="332" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">pointer citation</text>
+<rect x="824" y="284" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(240,138,89,0.5)" stroke-width="1"/>
+<rect x="832" y="290" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="846" y="299" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="836" y="317" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Second reader before</text>
+<text x="836" y="332" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">an AI-derived PASS</text>
+<rect x="1032" y="284" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(240,138,89,0.5)" stroke-width="1"/>
+<rect x="1040" y="290" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="1054" y="299" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="1044" y="317" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Refusal or unknown input</text>
+<text x="1044" y="332" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">gives needs_review</text>
+<line x1="136" y1="264" x2="1240" y2="264" stroke="rgba(245,245,245,0.12)" stroke-width="1"/>
+<rect x="136" y="360" width="1104" height="96" fill="#393e53"/>
+<text x="152" y="390" fill="#949eb2" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L4 · DECIDE</text>
+<text x="152" y="414" fill="#f5f5f5" font-size="14" font-family="'Geist', system-ui, sans-serif" font-weight="600">Approvals, fixes</text>
+<text x="152" y="432" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">when a person decides</text>
+<rect x="408" y="380" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(245,245,245,0.18)" stroke-width="1"/>
+<rect x="416" y="386" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="430" y="395" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="420" y="413" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Payload and precondition</text>
+<text x="420" y="428" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">hashes, with expiry</text>
+<rect x="616" y="380" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(245,245,245,0.18)" stroke-width="1"/>
+<rect x="624" y="386" width="40" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.22)" stroke-width="0.8"/><text x="644" y="395" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PERSON</text>
+<text x="628" y="413" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Signed-in reviewer,</text>
+<text x="628" y="428" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">never the requester</text>
+<rect x="824" y="380" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(245,245,245,0.18)" stroke-width="1"/>
+<rect x="832" y="386" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="846" y="395" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="836" y="413" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Fixes rendered by code,</text>
+<text x="836" y="428" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">checked offline</text>
+<rect x="1032" y="380" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(245,245,245,0.18)" stroke-width="1"/>
+<rect x="1040" y="386" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="1054" y="395" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="1044" y="413" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">A fix is done only</text>
+<text x="1044" y="428" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">when a read sees it</text>
+<line x1="136" y1="360" x2="1240" y2="360" stroke="rgba(245,245,245,0.12)" stroke-width="1"/>
+<rect x="136" y="456" width="1104" height="96" fill="#2d3142"/>
+<text x="152" y="486" fill="#949eb2" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.14em">L5 · RECORD</text>
+<text x="152" y="510" fill="#f5f5f5" font-size="14" font-family="'Geist', system-ui, sans-serif" font-weight="600">Storage and audit</text>
+<text x="152" y="528" fill="#bfc0c0" font-size="9" font-family="'Geist Mono', ui-monospace, monospace">always</text>
+<rect x="408" y="476" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(245,245,245,0.18)" stroke-width="1"/>
+<rect x="416" y="482" width="48" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.22)" stroke-width="0.8"/><text x="440" y="491" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PLATFORM</text>
+<text x="420" y="509" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Forced RLS and</text>
+<text x="420" y="524" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">tenant-first keys</text>
+<rect x="616" y="476" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(245,245,245,0.18)" stroke-width="1"/>
+<rect x="624" y="482" width="48" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.22)" stroke-width="0.8"/><text x="648" y="491" fill="#949eb2" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">PLATFORM</text>
+<text x="628" y="509" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Per-tenant hash chain,</text>
+<text x="628" y="524" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">hourly signed checkpoint</text>
+<rect x="824" y="476" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(245,245,245,0.18)" stroke-width="1"/>
+<rect x="832" y="482" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="846" y="491" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="836" y="509" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Postgres run log is</text>
+<text x="836" y="524" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">the record, not a vendor</text>
+<rect x="1032" y="476" width="192" height="56" rx="6" fill="#393e53" stroke="rgba(245,245,245,0.18)" stroke-width="1"/>
+<rect x="1040" y="482" width="28" height="12" rx="2" fill="none" stroke="rgba(245,245,245,0.4)" stroke-width="0.8"/><text x="1054" y="491" fill="#f5f5f5" font-size="7" font-family="'Geist Mono', ui-monospace, monospace" text-anchor="middle" letter-spacing="0.08em">CODE</text>
+<text x="1044" y="509" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">Cross-tenant canary</text>
+<text x="1044" y="524" fill="#f5f5f5" font-size="12" font-family="'Geist', system-ui, sans-serif" font-weight="600">runs in production</text>
+<line x1="136" y1="456" x2="1240" y2="456" stroke="rgba(245,245,245,0.12)" stroke-width="1"/>
+<rect x="136" y="72" width="1104" height="480" fill="none" stroke="#bfc0c0" stroke-width="1"/>
+<rect x="136" y="264" width="1104" height="96" fill="none" stroke="#f08a59" stroke-width="1.2"/>
+<line x1="40" y1="572" x2="1240" y2="572" stroke="rgba(245,245,245,0.1)" stroke-width="0.8"/>
+<text x="40" y="588" fill="#bfc0c0" font-size="8" font-family="'Geist Mono', ui-monospace, monospace" letter-spacing="0.18em">LEGEND</text>
+<text x="40" y="608" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">CODE = enforced by CCP code, with a test</text>
+<text x="272" y="608" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">PLATFORM = enforced by Postgres or AWS</text>
+<text x="496" y="608" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">PERSON = a signed-in human decision</text>
+<rect x="704" y="599" width="14" height="10" rx="2" fill="rgba(240,138,89,0.08)" stroke="#f08a59" stroke-width="1"/>
+<text x="724" y="608" fill="#bfc0c0" font-size="8.5" font-family="'Geist', system-ui, sans-serif">Where status is set</text>
+</svg>
+    </div>
+    <div class="cards" style="grid-template-columns: 1fr 1fr 1fr;">
+<div class="card"><p class="eyebrow">FAILS CLOSED</p><div class="card-header"><span class="dot accent"></span><h3>Default deny</h3></div><ul><li>An unknown tool, tenant, decision or model price is refused, not guessed.</li><li>Kill switches per workflow, per tool and per tenant, plus one that parks all model work.</li></ul></div>
+<div class="card"><p class="eyebrow">MEASURED</p><div class="card-header"><span class="dot ink"></span><h3>Autonomy is earned</h3></div><ul><li>Five runs per case, pass^k, false PASS and false FAIL reported apart.</li><li>A draft skips review only in a reversible, low-impact class whose published snapshot meets the bar, within a daily budget and a 10% sample, and is demoted automatically.</li></ul></div>
+<div class="card"><p class="eyebrow">PAGED</p><div class="card-header"><span class="dot muted"></span><h3>What wakes someone</h3></div><ul><li>Chain verification fails, a replay mismatch, the cross-tenant canary fails, or AI work parks for 30 minutes.</li></ul></div>
+    </div>
+  </section>
+    <footer>Source: docs/reports/ccp-target-architecture.md and spec.md. Generated by
+    docs/diagrams/system-design/build.py; edit the script, not this file.</footer>
+  </div>
+</body>
+</html>

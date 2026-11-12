@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "afe2284b-e7a9-4863-afaa-24ab2ebc2f9f",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\workflow-ccp-coverage-engine\\candidate.json",
+  "output": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\workflow-ccp-coverage-engine\\ccp-coverage-engine.html",
+  "specification": {
+    "sha256": "b70451190fad7432e392efd70d5660d5b1f19b6dd2ae666e3f090e7a922cd3cc",
+    "bytes": 6206
+  },
+  "artifact": {
+    "sha256": "5b2a7e8cf0ab4dd719c094de5170f5b7ec076113ee163ebfc420293b2ae41331",
+    "bytes": 837020
+  }
+}

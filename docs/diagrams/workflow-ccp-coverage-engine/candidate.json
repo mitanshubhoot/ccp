@@ -1,0 +1,70 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "CCP coverage engine: deterministic tests first, bounded playbooks for gaps",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "output": "docs/diagrams/workflow-ccp-coverage-engine/ccp-coverage-engine.html",
+    "legend": {
+      "entries": {
+        "backend": { "label": "CCP code" },
+        "security": { "label": "Gates and people" },
+        "external": { "label": "Outside sources" },
+        "frontend": { "label": "Product UI" }
+      }
+    }
+  },
+  "lanes": [
+    { "id": "core", "label": "Deterministic path" },
+    { "id": "playbooks", "label": "Bounded playbooks" },
+    { "id": "people", "label": "People and escalation", "variant": "exception" },
+    { "id": "drafting", "label": "Offline test drafting" }
+  ],
+  "groups": [
+    { "id": "subgraph", "label": "Fixed subgraph: read-only tools, budgets", "lane": "playbooks", "fromCol": 3, "toCol": 4, "variant": "security" }
+  ],
+  "mainPath": ["aws", "inventory", "coverage", "dettests", "rules", "status"],
+  "nodes": [
+    { "id": "aws", "lane": "core", "col": 0, "type": "external", "label": "AWS accounts", "sublabel": "all regions" },
+    { "id": "inventory", "lane": "core", "col": 1, "type": "backend", "label": "Inventory", "sublabel": "every resource type" },
+    { "id": "coverage", "lane": "core", "col": 2, "type": "backend", "label": "Coverage map", "sublabel": "intents vs tests" },
+    { "id": "dettests", "lane": "core", "col": 3, "type": "backend", "label": "Deterministic tests", "sublabel": "versioned checks" },
+    { "id": "rules", "lane": "core", "col": 4, "type": "backend", "label": "Rules decide", "sublabel": "PASS, FAIL, not assessed" },
+    { "id": "status", "lane": "core", "col": 5, "type": "frontend", "label": "Status + why", "sublabel": "gaps shown, never hidden" },
+    { "id": "router", "lane": "playbooks", "col": 2, "type": "backend", "label": "Class router", "sublabel": "code picks the class" },
+    { "id": "playbook", "lane": "playbooks", "col": 3, "type": "backend", "label": "Service playbook", "sublabel": "one per service class", "tag": "model maps unfamiliar fields" },
+    { "id": "mapcheck", "lane": "playbooks", "col": 4, "type": "security", "label": "Mapping check", "sublabel": "code checks cited paths" },
+    { "id": "classapprove", "lane": "people", "col": 2, "type": "security", "icon": "person", "label": "Class approval", "sublabel": "AI proposes, person approves" },
+    { "id": "investigator", "lane": "people", "col": 4, "type": "backend", "label": "Investigator", "sublabel": "proposal only" },
+    { "id": "registry", "lane": "drafting", "col": 2, "type": "external", "label": "AWS type registry", "sublabel": "new services" },
+    { "id": "drafter", "lane": "drafting", "col": 3, "type": "backend", "label": "Check drafter", "sublabel": "schema + intents to rule", "tag": "no customer data" },
+    { "id": "validate", "lane": "drafting", "col": 4, "type": "security", "label": "Validate + shadow", "sublabel": "compile, fixtures, diff" },
+    { "id": "approve", "lane": "drafting", "col": 5, "type": "security", "icon": "person", "label": "Reviewer approval", "sublabel": "audit relevance" }
+  ],
+  "edges": [
+    { "id": "list-types", "from": "aws", "to": "inventory", "label": "read-only lists", "variant": "emphasis" },
+    { "id": "resources", "from": "inventory", "to": "coverage", "variant": "emphasis" },
+    { "id": "covered", "from": "coverage", "to": "dettests", "label": "covered", "variant": "emphasis" },
+    { "id": "facts", "from": "dettests", "to": "rules", "variant": "emphasis" },
+    { "id": "verdicts", "from": "rules", "to": "status", "variant": "emphasis" },
+    { "id": "gap", "from": "coverage", "to": "router", "label": "gap", "role": "branch" },
+    { "id": "known-class", "from": "router", "to": "playbook", "label": "known class", "role": "branch" },
+    { "id": "unknown-type", "from": "router", "to": "classapprove", "label": "unknown type", "variant": "security", "role": "error" },
+    { "id": "approved-class", "from": "classapprove", "to": "playbook", "label": "approved class", "variant": "security", "role": "branch" },
+    { "id": "cited-attributes", "from": "playbook", "to": "mapcheck", "label": "cited fields", "role": "branch" },
+    { "id": "fail-only", "from": "mapcheck", "to": "rules", "label": "FAIL or review, never PASS", "variant": "security", "role": "branch" },
+    { "id": "escalate", "from": "mapcheck", "to": "investigator", "label": "can't map", "variant": "dashed", "role": "error" },
+    { "id": "promote", "from": "playbook", "to": "drafter", "label": "mapping to promote", "variant": "dashed", "role": "async" },
+    { "id": "new-types", "from": "registry", "to": "drafter", "label": "weekly diff", "variant": "dashed", "role": "async" },
+    { "id": "draft", "from": "drafter", "to": "validate", "label": "draft check", "role": "branch" },
+    { "id": "passes", "from": "validate", "to": "approve", "label": "passes", "variant": "security", "role": "branch" },
+    { "id": "ships", "from": "approve", "to": "dettests", "label": "ships in bundle", "variant": "emphasis", "role": "return" }
+  ],
+  "cards": [
+    { "dot": "rose", "title": "Guardrails", "items": ["Read-only AWS role and read-class tools only", "Code picks the playbook; fixed node path, tool list and budgets", "A playbook can raise FAIL or needs review, never PASS", "Tags and names are untrusted data; kill switch per class and tenant"] },
+    { "dot": "emerald", "title": "Evals", "items": ["Synthetic AWS accounts with seeded misconfigurations", "Discovery recall, class accuracy, mapping accuracy, FAIL recall", "Zero false PASS in shadow before any promotion"] },
+    { "dot": "cyan", "title": "Promotion loop", "items": ["Unknown type, approved class, playbook coverage, drafted check, shadow, review, deterministic test", "The playbook path retires for that type once its test ships", "Tracked: days from first sighting to a deterministic test"] },
+    { "dot": "violet", "title": "Precedent", "items": ["Drata: a model drafts tests offline, auditors review, rules run daily", "Stripe: agents answer only question types whose quality is measured"] }
+  ]
+}

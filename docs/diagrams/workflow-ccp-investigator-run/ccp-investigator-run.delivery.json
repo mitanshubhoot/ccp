@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "5cd1bce7-191b-41ac-b5a7-47ff5dab95bf",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\workflow-ccp-investigator-run\\candidate.json",
+  "output": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\workflow-ccp-investigator-run\\ccp-investigator-run.html",
+  "specification": {
+    "sha256": "a0d5eb1a0cae51a46de117c9d654dfb0cdb3149fa7aad5e4ec5e17ff0dee6982",
+    "bytes": 6414
+  },
+  "artifact": {
+    "sha256": "a4b6afb2ba0745e373e796fcaa6a3d0505310ea79985a9fdc3d04ad4bd72a90a",
+    "bytes": 838394
+  }
+}

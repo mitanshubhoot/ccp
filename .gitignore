@@ -5,6 +5,7 @@ evals/runs/*
 !evals/runs/.gitkeep
 .env
 .env.*
+!.env.example
 # python
 __pycache__/
 *.pyc
@@ -15,3 +16,9 @@ __pycache__/
 .hypothesis/
 dist/
 *.egg-info/
+
+# Understand Anything scratch output (the graph itself, .ua/knowledge-graph.json, may be committed)
+.ua/intermediate/
+.ua/tmp/
+.ua/diff-overlay.json
+.ua/.trash-*/

@@ -1,0 +1,77 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "ccp Investigator Run: Tools to Approval",
+    "locale": "en",
+    "output": "docs/diagrams/workflow-ccp-investigator-run/ccp-investigator-run.html",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    { "id": "tools", "label": "Read-only tools + model" },
+    { "id": "graph", "label": "Investigator graph (no writes)" },
+    { "id": "guard", "label": "Guardrail stops", "variant": "exception" },
+    { "id": "runner", "label": "Investigator runner (writes)" },
+    { "id": "approval", "label": "Approval stage (human)" },
+    { "id": "remediate", "label": "Remediation" }
+  ],
+  "groups": [
+    { "id": "graph_thread", "label": "LangGraph thread, checkpointed", "lane": "graph", "fromCol": 1, "toCol": 4, "variant": "emphasis" },
+    { "id": "shared_stage", "label": "Shared by every agent", "lane": "approval", "fromCol": 4, "toCol": 5, "variant": "security" }
+  ],
+  "mainPath": ["start", "load", "gather", "diagnose", "bound", "persist", "item", "decide", "execute", "reeval"],
+  "nodes": [
+    { "id": "start", "lane": "runner", "col": 0, "type": "messagebus", "label": "Run starts", "sublabel": "fail or needs_review", "tag": "verdicts topic" },
+    { "id": "load", "lane": "graph", "col": 1, "type": "backend", "label": "load_context", "sublabel": "pure tool calls" },
+    { "id": "reads", "lane": "tools", "col": 1, "type": "security", "label": "Direct reads", "sublabel": "verdict, state, control, grants" },
+    { "id": "gather", "lane": "graph", "col": 2, "type": "backend", "label": "gather", "sublabel": "model picks tools", "tag": "8 calls max" },
+    { "id": "toolcall", "lane": "tools", "col": 2, "type": "security", "label": "Allowlisted call", "sublabel": "11 tools via ScopedDB", "tag": "secrets redacted" },
+    { "id": "offlist", "lane": "guard", "col": 2, "type": "security", "label": "Off-list tool", "sublabel": "error result, not run", "tag": "guardrail event" },
+    { "id": "diagnose", "lane": "graph", "col": 3, "type": "backend", "label": "diagnose", "sublabel": "one structured call" },
+    { "id": "model", "lane": "tools", "col": 3, "type": "external", "label": "Anthropic API", "sublabel": "via LLMClient" },
+    { "id": "bound", "lane": "graph", "col": 4, "type": "backend", "label": "verify + bound_actions", "sublabel": "quotes checked, catalogue only" },
+    { "id": "persist", "lane": "runner", "col": 4, "type": "backend", "label": "Persist + propose", "sublabel": "targets checked again", "tag": "investigations row" },
+    { "id": "item", "lane": "approval", "col": 4, "type": "security", "label": "Approval item", "sublabel": "remediation, evidence_request", "tag": "payload hash" },
+    { "id": "decide", "lane": "approval", "col": 5, "type": "external", "label": "Operator decides", "sublabel": "ccp approvals approve", "tag": "typed reviewer name" },
+    { "id": "rejected", "lane": "guard", "col": 5, "type": "security", "label": "Proposal rejected", "sublabel": "nothing runs" },
+    { "id": "execute", "lane": "remediate", "col": 5, "type": "backend", "label": "remediate execute", "sublabel": "dry run unless 5 gates", "tag": "live: GitHub call", "yOffset": -45 },
+    { "id": "reeval", "lane": "remediate", "col": 5, "type": "backend", "label": "Re-evaluate", "sublabel": "re-pull, new verdict", "tag": "no CLI command", "yOffset": 45 }
+  ],
+  "edges": [
+    { "id": "start-load", "from": "start", "to": "load", "label": "verdict id", "variant": "emphasis" },
+    { "id": "load-gather", "from": "load", "to": "gather", "variant": "emphasis" },
+    { "id": "gather-diagnose", "from": "gather", "to": "diagnose", "label": "chunks", "variant": "emphasis" },
+    { "id": "diagnose-bound", "from": "diagnose", "to": "bound", "label": "draft", "variant": "emphasis" },
+    { "id": "bound-persist", "from": "bound", "to": "persist", "label": "typed proposal", "variant": "emphasis" },
+    { "id": "persist-item", "from": "persist", "to": "item", "label": "open item", "variant": "security" },
+    { "id": "item-decide", "from": "item", "to": "decide", "variant": "security" },
+    { "id": "decide-execute", "from": "decide", "to": "execute", "label": "approved: gate 5", "variant": "security" },
+    { "id": "execute-reeval", "from": "execute", "to": "reeval", "label": "operator re-runs", "variant": "dashed" },
+    { "id": "load-reads", "from": "load", "to": "reads", "label": "4 reads", "role": "branch" },
+    { "id": "gather-call", "from": "gather", "to": "toolcall", "label": "tool_use", "role": "branch" },
+    { "id": "diagnose-model", "from": "diagnose", "to": "model", "label": "extract", "role": "branch" },
+    { "id": "gather-offlist", "from": "gather", "to": "offlist", "label": "off-list name", "variant": "security", "role": "error" },
+    { "id": "decide-reject", "from": "decide", "to": "rejected", "label": "reject", "variant": "security", "role": "error" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "Graphs read, runners write", "items": [
+      "The graph has no write tool; its output is a typed proposal",
+      "The runner persists the Investigation, writes one remediation_proposals row per surviving action and opens one approval item each",
+      "Missing evidence opens an evidence_request item as well"
+    ] },
+    { "dot": "cyan", "title": "Tool surface", "items": [
+      "load_context calls get_verdict, get_current_state, get_control and get_access_grants directly",
+      "gather offers the 11 investigator tools; an off-list name gets an error result and a guardrail event, never a dispatch",
+      "Every tool takes its tenant from the bound closure, never from an argument"
+    ] },
+    { "dot": "rose", "title": "Live action gates", "items": [
+      "Approval only satisfies gate 5: a named reviewer and a payload hash that still matches",
+      "Live also needs CCP_REMEDIATION_LIVE=1, --live, the repo allowlist and the typed confirmation; otherwise the planned call is only recorded",
+      "reevaluate() re-pulls the connector and supersedes the failing state row, but only the e2e test calls it; from the CLI the operator re-runs ccp run"
+    ] },
+    { "dot": "amber", "title": "Same stage, other agents", "items": [
+      "Policy Agent: draft mode writes data/drafts/ and opens a policy_draft item",
+      "Copilot: fix this opens a remediation item after an explicit yes, running the Investigator first when needed"
+    ] }
+  ]
+}

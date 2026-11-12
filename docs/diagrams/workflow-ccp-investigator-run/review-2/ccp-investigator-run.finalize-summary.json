@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "workflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\workflow-ccp-investigator-run\\candidate.json",
+    "sha256": "a0d5eb1a0cae51a46de117c9d654dfb0cdb3149fa7aad5e4ec5e17ff0dee6982",
+    "bytes": 6414
+  },
+  "artifact": {
+    "path": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\workflow-ccp-investigator-run\\ccp-investigator-run.html",
+    "sha256": "a4b6afb2ba0745e373e796fcaa6a3d0505310ea79985a9fdc3d04ad4bd72a90a",
+    "bytes": 838394
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\workflow-ccp-investigator-run\\review-2\\ccp-investigator-run.finalize.json",
+    "summaryReceipt": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\workflow-ccp-investigator-run\\review-2\\ccp-investigator-run.finalize-summary.json",
+    "browserCheckReceipt": "C:\\Users\\can1\\Documents\\agentic\\docs\\diagrams\\workflow-ccp-investigator-run\\review-2\\ccp-investigator-run.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-11-03T18:51:17.507Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 6547,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  }
+}

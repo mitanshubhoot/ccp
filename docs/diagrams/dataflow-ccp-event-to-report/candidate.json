@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "ccp Event Dataflow: Landing to Report",
+    "locale": "en",
+    "output": "docs/diagrams/dataflow-ccp-event-to-report/ccp-event-to-report.html",
+    "quality_profile": "showcase"
+  },
+  "stages": [
+    { "label": "Land" },
+    { "label": "Normalize" },
+    { "label": "Trigger" },
+    { "label": "Evaluate" },
+    { "label": "Record + report" }
+  ],
+  "nodes": [
+    { "id": "connector", "type": "external", "label": "Connector pull", "sublabel": "github, hris, manual", "tag": "SourceEvent", "stage": 0, "row": 0 },
+    { "id": "landing", "type": "backend", "label": "Landing", "sublabel": "raw_events dedup", "stage": 0, "row": 1 },
+    { "id": "rawfile", "type": "database", "label": "Raw zone file", "sublabel": "written once", "tag": "data/raw/", "stage": 0, "row": 2 },
+    { "id": "normalize", "type": "backend", "label": "Normalize", "sublabel": "pure mapper", "stage": 1, "row": 1 },
+    { "id": "entityrows", "type": "database", "label": "Entity rows", "sublabel": "one per observation", "stage": 1, "row": 2 },
+    { "id": "fullrun", "type": "backend", "label": "Full-run enqueue", "sublabel": "ccp run", "stage": 2, "row": 0 },
+    { "id": "impact", "type": "backend", "label": "Impact step", "sublabel": "change to test pairs", "stage": 2, "row": 1 },
+    { "id": "chunks", "type": "database", "label": "Evidence chunks", "sublabel": "hybrid search", "tag": "tier 2 · 3", "stage": 3, "row": 0 },
+    { "id": "evaluator", "type": "backend", "label": "Evaluator", "sublabel": "tier 1 · 2 · 3", "tag": "budget gate", "stage": 3, "row": 1 },
+    { "id": "knowledge", "type": "database", "label": "Knowledge graph", "sublabel": "tests, controls YAML", "stage": 3, "row": 3 },
+    { "id": "verdict", "type": "database", "label": "Verdict row", "sublabel": "verdicts table", "tag": "append-only", "stage": 4, "row": 0 },
+    { "id": "statewriter", "type": "backend", "label": "State writer", "sublabel": "reason + supersede", "stage": 4, "row": 1 },
+    { "id": "staterow", "type": "database", "label": "compliance_state", "sublabel": "bitemporal row", "tag": "append-only", "stage": 4, "row": 2 },
+    { "id": "report", "type": "frontend", "label": "ccp report", "sublabel": "worst state wins", "stage": 4, "row": 3 }
+  ],
+  "flows": [
+    { "id": "source-event", "from": "connector", "to": "landing", "label": "SourceEvent", "variant": "emphasis" },
+    { "id": "raw-file", "from": "landing", "to": "rawfile", "label": "file + sha256" },
+    { "id": "raw-topic", "from": "landing", "to": "normalize", "label": "raw.* topic row", "variant": "emphasis" },
+    { "id": "payload", "from": "rawfile", "to": "normalize", "label": "payload by ref", "variant": "emphasis" },
+    { "id": "observations", "from": "normalize", "to": "entityrows", "label": "observation rows" },
+    { "id": "entities-topic", "from": "normalize", "to": "impact", "label": "entities topic", "variant": "emphasis" },
+    { "id": "current-views", "from": "entityrows", "to": "impact", "label": "current views" },
+    { "id": "evaluations-topic", "from": "impact", "to": "evaluator", "label": "evaluations topic", "variant": "emphasis" },
+    { "id": "full-run", "from": "fullrun", "to": "evaluator", "label": "every pair", "variant": "dashed" },
+    { "id": "context", "from": "entityrows", "to": "evaluator", "label": "entity context" },
+    { "id": "fenced-chunks", "from": "chunks", "to": "evaluator", "label": "fenced, redacted", "variant": "security" },
+    { "id": "test-spec", "from": "knowledge", "to": "evaluator", "label": "test spec, tier" },
+    { "id": "persist", "from": "evaluator", "to": "verdict", "label": "persist, keyed", "variant": "emphasis" },
+    { "id": "verdicts-topic", "from": "verdict", "to": "statewriter", "label": "verdicts topic", "variant": "emphasis" },
+    { "id": "append-state", "from": "statewriter", "to": "staterow", "label": "append, supersede", "variant": "emphasis" },
+    { "id": "chain-heads", "from": "staterow", "to": "report", "label": "chain heads", "variant": "emphasis" },
+    { "id": "requirement-map", "from": "knowledge", "to": "report", "label": "requirement map" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "One event, end to end", "items": [
+      "Landing writes the file first, then a raw_events row and an event_log row in one short transaction; a duplicate stops there as a dedup hit",
+      "Every step is idempotent: entity rows key on entity and event id, verdicts on evaluation_key, state rows on verdict_id"
+    ] },
+    { "dot": "amber", "title": "Who enqueues evaluations", "items": [
+      "The impact step is the per-event path: ccp evaluate run --impact, the impact worker, and reevaluate() (called only by the e2e test)",
+      "ccp run skips it and enqueues every (test, subject) pair, with the newest observation as the trigger time",
+      "The clock producer also enqueues overdue or stale subjects on a schedule; it is not drawn because no event triggers it"
+    ] },
+    { "dot": "rose", "title": "Models extract, code decides", "items": [
+      "Tier 1 is rule code over entity rows; tier 2 sends fenced, redacted chunks to the model, verifies each quote, then a rule decides",
+      "Tier 3 runs the same steps as a LangGraph graph and can pause for a human as a tier3_interrupt approval"
+    ] },
+    { "dot": "slate", "title": "Beside this path", "items": [
+      "Identity resolution writes person_links and announces each new link on the entities topic",
+      "The Investigator is a second consumer of the verdicts topic and acts on fail and needs_review only"
+    ] }
+  ]
+}
