@@ -1,0 +1,231 @@
+{
+  "run_id": "01M76B1RQKQG50SMVX521PYD7K",
+  "started_at": "2026-11-11T22:18:26.931818Z",
+  "finished_at": "2026-11-11T22:18:45.741228Z",
+  "git_commit": "53c1201",
+  "golden_sha256": {
+    "component.yaml": "33ae50d7a3a77b424312bf1fe17c9ef110eca7fce33489692d66cfa4f888afd7",
+    "e2e.yaml": "cc202be323549dbb4f7eb09eabed583d7009d9e8d1b33049d3739c8f84ae804f",
+    "probes.yaml": "7165f530515935ba39270f69f416c0040fea5861770338c14a6d2b5164b45fc0",
+    "retrieval.yaml": "ef2657bd9f3d061252eac79c465c5399aff85f509aa1a28dc3485a88efcdbe5c",
+    "workflow.yaml": "8d7fb04d73861e3e3d23e5cf676ae277d54e84c180388f3a1362c58be73f4a50"
+  },
+  "bundle_sha256": "6373ca4f98f5ac1f73fd90f6b69b78678ab05695610f065c5871fd528ff2b919",
+  "cases": [
+    {
+      "id": "wf-ingest-dedup-acme-hris",
+      "level": "workflow",
+      "target": "ingest_land",
+      "passed": true,
+      "mismatches": [],
+      "latency_ms": 1057.925,
+      "error": null,
+      "skipped": false,
+      "judge": null,
+      "actual": {
+        "landed": 47,
+        "duplicates": 47,
+        "raw_rows": 47,
+        "log_records": 47,
+        "dup_files": 47
+      },
+      "expected_fields": 0,
+      "attack_class": null,
+      "attack_succeeded": null,
+      "cost_usd": 0.0,
+      "tokens": 0,
+      "trace_id": "01M76B1VC901E56J8C6AJAWAM3",
+      "model_backed": false,
+      "tenant": "acme",
+      "runs": 1,
+      "run_passes": 1,
+      "run_statuses": [
+        null
+      ],
+      "expected_status": null,
+      "refusals": 0
+    },
+    {
+      "id": "wf-ingest-late-arrival-orders-by-source-ts",
+      "level": "workflow",
+      "target": "ingest_ordering",
+      "passed": true,
+      "mismatches": [],
+      "latency_ms": 74.109,
+      "error": null,
+      "skipped": false,
+      "judge": null,
+      "actual": {
+        "handled_order": [
+          "late-role-change",
+          "termination",
+          "snapshot-after"
+        ]
+      },
+      "expected_fields": 0,
+      "attack_class": null,
+      "attack_succeeded": null,
+      "cost_usd": 0.0,
+      "tokens": 0,
+      "trace_id": "01M76B1YW14MQCRFMD22FPYH07",
+      "model_backed": false,
+      "tenant": "acme",
+      "runs": 1,
+      "run_passes": 1,
+      "run_statuses": [
+        null
+      ],
+      "expected_status": null,
+      "refusals": 0
+    },
+    {
+      "id": "wf-evaluate-tier1-acme-twice",
+      "level": "workflow",
+      "target": "evaluate_tier1",
+      "passed": true,
+      "mismatches": [],
+      "latency_ms": 6916.464,
+      "error": null,
+      "skipped": false,
+      "judge": null,
+      "actual": {
+        "enqueued": 15,
+        "evaluated": 15,
+        "by_status": {
+          "fail": 6,
+          "needs_review": 5,
+          "partial": 1,
+          "pass": 3
+        },
+        "verdict_rows": 15,
+        "second_run": {
+          "enqueued": 15,
+          "duplicates": 15,
+          "new_rows": 0
+        }
+      },
+      "expected_fields": 0,
+      "attack_class": null,
+      "attack_succeeded": null,
+      "cost_usd": 0.0,
+      "tokens": 0,
+      "trace_id": "01M76B1YYMKTQJPK4AB4A3KF8C",
+      "model_backed": false,
+      "tenant": "acme",
+      "runs": 1,
+      "run_passes": 1,
+      "run_statuses": [
+        null
+      ],
+      "expected_status": null,
+      "refusals": 0
+    },
+    {
+      "id": "wf-evaluate-tier1-globex-twice",
+      "level": "workflow",
+      "target": "evaluate_tier1",
+      "passed": true,
+      "mismatches": [],
+      "latency_ms": 5285.502,
+      "error": null,
+      "skipped": false,
+      "judge": null,
+      "actual": {
+        "enqueued": 13,
+        "evaluated": 13,
+        "by_status": {
+          "fail": 3,
+          "needs_review": 4,
+          "pass": 6
+        },
+        "verdict_rows": 13,
+        "second_run": {
+          "enqueued": 13,
+          "duplicates": 13,
+          "new_rows": 0
+        }
+      },
+      "expected_fields": 0,
+      "attack_class": null,
+      "attack_succeeded": null,
+      "cost_usd": 0.0,
+      "tokens": 0,
+      "trace_id": "01M76B25Q3ZV7EV4K44GB0ZDNJ",
+      "model_backed": false,
+      "tenant": "globex",
+      "runs": 1,
+      "run_passes": 1,
+      "run_statuses": [
+        null
+      ],
+      "expected_status": null,
+      "refusals": 0
+    }
+  ],
+  "summary": {
+    "component": {
+      "passed": 0,
+      "total": 0,
+      "skipped": 0
+    },
+    "workflow": {
+      "passed": 4,
+      "total": 4,
+      "skipped": 0
+    },
+    "e2e": {
+      "passed": 0,
+      "total": 0,
+      "skipped": 0
+    }
+  },
+  "unit": null,
+  "metrics": {
+    "reliability": [],
+    "ece": null,
+    "ece_count": 0,
+    "suggested_interrupt_threshold": null,
+    "asr": {},
+    "asr_counts": {},
+    "latency": {
+      "evaluate_tier1": {
+        "count": 2,
+        "p50": 6916.5,
+        "p95": 6916.5,
+        "p99": 6916.5,
+        "slo_p95_ms": 15000.0,
+        "breached": false
+      },
+      "ingest_land": {
+        "count": 1,
+        "p50": 1057.9,
+        "p95": 1057.9,
+        "p99": 1057.9,
+        "slo_p95_ms": 20000.0,
+        "breached": false
+      },
+      "ingest_ordering": {
+        "count": 1,
+        "p50": 74.1,
+        "p95": 74.1,
+        "p99": 74.1,
+        "slo_p95_ms": 20000.0,
+        "breached": false
+      }
+    },
+    "cost_usd": {},
+    "total_cost_usd": 0.0,
+    "extraction": {},
+    "judge": {
+      "cases": 0
+    },
+    "ai_tests": {}
+  },
+  "models": {
+    "tier2": "claude-haiku-5-5",
+    "tier3": "claude-sonnet-5-5",
+    "judge": "claude-opus-5",
+    "fixture_judge": "claude-opus-5",
+    "embed": "voyage-3-large"
+  }
+}

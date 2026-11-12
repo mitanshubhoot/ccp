@@ -1,0 +1,245 @@
+{
+  "run_id": "01M76B0P5VJ9YV4ZFYPX45H3NX",
+  "started_at": "2026-11-11T22:17:51.547378Z",
+  "finished_at": "2026-11-11T22:18:11.195008Z",
+  "git_commit": "53c1201",
+  "golden_sha256": {
+    "component.yaml": "33ae50d7a3a77b424312bf1fe17c9ef110eca7fce33489692d66cfa4f888afd7",
+    "e2e.yaml": "cc202be323549dbb4f7eb09eabed583d7009d9e8d1b33049d3739c8f84ae804f",
+    "probes.yaml": "7165f530515935ba39270f69f416c0040fea5861770338c14a6d2b5164b45fc0",
+    "retrieval.yaml": "ef2657bd9f3d061252eac79c465c5399aff85f509aa1a28dc3485a88efcdbe5c",
+    "workflow.yaml": "5be8736b0567a67aa6294fee6425e4bd4a2d9da04870562479a16a6b710c0755"
+  },
+  "bundle_sha256": "6373ca4f98f5ac1f73fd90f6b69b78678ab05695610f065c5871fd528ff2b919",
+  "cases": [
+    {
+      "id": "wf-ingest-dedup-acme-hris",
+      "level": "workflow",
+      "target": "ingest_land",
+      "passed": true,
+      "mismatches": [],
+      "latency_ms": 1307.241,
+      "error": null,
+      "skipped": false,
+      "judge": null,
+      "actual": {
+        "landed": 47,
+        "duplicates": 47,
+        "raw_rows": 47,
+        "log_records": 47,
+        "dup_files": 47
+      },
+      "expected_fields": 0,
+      "attack_class": null,
+      "attack_succeeded": null,
+      "cost_usd": 0.0,
+      "tokens": 0,
+      "trace_id": "01M76B0RMJJ7AQGAR78NHCS2G8",
+      "model_backed": false,
+      "tenant": "acme",
+      "runs": 1,
+      "run_passes": 1,
+      "run_statuses": [
+        null
+      ],
+      "expected_status": null,
+      "refusals": 0
+    },
+    {
+      "id": "wf-ingest-late-arrival-orders-by-source-ts",
+      "level": "workflow",
+      "target": "ingest_ordering",
+      "passed": true,
+      "mismatches": [],
+      "latency_ms": 73.788,
+      "error": null,
+      "skipped": false,
+      "judge": null,
+      "actual": {
+        "handled_order": [
+          "late-role-change",
+          "termination",
+          "snapshot-after"
+        ]
+      },
+      "expected_fields": 0,
+      "attack_class": null,
+      "attack_succeeded": null,
+      "cost_usd": 0.0,
+      "tokens": 0,
+      "trace_id": "01M76B0X20A2PFJ5RW10A7V6EE",
+      "model_backed": false,
+      "tenant": "acme",
+      "runs": 1,
+      "run_passes": 1,
+      "run_statuses": [
+        null
+      ],
+      "expected_status": null,
+      "refusals": 0
+    },
+    {
+      "id": "wf-evaluate-tier1-acme-twice",
+      "level": "workflow",
+      "target": "evaluate_tier1",
+      "passed": false,
+      "mismatches": [
+        "$.enqueued: expected 11, got 15",
+        "$.evaluated: expected 11, got 15",
+        "$.by_status.needs_review: expected 1, got 5",
+        "$.verdict_rows: expected 11, got 15",
+        "$.second_run.enqueued: expected 11, got 15",
+        "$.second_run.duplicates: expected 11, got 15"
+      ],
+      "latency_ms": 6737.429,
+      "error": null,
+      "skipped": false,
+      "judge": null,
+      "actual": {
+        "enqueued": 15,
+        "evaluated": 15,
+        "by_status": {
+          "fail": 6,
+          "needs_review": 5,
+          "partial": 1,
+          "pass": 3
+        },
+        "verdict_rows": 15,
+        "second_run": {
+          "enqueued": 15,
+          "duplicates": 15,
+          "new_rows": 0
+        }
+      },
+      "expected_fields": 0,
+      "attack_class": null,
+      "attack_succeeded": null,
+      "cost_usd": 0.0,
+      "tokens": 0,
+      "trace_id": "01M76B0X4SE4X3B5H83SV6SXFA",
+      "model_backed": false,
+      "tenant": "acme",
+      "runs": 1,
+      "run_passes": 0,
+      "run_statuses": [
+        null
+      ],
+      "expected_status": null,
+      "refusals": 0
+    },
+    {
+      "id": "wf-evaluate-tier1-globex-twice",
+      "level": "workflow",
+      "target": "evaluate_tier1",
+      "passed": false,
+      "mismatches": [
+        "$.enqueued: expected 9, got 13",
+        "$.evaluated: expected 9, got 13",
+        "$.by_status: unexpected keys ['needs_review']",
+        "$.verdict_rows: expected 9, got 13",
+        "$.second_run.enqueued: expected 9, got 13",
+        "$.second_run.duplicates: expected 9, got 13"
+      ],
+      "latency_ms": 5548.549,
+      "error": null,
+      "skipped": false,
+      "judge": null,
+      "actual": {
+        "enqueued": 13,
+        "evaluated": 13,
+        "by_status": {
+          "fail": 3,
+          "needs_review": 4,
+          "pass": 6
+        },
+        "verdict_rows": 13,
+        "second_run": {
+          "enqueued": 13,
+          "duplicates": 13,
+          "new_rows": 0
+        }
+      },
+      "expected_fields": 0,
+      "attack_class": null,
+      "attack_succeeded": null,
+      "cost_usd": 0.0,
+      "tokens": 0,
+      "trace_id": "01M76B13QNVC86BTP7G27GDSHQ",
+      "model_backed": false,
+      "tenant": "globex",
+      "runs": 1,
+      "run_passes": 0,
+      "run_statuses": [
+        null
+      ],
+      "expected_status": null,
+      "refusals": 0
+    }
+  ],
+  "summary": {
+    "component": {
+      "passed": 0,
+      "total": 0,
+      "skipped": 0
+    },
+    "workflow": {
+      "passed": 2,
+      "total": 4,
+      "skipped": 0
+    },
+    "e2e": {
+      "passed": 0,
+      "total": 0,
+      "skipped": 0
+    }
+  },
+  "unit": null,
+  "metrics": {
+    "reliability": [],
+    "ece": null,
+    "ece_count": 0,
+    "suggested_interrupt_threshold": null,
+    "asr": {},
+    "asr_counts": {},
+    "latency": {
+      "evaluate_tier1": {
+        "count": 2,
+        "p50": 6737.4,
+        "p95": 6737.4,
+        "p99": 6737.4,
+        "slo_p95_ms": 15000.0,
+        "breached": false
+      },
+      "ingest_land": {
+        "count": 1,
+        "p50": 1307.2,
+        "p95": 1307.2,
+        "p99": 1307.2,
+        "slo_p95_ms": 20000.0,
+        "breached": false
+      },
+      "ingest_ordering": {
+        "count": 1,
+        "p50": 73.8,
+        "p95": 73.8,
+        "p99": 73.8,
+        "slo_p95_ms": 20000.0,
+        "breached": false
+      }
+    },
+    "cost_usd": {},
+    "total_cost_usd": 0.0,
+    "extraction": {},
+    "judge": {
+      "cases": 0
+    },
+    "ai_tests": {}
+  },
+  "models": {
+    "tier2": "claude-haiku-5-5",
+    "tier3": "claude-sonnet-5-5",
+    "judge": "claude-opus-5",
+    "fixture_judge": "claude-opus-5",
+    "embed": "voyage-3-large"
+  }
+}
